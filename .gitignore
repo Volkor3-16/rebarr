@@ -1,0 +1,5 @@
+/target
+/mangaupdates
+/crates
+.env
+rebarr.db

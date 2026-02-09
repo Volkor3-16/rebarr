@@ -1,0 +1,639 @@
+MangaDetails {
+            shared_fields: MangaFields {
+                id: Some(
+                    126287,
+                ),
+                title: Some(
+                    "Sousou no Frieren",
+                ),
+                main_picture: Some(
+                    MainPicture {
+                        medium: "https://cdn.myanimelist.net/images/manga/3/232121.jpg",
+                        large: "https://cdn.myanimelist.net/images/manga/3/232121l.jpg",
+                    },
+                ),
+                alternative_titles: Some(
+                    AlternativeTitles {
+                        synonyms: Some(
+                            [
+                                "Frieren at the Funeral",
+                                "Frieren the Slayer",
+                            ],
+                        ),
+                        en: Some(
+                            "Frieren: Beyond Journey's End",
+                        ),
+                        ja: Some(
+                            "葬送のフリーレン",
+                        ),
+                    },
+                ),
+                start_date: Some(
+                    "2020-04-28",
+                ),
+                end_date: None,
+                synopsis: Some(
+                    "The Demon King has been defeated, and the victorious hero party returns home before disbanding. The four—mage Frieren, hero Himmel, priest Heiter, and warrior Eisen—reminisce about their decade-long journey as the moment to bid each other farewell arrives. But the passing of time is different for elves, thus Frieren witnesses her companions slowly pass away one by one.\n\nBefore his death, Heiter manages to foist a young human apprentice called Fern onto Frieren. Driven by the elf's passion for collecting a myriad of magic spells, the pair embarks on a seemingly aimless journey, revisiting the places that the heroes of yore had visited. Along their travels, Frieren slowly confronts her regrets of missed opportunities to form deeper bonds with her now-deceased comrades.\n\n[Written by MAL Rewrite]",
+                ),
+                mean: Some(
+                    8.87,
+                ),
+                rank: Some(
+                    27,
+                ),
+                popularity: Some(
+                    79,
+                ),
+                num_list_users: Some(
+                    167083,
+                ),
+                num_scoring_users: Some(
+                    54597,
+                ),
+                nsfw: Some(
+                    SFW,
+                ),
+                genres: Some(
+                    [
+                        Genre {
+                            id: 2,
+                            name: "Adventure",
+                        },
+                        Genre {
+                            id: 46,
+                            name: "Award Winning",
+                        },
+                        Genre {
+                            id: 8,
+                            name: "Drama",
+                        },
+                        Genre {
+                            id: 10,
+                            name: "Fantasy",
+                        },
+                        Genre {
+                            id: 27,
+                            name: "Shounen",
+                        },
+                    ],
+                ),
+                created_at: Some(
+                    "1970-01-01T00:00:00+00:00",
+                ),
+                updated_at: Some(
+                    "2024-12-22T13:15:51+00:00",
+                ),
+                media_type: Some(
+                    Manga,
+                ),
+                status: Some(
+                    CurrentlyPublishing,
+                ),
+                my_list_status: None,
+                num_volumes: Some(
+                    0,
+                ),
+                num_chapters: Some(
+                    0,
+                ),
+                authors: Some(
+                    [
+                        Author {
+                            node: AuthorDetails {
+                                id: 23829,
+                                first_name: None,
+                                last_name: None,
+                            },
+                            role: Some(
+                                "Story",
+                            ),
+                        },
+                        Author {
+                            node: AuthorDetails {
+                                id: 51216,
+                                first_name: None,
+                                last_name: None,
+                            },
+                            role: Some(
+                                "Art",
+                            ),
+                        },
+                    ],
+                ),
+            },
+            pictures: Some(
+                [
+                    MangaPicture {
+                        medium: "https://cdn.myanimelist.net/images/manga/2/229657.jpg",
+                        large: "https://cdn.myanimelist.net/images/manga/2/229657l.jpg",
+                    },
+                    MangaPicture {
+                        medium: "https://cdn.myanimelist.net/images/manga/3/232082.jpg",
+                        large: "https://cdn.myanimelist.net/images/manga/3/232082l.jpg",
+                    },
+                    MangaPicture {
+                        medium: "https://cdn.myanimelist.net/images/manga/3/232121.jpg",
+                        large: "https://cdn.myanimelist.net/images/manga/3/232121l.jpg",
+                    },
+                    MangaPicture {
+                        medium: "https://cdn.myanimelist.net/images/manga/1/239970.jpg",
+                        large: "https://cdn.myanimelist.net/images/manga/1/239970l.jpg",
+                    },
+                    MangaPicture {
+                        medium: "https://cdn.myanimelist.net/images/manga/2/239971.jpg",
+                        large: "https://cdn.myanimelist.net/images/manga/2/239971l.jpg",
+                    },
+                    MangaPicture {
+                        medium: "https://cdn.myanimelist.net/images/manga/1/242761.jpg",
+                        large: "https://cdn.myanimelist.net/images/manga/1/242761l.jpg",
+                    },
+                    MangaPicture {
+                        medium: "https://cdn.myanimelist.net/images/manga/1/252035.jpg",
+                        large: "https://cdn.myanimelist.net/images/manga/1/252035l.jpg",
+                    },
+                    MangaPicture {
+                        medium: "https://cdn.myanimelist.net/images/manga/3/252036.jpg",
+                        large: "https://cdn.myanimelist.net/images/manga/3/252036l.jpg",
+                    },
+                    MangaPicture {
+                        medium: "https://cdn.myanimelist.net/images/manga/1/257610.jpg",
+                        large: "https://cdn.myanimelist.net/images/manga/1/257610l.jpg",
+                    },
+                    MangaPicture {
+                        medium: "https://cdn.myanimelist.net/images/manga/5/278750.jpg",
+                        large: "https://cdn.myanimelist.net/images/manga/5/278750l.jpg",
+                    },
+                    MangaPicture {
+                        medium: "https://cdn.myanimelist.net/images/manga/4/290492.jpg",
+                        large: "https://cdn.myanimelist.net/images/manga/4/290492l.jpg",
+                    },
+                    MangaPicture {
+                        medium: "https://cdn.myanimelist.net/images/manga/2/294815.jpg",
+                        large: "https://cdn.myanimelist.net/images/manga/2/294815l.jpg",
+                    },
+                    MangaPicture {
+                        medium: "https://cdn.myanimelist.net/images/manga/2/294816.jpg",
+                        large: "https://cdn.myanimelist.net/images/manga/2/294816l.jpg",
+                    },
+                ],
+            ),
+            background: Some(
+                "Sousou no Frieren ranked second and sixth in the 2021 and 2022 Kono Manga ga Sugoi! for the Male Readers division, respectively. In 2021, the series won the New Work Prize at the 25th Tezuka Osamu Cultural Prize awards. The manga was nominated twice for the 45th and 46th Kodansha Manga Awards in the Shounen category before winning the 48th Kodansha Manga Award in the same category in 2024. The series won the 69th Shougakukan Manga Award.\n\nThe series has been published in English as Frieren: Beyond Journey's End by VIZ Media under the Shonen Sunday imprint since November 9, 2021. The series has also been simulpub digitally through VIZ Manga. It has also been released in Polish by Studio JG since May 12, 2023.",
+            ),
+            related_anime: Some(
+                [],
+            ),
+            related_manga: Some(
+                [
+                    RelatedManga {
+                        node: MangaFields {
+                            id: Some(
+                                164432,
+                            ),
+                            title: Some(
+                                "Sousou no Frieren Anthology: Kotonaru Tabi wo Tanoshimu Mahou",
+                            ),
+                            main_picture: Some(
+                                MainPicture {
+                                    medium: "https://cdn.myanimelist.net/images/manga/2/292048.jpg",
+                                    large: "https://cdn.myanimelist.net/images/manga/2/292048l.jpg",
+                                },
+                            ),
+                            alternative_titles: None,
+                            start_date: None,
+                            end_date: None,
+                            synopsis: None,
+                            mean: None,
+                            rank: None,
+                            popularity: None,
+                            num_list_users: None,
+                            num_scoring_users: None,
+                            nsfw: None,
+                            genres: None,
+                            created_at: None,
+                            updated_at: None,
+                            media_type: None,
+                            status: None,
+                            my_list_status: None,
+                            num_volumes: None,
+                            num_chapters: None,
+                            authors: None,
+                        },
+                        relation_type: Other,
+                        relation_type_formatted: "Other",
+                    },
+                    RelatedManga {
+                        node: MangaFields {
+                            id: Some(
+                                169340,
+                            ),
+                            title: Some(
+                                "Shousetsu Sousou no Frieren: Zensou",
+                            ),
+                            main_picture: Some(
+                                MainPicture {
+                                    medium: "https://cdn.myanimelist.net/images/manga/3/301051.jpg",
+                                    large: "https://cdn.myanimelist.net/images/manga/3/301051l.jpg",
+                                },
+                            ),
+                            alternative_titles: None,
+                            start_date: None,
+                            end_date: None,
+                            synopsis: None,
+                            mean: None,
+                            rank: None,
+                            popularity: None,
+                            num_list_users: None,
+                            num_scoring_users: None,
+                            nsfw: None,
+                            genres: None,
+                            created_at: None,
+                            updated_at: None,
+                            media_type: None,
+                            status: None,
+                            my_list_status: None,
+                            num_volumes: None,
+                            num_chapters: None,
+                            authors: None,
+                        },
+                        relation_type: Prequel,
+                        relation_type_formatted: "Prequel",
+                    },
+                ],
+            ),
+            recommendations: Some(
+                [
+                    Recommendation {
+                        node: MangaFields {
+                            id: Some(
+                                100035,
+                            ),
+                            title: Some(
+                                "Tongari Boushi no Atelier",
+                            ),
+                            main_picture: Some(
+                                MainPicture {
+                                    medium: "https://cdn.myanimelist.net/images/manga/3/190005.webp",
+                                    large: "https://cdn.myanimelist.net/images/manga/3/190005l.webp",
+                                },
+                            ),
+                            alternative_titles: None,
+                            start_date: None,
+                            end_date: None,
+                            synopsis: None,
+                            mean: None,
+                            rank: None,
+                            popularity: None,
+                            num_list_users: None,
+                            num_scoring_users: None,
+                            nsfw: None,
+                            genres: None,
+                            created_at: None,
+                            updated_at: None,
+                            media_type: None,
+                            status: None,
+                            my_list_status: None,
+                            num_volumes: None,
+                            num_chapters: None,
+                            authors: None,
+                        },
+                        num_recommendations: 6,
+                    },
+                    Recommendation {
+                        node: MangaFields {
+                            id: Some(
+                                141278,
+                            ),
+                            title: Some(
+                                "Tensei shite High Elf ni Narimashita ga, Slow Life wa 120-nen de Akimashita",
+                            ),
+                            main_picture: Some(
+                                MainPicture {
+                                    medium: "https://cdn.myanimelist.net/images/manga/2/254305.jpg",
+                                    large: "https://cdn.myanimelist.net/images/manga/2/254305l.jpg",
+                                },
+                            ),
+                            alternative_titles: None,
+                            start_date: None,
+                            end_date: None,
+                            synopsis: None,
+                            mean: None,
+                            rank: None,
+                            popularity: None,
+                            num_list_users: None,
+                            num_scoring_users: None,
+                            nsfw: None,
+                            genres: None,
+                            created_at: None,
+                            updated_at: None,
+                            media_type: None,
+                            status: None,
+                            my_list_status: None,
+                            num_volumes: None,
+                            num_chapters: None,
+                            authors: None,
+                        },
+                        num_recommendations: 4,
+                    },
+                    Recommendation {
+                        node: MangaFields {
+                            id: Some(
+                                109339,
+                            ),
+                            title: Some(
+                                "Saihate no Paladin",
+                            ),
+                            main_picture: Some(
+                                MainPicture {
+                                    medium: "https://cdn.myanimelist.net/images/manga/2/208057.jpg",
+                                    large: "https://cdn.myanimelist.net/images/manga/2/208057l.jpg",
+                                },
+                            ),
+                            alternative_titles: None,
+                            start_date: None,
+                            end_date: None,
+                            synopsis: None,
+                            mean: None,
+                            rank: None,
+                            popularity: None,
+                            num_list_users: None,
+                            num_scoring_users: None,
+                            nsfw: None,
+                            genres: None,
+                            created_at: None,
+                            updated_at: None,
+                            media_type: None,
+                            status: None,
+                            my_list_status: None,
+                            num_volumes: None,
+                            num_chapters: None,
+                            authors: None,
+                        },
+                        num_recommendations: 4,
+                    },
+                    Recommendation {
+                        node: MangaFields {
+                            id: Some(
+                                4,
+                            ),
+                            title: Some(
+                                "Yokohama Kaidashi Kikou",
+                            ),
+                            main_picture: Some(
+                                MainPicture {
+                                    medium: "https://cdn.myanimelist.net/images/manga/1/171813.webp",
+                                    large: "https://cdn.myanimelist.net/images/manga/1/171813l.webp",
+                                },
+                            ),
+                            alternative_titles: None,
+                            start_date: None,
+                            end_date: None,
+                            synopsis: None,
+                            mean: None,
+                            rank: None,
+                            popularity: None,
+                            num_list_users: None,
+                            num_scoring_users: None,
+                            nsfw: None,
+                            genres: None,
+                            created_at: None,
+                            updated_at: None,
+                            media_type: None,
+                            status: None,
+                            my_list_status: None,
+                            num_volumes: None,
+                            num_chapters: None,
+                            authors: None,
+                        },
+                        num_recommendations: 4,
+                    },
+                    Recommendation {
+                        node: MangaFields {
+                            id: Some(
+                                102343,
+                            ),
+                            title: Some(
+                                "Fumetsu no Anata e",
+                            ),
+                            main_picture: Some(
+                                MainPicture {
+                                    medium: "https://cdn.myanimelist.net/images/manga/3/189781.webp",
+                                    large: "https://cdn.myanimelist.net/images/manga/3/189781l.webp",
+                                },
+                            ),
+                            alternative_titles: None,
+                            start_date: None,
+                            end_date: None,
+                            synopsis: None,
+                            mean: None,
+                            rank: None,
+                            popularity: None,
+                            num_list_users: None,
+                            num_scoring_users: None,
+                            nsfw: None,
+                            genres: None,
+                            created_at: None,
+                            updated_at: None,
+                            media_type: None,
+                            status: None,
+                            my_list_status: None,
+                            num_volumes: None,
+                            num_chapters: None,
+                            authors: None,
+                        },
+                        num_recommendations: 4,
+                    },
+                    Recommendation {
+                        node: MangaFields {
+                            id: Some(
+                                85781,
+                            ),
+                            title: Some(
+                                "Dungeon Meshi",
+                            ),
+                            main_picture: Some(
+                                MainPicture {
+                                    medium: "https://cdn.myanimelist.net/images/manga/3/148949.jpg",
+                                    large: "https://cdn.myanimelist.net/images/manga/3/148949l.jpg",
+                                },
+                            ),
+                            alternative_titles: None,
+                            start_date: None,
+                            end_date: None,
+                            synopsis: None,
+                            mean: None,
+                            rank: None,
+                            popularity: None,
+                            num_list_users: None,
+                            num_scoring_users: None,
+                            nsfw: None,
+                            genres: None,
+                            created_at: None,
+                            updated_at: None,
+                            media_type: None,
+                            status: None,
+                            my_list_status: None,
+                            num_volumes: None,
+                            num_chapters: None,
+                            authors: None,
+                        },
+                        num_recommendations: 3,
+                    },
+                    Recommendation {
+                        node: MangaFields {
+                            id: Some(
+                                114754,
+                            ),
+                            title: Some(
+                                "Yuusha Goikkou no Kaerimichi",
+                            ),
+                            main_picture: Some(
+                                MainPicture {
+                                    medium: "https://cdn.myanimelist.net/images/manga/1/224032.jpg",
+                                    large: "https://cdn.myanimelist.net/images/manga/1/224032l.jpg",
+                                },
+                            ),
+                            alternative_titles: None,
+                            start_date: None,
+                            end_date: None,
+                            synopsis: None,
+                            mean: None,
+                            rank: None,
+                            popularity: None,
+                            num_list_users: None,
+                            num_scoring_users: None,
+                            nsfw: None,
+                            genres: None,
+                            created_at: None,
+                            updated_at: None,
+                            media_type: None,
+                            status: None,
+                            my_list_status: None,
+                            num_volumes: None,
+                            num_chapters: None,
+                            authors: None,
+                        },
+                        num_recommendations: 3,
+                    },
+                    Recommendation {
+                        node: MangaFields {
+                            id: Some(
+                                35313,
+                            ),
+                            title: Some(
+                                "Majo no Shinzou",
+                            ),
+                            main_picture: Some(
+                                MainPicture {
+                                    medium: "https://cdn.myanimelist.net/images/manga/2/104305.webp",
+                                    large: "https://cdn.myanimelist.net/images/manga/2/104305l.webp",
+                                },
+                            ),
+                            alternative_titles: None,
+                            start_date: None,
+                            end_date: None,
+                            synopsis: None,
+                            mean: None,
+                            rank: None,
+                            popularity: None,
+                            num_list_users: None,
+                            num_scoring_users: None,
+                            nsfw: None,
+                            genres: None,
+                            created_at: None,
+                            updated_at: None,
+                            media_type: None,
+                            status: None,
+                            my_list_status: None,
+                            num_volumes: None,
+                            num_chapters: None,
+                            authors: None,
+                        },
+                        num_recommendations: 3,
+                    },
+                    Recommendation {
+                        node: MangaFields {
+                            id: Some(
+                                26,
+                            ),
+                            title: Some(
+                                "Hunter x Hunter",
+                            ),
+                            main_picture: Some(
+                                MainPicture {
+                                    medium: "https://cdn.myanimelist.net/images/manga/2/253119.webp",
+                                    large: "https://cdn.myanimelist.net/images/manga/2/253119l.webp",
+                                },
+                            ),
+                            alternative_titles: None,
+                            start_date: None,
+                            end_date: None,
+                            synopsis: None,
+                            mean: None,
+                            rank: None,
+                            popularity: None,
+                            num_list_users: None,
+                            num_scoring_users: None,
+                            nsfw: None,
+                            genres: None,
+                            created_at: None,
+                            updated_at: None,
+                            media_type: None,
+                            status: None,
+                            my_list_status: None,
+                            num_volumes: None,
+                            num_chapters: None,
+                            authors: None,
+                        },
+                        num_recommendations: 2,
+                    },
+                    Recommendation {
+                        node: MangaFields {
+                            id: Some(
+                                9115,
+                            ),
+                            title: Some(
+                                "Ookami to Koushinryou",
+                            ),
+                            main_picture: Some(
+                                MainPicture {
+                                    medium: "https://cdn.myanimelist.net/images/manga/2/153860.webp",
+                                    large: "https://cdn.myanimelist.net/images/manga/2/153860l.webp",
+                                },
+                            ),
+                            alternative_titles: None,
+                            start_date: None,
+                            end_date: None,
+                            synopsis: None,
+                            mean: None,
+                            rank: None,
+                            popularity: None,
+                            num_list_users: None,
+                            num_scoring_users: None,
+                            nsfw: None,
+                            genres: None,
+                            created_at: None,
+                            updated_at: None,
+                            media_type: None,
+                            status: None,
+                            my_list_status: None,
+                            num_volumes: None,
+                            num_chapters: None,
+                            authors: None,
+                        },
+                        num_recommendations: 2,
+                    },
+                ],
+            ),
+            serialization: Some(
+                [
+                    Serialization {
+                        node: SerializationNode {
+                            id: 229,
+                            name: "Shounen Sunday",
+                        },
+                        role: None,
+                    },
+                ],
+            ),
+        },
