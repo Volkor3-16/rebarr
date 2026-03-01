@@ -23,7 +23,8 @@ pub struct Manga {
     pub relative_path: PathBuf,             // Relative (to the library root) path of the manga files.
     pub downloaded_count: Option<i32>,      // How many chapters are on disk already.
     pub chapter_count: Option<u32>,         // anilist doesn't support chapter counts in any sane way, we need to build this from providers @ scrape time.
-    pub metadata_source: MangaSource,                // The source of the metadata, not where we download it from.
+    pub metadata_source: MangaSource,       // The source of the metadata, not where we download it from.
+    pub thumbnail_url: Option<String>,      // Cached cover image URL from metadata source.
     pub created_at: DateTime<Utc>,          // When the manga was first added to the library
     pub metadata_updated_at: DateTime<Utc>, // When the manga last metadata refresh
 }
@@ -103,6 +104,10 @@ impl From<Media> for Manga {
             end_year: media.end_date.and_then(|d| d.year),
         };
 
+        let thumbnail_url = media.cover_image
+            .as_ref()
+            .and_then(|c| c.large.clone().or_else(|| c.medium.clone()));
+
         Manga {
             id: Uuid::new_v4(),
             library_id: Uuid::nil(),          // caller must set before persisting
@@ -113,6 +118,7 @@ impl From<Media> for Manga {
             downloaded_count: None,
             chapter_count,
             metadata_source: MangaSource::AniList,
+            thumbnail_url,
             created_at: Utc::now(),
             metadata_updated_at: Utc::now(),
         }

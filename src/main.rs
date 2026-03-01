@@ -1,27 +1,26 @@
 use dotenvy::dotenv;
-use log::debug;
 
-mod metadata;
+mod db;
 mod manga;
-use crate::{manga::Manga, metadata::anilist::{self, ALClient}};
+mod metadata;
+mod web;
 
-#[tokio::main]
-async fn main() {
-    // Init Logging
+use crate::metadata::anilist::ALClient;
+
+#[rocket::main]
+async fn main() -> Result<(), rocket::Error> {
+    dotenv().ok();
     env_logger::init();
 
-    // Load .env variables
-    dotenv().ok();
+    let pool = db::init("sqlite:rebarr.db").await.expect("DB init failed");
+    let al_client = ALClient::new();
 
-    // Create Anilist service
-    let alclient = ALClient::new();
-    
-    // Test Searching (and grab the ID from the first result)
-    let search = alclient.search_manga("Frieren").await.unwrap();
+    rocket::build()
+        .manage(pool)
+        .manage(al_client)
+        .mount("/", web::routes())
+        .launch()
+        .await?;
 
-    let frieren = alclient.grab_manga(search.data.first().unwrap().id.unwrap()).await;
-
-    debug!("Frieren Struct: {:#?}", frieren);
-    // Test conversion to internal manga type
-    //let converted_frieren = Manga::from(frieren.unwrap());
+    Ok(())
 }

@@ -11,7 +11,7 @@ log = "0.4.29"
 env_logger = "0.11.8"
 serde = "1.0.228"
 uuid = { version = "1.20.0", features = ["serde", "v4"] }
-sqlx = { version = "0.7.4", features = ["migrate", "sqlite", "macros"] }
+sqlx = { version = "0.7.4", features = ["migrate", "sqlite", "macros", "chrono"] }
 rocket = "0.5.1"
 rocket_db_pools = { version = "0.2.0", features = ["sqlx_sqlite"] }
 chrono = { version = "0.4.44", features = ["serde"] }
