@@ -1,3 +1,2 @@
 // 2026-02-10: Imagine loosing the entire project and needing to rewrite it again from half-done backups.
-mod myanimelist;
-mod mangaupdate;
+pub(crate) mod anilist;

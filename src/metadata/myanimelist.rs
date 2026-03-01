@@ -3,6 +3,11 @@ use mal_api::oauth::MalClientId;
 use mal_api::prelude::*;
 use std::env;
 
+// I disabled this because myanimelist doesn't have all the manga i want, like it works decently enough for manga, but manwha and others aren't great.
+// MangaUpdates is ideal but doesn't have a rust client, and openapi-generator sucked ass.
+// Anilist works better and has a rust lib.
+
+
 /// Service for interacting with the MyAnimeList API
 pub struct MalService {
     api_client: MangaApiClient,

@@ -10,8 +10,11 @@ The plan is to use myanimelist as a metadata source, and to automatically* match
 ## Dev TODO
 
 - [x] Setup base structure
-- [x] Get MAL API working
-- [x] Convert MalManga response into manga struct
+- [ ] Get AniList API working
+    - [x] Generate OpenAPI Spec code thing
+    - [x] Figure out how to use it
+    - [x] Use it
+- [x] Convert Anilist response into manga struct
     - To do this, i need to have a way for the user to 'select' one.
     - So I think we just hard-code one for now to get the code working, and then have the selection later on.
 - [ ] DB Stuffs
@@ -24,8 +27,8 @@ The plan is to use myanimelist as a metadata source, and to automatically* match
 
 ### Minimum Viable Release
 
-- [ ] MAL api metadata (will require API Key!)
-    - [ ] Manual user entered fallback for manga not on MAL.
+- [ ] AniList api metadata
+    - [ ] Manual user entered fallback for manga not on AniList.
 - [ ] Independant indexer support
 - [ ] Komga `ComicInfo.xml` creation
 - [ ] Queue system for scraping
@@ -49,13 +52,23 @@ The plan is to use myanimelist as a metadata source, and to automatically* match
 
 i got nothing here atm lol
 
-but once it's done, just copy the docker compose and change the stuff
+but once it's done, just copy the docker compose and change the stuff to what makes sense for ur setup
 
 
 ### Dev Install
 
-Requires rust/cargo
+Requires rust/cargo and whatever else i add
 
 1. `cargo run --release`
 
 thats it :)
+
+
+## Thanks
+
+- AniList for their nice API and database, even if they don't have a nicely updated 'chatper count' entry.
+- Kakao Entertainment, for ruining the entire scanlation community enough to warrant me making this. You do realise shutting down managa/manwha sites that's not available for sale traditionally is a failing on **your** part right? You're making it harder for people to even find out about your content you're trying to sell.
+- All the other companies that also don't realise that.
+
+
+Please do note that this program was NOT entirely vibecoded, but I did use a little bit to help plan and implement some of the basics. It's a nice tool for rubber duck debugging too, and just to clarify, all LLM Generation was done on a Local Machine (lie), entirely powered with solar.
