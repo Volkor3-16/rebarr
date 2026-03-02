@@ -13,8 +13,8 @@ pub async fn download_cover(client: &reqwest::Client, url: &str, manga_id: Uuid)
         .filter(|e| matches!(*e, "jpg" | "jpeg" | "png" | "webp" | "avif"))
         .unwrap_or("jpg");
 
-    let filename = format!("{}.{}", manga_id, ext);
-    let dest = format!("./thumbnails/{}", filename);
+    let filename = format!("{manga_id}.{ext}");
+    let dest = format!("./thumbnails/{filename}");
 
     if let Err(e) = tokio::fs::create_dir_all("./thumbnails").await {
         warn!("Failed to create thumbnails dir: {e}");
@@ -47,5 +47,5 @@ pub async fn download_cover(client: &reqwest::Client, url: &str, manga_id: Uuid)
         return None;
     }
 
-    Some(format!("/thumbnails/{}", filename))
+    Some(format!("/thumbnails/{filename}"))
 }

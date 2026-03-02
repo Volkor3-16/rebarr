@@ -53,7 +53,7 @@ async fn list_libraries(pool: &State<SqlitePool>) -> ApiResult<Vec<Library>> {
     db::library::get_all(pool.inner())
         .await
         .map(Json)
-        .map_err(|e| internal(e))
+        .map_err(internal)
 }
 
 // ---------------------------------------------------------------------------
@@ -88,7 +88,7 @@ async fn create_library(
 
     db::library::insert(pool.inner(), &lib)
         .await
-        .map_err(|e| internal(e))?;
+        .map_err(internal)?;
     Ok(Json(lib))
 }
 
@@ -101,7 +101,7 @@ async fn get_library(pool: &State<SqlitePool>, id: &str) -> ApiResult<Library> {
     let uuid = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
     db::library::get_by_id(pool.inner(), uuid)
         .await
-        .map_err(|e| internal(e))?
+        .map_err(internal)?
         .map(Json)
         .ok_or_else(|| not_found("library not found"))
 }
@@ -116,7 +116,7 @@ async fn list_library_manga(pool: &State<SqlitePool>, id: &str) -> ApiResult<Vec
     db::manga::get_all_for_library(pool.inner(), uuid)
         .await
         .map(Json)
-        .map_err(|e| internal(e))
+        .map_err(internal)
 }
 
 // ---------------------------------------------------------------------------
@@ -131,7 +131,7 @@ async fn search_manga(al: &State<ALClient>, q: &str) -> ApiResult<Vec<Manga>> {
     al.search_manga_as_manga(q.trim())
         .await
         .map(Json)
-        .map_err(|e| internal(e))
+        .map_err(internal)
 }
 
 // ---------------------------------------------------------------------------
@@ -162,7 +162,7 @@ async fn add_manga(
     // Verify library exists
     db::library::get_by_id(pool.inner(), library_id)
         .await
-        .map_err(|e| internal(e))?
+        .map_err(internal)?
         .ok_or_else(|| not_found("library not found"))?;
 
     // Fetch full manga from AniList — includes tags
@@ -186,7 +186,7 @@ async fn add_manga(
 
     db::manga::insert(pool.inner(), &manga)
         .await
-        .map_err(|e| internal(e))?;
+        .map_err(internal)?;
 
     Ok(Json(manga))
 }
@@ -200,7 +200,7 @@ async fn get_manga(pool: &State<SqlitePool>, id: &str) -> ApiResult<Manga> {
     let uuid = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
     db::manga::get_by_id(pool.inner(), uuid)
         .await
-        .map_err(|e| internal(e))?
+        .map_err(internal)?
         .map(Json)
         .ok_or_else(|| not_found("manga not found"))
 }
@@ -217,7 +217,7 @@ async fn delete_manga(
     let uuid = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
     db::manga::delete(pool.inner(), uuid)
         .await
-        .map_err(|e| internal(e))?;
+        .map_err(internal)?;
     Ok(Status::NoContent)
 }
 
