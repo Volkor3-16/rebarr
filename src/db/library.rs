@@ -21,7 +21,7 @@ fn from_row(row: LibraryRow) -> Result<Library, sqlx::Error> {
         other => {
             return Err(sqlx::Error::Decode(
                 format!("unknown library_type: {other}").into(),
-            ))
+            ));
         }
     };
 

@@ -1,4 +1,4 @@
-use sqlx::{SqlitePool, sqlite::{SqliteConnectOptions, SqliteJournalMode}};
+use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
 use std::str::FromStr;
 
 pub mod library;

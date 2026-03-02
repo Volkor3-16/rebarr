@@ -1,21 +1,13 @@
 use std::path::PathBuf;
 
 use chrono::Utc;
-use rocket::{
-    delete, get,
-    http::Status,
-    post,
-    routes,
-    serde::json::Json,
-    State,
-};
+use rocket::{State, delete, get, http::Status, post, routes, serde::json::Json};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::{
-    covers,
-    db,
+    covers, db,
     manga::{Library, Manga, MangaType},
     metadata::anilist::ALClient,
 };
@@ -32,7 +24,12 @@ struct ApiError {
 type ApiResult<T> = Result<Json<T>, (Status, Json<ApiError>)>;
 
 fn err(status: Status, msg: impl ToString) -> (Status, Json<ApiError>) {
-    (status, Json(ApiError { error: msg.to_string() }))
+    (
+        status,
+        Json(ApiError {
+            error: msg.to_string(),
+        }),
+    )
 }
 
 fn internal(msg: impl ToString) -> (Status, Json<ApiError>) {
@@ -53,7 +50,8 @@ fn not_found(msg: impl ToString) -> (Status, Json<ApiError>) {
 
 #[get("/api/libraries")]
 async fn list_libraries(pool: &State<SqlitePool>) -> ApiResult<Vec<Library>> {
-    db::library::get_all(pool.inner()).await
+    db::library::get_all(pool.inner())
+        .await
         .map(Json)
         .map_err(|e| internal(e))
 }
@@ -88,7 +86,9 @@ async fn create_library(
         root_path: PathBuf::from(body.root_path.trim()),
     };
 
-    db::library::insert(pool.inner(), &lib).await.map_err(|e| internal(e))?;
+    db::library::insert(pool.inner(), &lib)
+        .await
+        .map_err(|e| internal(e))?;
     Ok(Json(lib))
 }
 
@@ -184,7 +184,9 @@ async fn add_manga(
             .or(manga.thumbnail_url);
     }
 
-    db::manga::insert(pool.inner(), &manga).await.map_err(|e| internal(e))?;
+    db::manga::insert(pool.inner(), &manga)
+        .await
+        .map_err(|e| internal(e))?;
 
     Ok(Json(manga))
 }
@@ -208,9 +210,14 @@ async fn get_manga(pool: &State<SqlitePool>, id: &str) -> ApiResult<Manga> {
 // ---------------------------------------------------------------------------
 
 #[delete("/api/manga/<id>")]
-async fn delete_manga(pool: &State<SqlitePool>, id: &str) -> Result<Status, (Status, Json<ApiError>)> {
+async fn delete_manga(
+    pool: &State<SqlitePool>,
+    id: &str,
+) -> Result<Status, (Status, Json<ApiError>)> {
     let uuid = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
-    db::manga::delete(pool.inner(), uuid).await.map_err(|e| internal(e))?;
+    db::manga::delete(pool.inner(), uuid)
+        .await
+        .map_err(|e| internal(e))?;
     Ok(Status::NoContent)
 }
 

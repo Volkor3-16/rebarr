@@ -39,12 +39,10 @@ struct MangaRow {
 // ---------------------------------------------------------------------------
 
 async fn fetch_tags(pool: &SqlitePool, manga_id: &str) -> Result<Vec<String>, sqlx::Error> {
-    sqlx::query_scalar::<_, String>(
-        "SELECT tag FROM MangaTag WHERE manga_id = ? ORDER BY tag ASC",
-    )
-    .bind(manga_id)
-    .fetch_all(pool)
-    .await
+    sqlx::query_scalar::<_, String>("SELECT tag FROM MangaTag WHERE manga_id = ? ORDER BY tag ASC")
+        .bind(manga_id)
+        .fetch_all(pool)
+        .await
 }
 
 fn manga_from_parts(row: MangaRow, tags: Vec<String>) -> Result<Manga, sqlx::Error> {
