@@ -1,624 +1,13 @@
-use std::path::PathBuf;
-
-use chrono::Utc;
-use rocket::{
-    form::Form,
-    get, post,
-    response::{content::RawHtml, Redirect},
-    routes, State,
-};
-use sqlx::SqlitePool;
-use uuid::Uuid;
-
-use crate::{
-    db,
-    manga::{Library, Manga, MangaMetadata, MangaSource, MangaType, PublishingStatus},
-    metadata::anilist::ALClient,
-};
+use rocket::{get, response::content::RawHtml, routes};
 
 // ---------------------------------------------------------------------------
-// HTML helpers
-// ---------------------------------------------------------------------------
-
-fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-}
-
-fn page(title: &str, body: String) -> RawHtml<String> {
-    RawHtml(format!(
-        r#"<!DOCTYPE html>
-<html>
-<head><title>{title} - REBARR</title></head>
-<body>
-<pre>+================================================+
-| REBARR -- Manga Library Manager                |
-+================================================+</pre>
-<a href="/">[Home]</a> |
-<a href="/search">[Search Manga]</a> |
-<a href="/library/new">[Add Library]</a>
-<hr>
-<h2>{title}</h2>
-{body}
-</body>
-</html>"#
-    ))
-}
-
-fn error_page(msg: &str) -> RawHtml<String> {
-    page(
-        "ERROR",
-        format!(
-            "<p><b>!! ERROR !!</b><br>{}</p><p><a href=\"/\">[Back to Home]</a></p>",
-            html_escape(msg)
-        ),
-    )
-}
-
-// ---------------------------------------------------------------------------
-// GET / -- home: list libraries
+// GET / -- serve the single-page frontend
+// All data is loaded via fetch() calls to the /api/... REST endpoints.
 // ---------------------------------------------------------------------------
 
 #[get("/")]
-async fn index(pool: &State<SqlitePool>) -> RawHtml<String> {
-    let libs = match db::library::get_all(pool.inner()).await {
-        Ok(l) => l,
-        Err(e) => return error_page(&e.to_string()),
-    };
-
-    let mut body = String::new();
-
-    if libs.is_empty() {
-        body.push_str("<p>No libraries configured yet.</p>\n");
-    } else {
-        body.push_str("<p>Libraries:</p>\n<ul>\n");
-        for lib in &libs {
-            let type_str = match lib.r#type {
-                MangaType::Manga => "Manga",
-                MangaType::Comics => "Comics",
-            };
-            body.push_str(&format!(
-                "<li>[{type_str}] <a href=\"/library/{uuid}\">{path}</a></li>\n",
-                uuid = lib.uuid,
-                path = html_escape(&lib.root_path.to_string_lossy()),
-            ));
-        }
-        body.push_str("</ul>\n");
-    }
-
-    body.push_str("<p><a href=\"/library/new\">[+ Add Library]</a></p>\n");
-    page("Home", body)
-}
-
-// ---------------------------------------------------------------------------
-// GET /library/new -- add library form
-// ---------------------------------------------------------------------------
-
-#[get("/library/new")]
-fn library_new_form() -> RawHtml<String> {
-    let body = r#"<form method="POST" action="/library/new">
-<table>
-<tr>
-  <td>Library Type:</td>
-  <td>
-    <select name="library_type">
-      <option value="Manga">Manga</option>
-      <option value="Comics">Comics (Western)</option>
-    </select>
-  </td>
-</tr>
-<tr>
-  <td>Root Path:</td>
-  <td><input type="text" name="root_path" size="50" placeholder="/data/manga"></td>
-</tr>
-</table>
-<br>
-<input type="submit" value="[Add Library]">
-<a href="/">[Cancel]</a>
-</form>"#;
-
-    page("Add Library", body.to_string())
-}
-
-// ---------------------------------------------------------------------------
-// POST /library/new
-// ---------------------------------------------------------------------------
-
-#[derive(rocket::FromForm)]
-struct LibraryForm {
-    library_type: String,
-    root_path: String,
-}
-
-#[post("/library/new", data = "<form>")]
-async fn library_new_post(
-    pool: &State<SqlitePool>,
-    form: Form<LibraryForm>,
-) -> Result<Redirect, RawHtml<String>> {
-    let r#type = match form.library_type.as_str() {
-        "Comics" => MangaType::Comics,
-        _ => MangaType::Manga,
-    };
-
-    if form.root_path.trim().is_empty() {
-        return Err(error_page("Root path cannot be empty."));
-    }
-
-    let lib = Library {
-        uuid: Uuid::new_v4(),
-        r#type,
-        root_path: PathBuf::from(form.root_path.trim()),
-    };
-
-    db::library::insert(pool.inner(), &lib)
-        .await
-        .map_err(|e| error_page(&e.to_string()))?;
-
-    Ok(Redirect::to("/"))
-}
-
-// ---------------------------------------------------------------------------
-// GET /library/<uuid> -- view library contents
-// ---------------------------------------------------------------------------
-
-#[get("/library/<uuid>")]
-async fn library_view(pool: &State<SqlitePool>, uuid: &str) -> RawHtml<String> {
-    let id = match Uuid::parse_str(uuid) {
-        Ok(id) => id,
-        Err(_) => return error_page("Invalid library ID."),
-    };
-
-    let lib = match db::library::get_by_id(pool.inner(), id).await {
-        Ok(Some(l)) => l,
-        Ok(None) => return error_page("Library not found."),
-        Err(e) => return error_page(&e.to_string()),
-    };
-
-    let manga_list = match db::manga::get_all_for_library(pool.inner(), id).await {
-        Ok(m) => m,
-        Err(e) => return error_page(&e.to_string()),
-    };
-
-    let type_str = match lib.r#type {
-        MangaType::Manga => "Manga",
-        MangaType::Comics => "Comics",
-    };
-
-    let mut body = format!(
-        "<pre>Path : {}\nType : {}</pre>\n",
-        html_escape(&lib.root_path.to_string_lossy()),
-        type_str
-    );
-
-    if manga_list.is_empty() {
-        body.push_str("<p>No manga in this library yet.</p>\n");
-    } else {
-        body.push_str(&format!("<p>{} series:</p>\n<ul>\n", manga_list.len()));
-        for m in &manga_list {
-            let year = m
-                .metadata
-                .start_year
-                .map(|y| y.to_string())
-                .unwrap_or_else(|| "?".to_string());
-            let downloaded = m.downloaded_count.unwrap_or(0);
-            let total = m
-                .chapter_count
-                .map(|c| c.to_string())
-                .unwrap_or_else(|| "?".to_string());
-
-            body.push_str(&format!(
-                "<li><a href=\"/manga/{id}\">{title}</a> ({year}) -- {downloaded}/{total} ch.</li>\n",
-                id = m.id,
-                title = html_escape(&m.metadata.title),
-            ));
-        }
-        body.push_str("</ul>\n");
-    }
-
-    body.push_str("<p><a href=\"/search\">[+ Search and Add Manga]</a></p>\n");
-    page(&lib.root_path.to_string_lossy(), body)
-}
-
-// ---------------------------------------------------------------------------
-// GET /search?<q> -- AniList search
-// ---------------------------------------------------------------------------
-
-#[get("/search?<q>")]
-async fn search(al: &State<ALClient>, q: Option<String>) -> RawHtml<String> {
-    let q_val = q.as_deref().unwrap_or("").trim().to_string();
-
-    let mut body = format!(
-        r#"<form method="GET" action="/search">
-<input type="text" name="q" size="40" placeholder="Search for manga..." value="{}">
-<input type="submit" value="[Search]">
-</form>
-<hr>
-"#,
-        html_escape(&q_val)
-    );
-
-    if !q_val.is_empty() {
-        match al.search_manga(&q_val).await {
-            Ok(results) => {
-                if results.data.is_empty() {
-                    body.push_str("<p>No results found.</p>\n");
-                } else {
-                    body.push_str(&format!(
-                        "<p>Results for &quot;{}&quot;:</p>\n",
-                        html_escape(&q_val)
-                    ));
-                    for media in &results.data {
-                        let id = media.id.unwrap_or(0);
-                        let title = media
-                            .title
-                            .as_ref()
-                            .and_then(|t| t.english.as_deref().or(t.romaji.as_deref()))
-                            .unwrap_or("Unknown Title");
-                        let romaji = media
-                            .title
-                            .as_ref()
-                            .and_then(|t| t.romaji.as_deref())
-                            .unwrap_or("");
-                        let year = media
-                            .start_date
-                            .as_ref()
-                            .and_then(|d| d.year)
-                            .map(|y| y.to_string())
-                            .unwrap_or_else(|| "?".to_string());
-                        let status = media
-                            .status
-                            .as_ref()
-                            .map(|s| format!("{s:?}"))
-                            .unwrap_or_else(|| "Unknown".to_string());
-                        let thumb = media
-                            .cover_image
-                            .as_ref()
-                            .and_then(|c| c.medium.as_deref().or(c.large.as_deref()));
-
-                        body.push_str("<table><tr>\n");
-                        if let Some(url) = thumb {
-                            body.push_str(&format!(
-                                "<td><img src=\"{}\" width=\"60\" alt=\"cover\"></td>\n",
-                                html_escape(url)
-                            ));
-                        }
-                        body.push_str(&format!(
-                            r#"<td>
-<b><a href="https://anilist.co/manga/{id}" target="_blank">{title}</a></b>
-({year}) [{status}]<br>
-Romaji: {romaji}<br>
-<a href="/manga/add?anilist_id={id}">[Add to Library]</a>
-</td>"#,
-                            title = html_escape(title),
-                            romaji = html_escape(romaji),
-                        ));
-                        body.push_str("</tr></table>\n<hr>\n");
-                    }
-                }
-            }
-            Err(e) => {
-                body.push_str(&format!(
-                    "<p><b>!! Search error !!</b><br>{}</p>\n",
-                    html_escape(&e.to_string())
-                ));
-            }
-        }
-    }
-
-    page("Search Manga", body)
-}
-
-/// ---------------------------------------------------------------------------
-/// GET /manga/add?anilist_id=<id> -- pick library + folder name
-/// All manga data is embedded as hidden fields so the POST needs no API call.
-/// ---------------------------------------------------------------------------
-#[get("/manga/add?<anilist_id>")]
-async fn manga_add_form(
-    pool: &State<SqlitePool>,
-    al: &State<ALClient>,
-    anilist_id: i32,
-) -> RawHtml<String> {
-    let manga = match al.grab_manga(anilist_id).await {
-        Ok(m) => m,
-        Err(e) => return error_page(&format!("AniList lookup failed: {e}")),
-    };
-
-    let libs = match db::library::get_all(pool.inner()).await {
-        Ok(l) => l,
-        Err(e) => return error_page(&e.to_string()),
-    };
-
-    if libs.is_empty() {
-        return error_page("No libraries found. Please add a library first.");
-    }
-
-    let default_path = manga
-        .metadata
-        .title
-        .replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
-
-    let mut lib_options = String::new();
-    for lib in &libs {
-        let type_str = match lib.r#type {
-            MangaType::Manga => "Manga",
-            MangaType::Comics => "Comics",
-        };
-        lib_options.push_str(&format!(
-            "<option value=\"{uuid}\">{path} [{type_str}]</option>\n",
-            uuid = lib.uuid,
-            path = html_escape(&lib.root_path.to_string_lossy()),
-        ));
-    }
-
-    let synopsis_preview = manga
-        .metadata
-        .synopsis
-        .as_deref()
-        .unwrap_or("No synopsis.")
-        .chars()
-        .take(300)
-        .collect::<String>();
-
-    let thumb_html = match &manga.thumbnail_url {
-        Some(url) => format!("<img src=\"{}\" width=\"120\" alt=\"cover\"><br><br>\n", html_escape(url)),
-        None => String::new(),
-    };
-
-    // Serialise optional fields as empty strings so hidden inputs are always present.
-    let mal_id_s = manga.mal_id.map(|v| v.to_string()).unwrap_or_default();
-    let start_year_s = manga.metadata.start_year.map(|v| v.to_string()).unwrap_or_default();
-    let end_year_s = manga.metadata.end_year.map(|v| v.to_string()).unwrap_or_default();
-    let chapter_count_s = manga.chapter_count.map(|v| v.to_string()).unwrap_or_default();
-    let thumbnail_s = manga.thumbnail_url.as_deref().unwrap_or_default();
-    let synopsis_s = manga.metadata.synopsis.as_deref().unwrap_or_default();
-    let status_s = publishing_status_str(&manga.metadata.publishing_status);
-
-    let body = format!(
-        r#"{thumb_html}<pre>Title  : <a href="https://anilist.co/manga/{anilist_id}" target="_blank">{title}</a>
-Romaji : {romaji}
-Year   : {year}
-Status : {status}
-
-{synopsis}...</pre>
-<form method="POST" action="/manga/add">
-<!-- manga metadata, so POST doesn't need to call AniList again -->
-<input type="hidden" name="anilist_id"        value="{anilist_id}">
-<input type="hidden" name="mal_id"            value="{mal_id}">
-<input type="hidden" name="title"             value="{title_h}">
-<input type="hidden" name="title_og"          value="{title_og_h}">
-<input type="hidden" name="title_roman"       value="{title_roman_h}">
-<input type="hidden" name="synopsis"          value="{synopsis_h}">
-<input type="hidden" name="publishing_status" value="{status_s}">
-<input type="hidden" name="start_year"        value="{start_year}">
-<input type="hidden" name="end_year"          value="{end_year}">
-<input type="hidden" name="chapter_count"     value="{chapter_count}">
-<input type="hidden" name="thumbnail_url"     value="{thumbnail_h}">
-<table>
-<tr>
-  <td>Library:</td>
-  <td>
-    <select name="library_id">
-{lib_options}    </select>
-  </td>
-</tr>
-<tr>
-  <td>Folder name:</td>
-  <td><input type="text" name="relative_path" size="50" value="{default_path}"></td>
-</tr>
-</table>
-<br>
-<input type="submit" value="[Add to Library]">
-<a href="/search">[Cancel]</a>
-</form>"#,
-        title = html_escape(&manga.metadata.title),
-        romaji = html_escape(&manga.metadata.title_roman),
-        year = manga
-            .metadata
-            .start_year
-            .map(|y| y.to_string())
-            .unwrap_or_else(|| "?".to_string()),
-        status = status_s,
-        synopsis = html_escape(&synopsis_preview),
-        // hidden field values (already html-escaped where needed)
-        mal_id = html_escape(&mal_id_s),
-        title_h = html_escape(&manga.metadata.title),
-        title_og_h = html_escape(&manga.metadata.title_og),
-        title_roman_h = html_escape(&manga.metadata.title_roman),
-        synopsis_h = html_escape(synopsis_s),
-        status_s = status_s,
-        start_year = html_escape(&start_year_s),
-        end_year = html_escape(&end_year_s),
-        chapter_count = html_escape(&chapter_count_s),
-        thumbnail_h = html_escape(thumbnail_s),
-        default_path = html_escape(&default_path),
-    );
-
-    page(&format!("Add: {}", manga.metadata.title), body)
-}
-
-fn publishing_status_str(s: &PublishingStatus) -> &'static str {
-    match s {
-        PublishingStatus::Completed => "Completed",
-        PublishingStatus::Ongoing => "Ongoing",
-        PublishingStatus::Hiatus => "Hiatus",
-        PublishingStatus::Cancelled => "Cancelled",
-        PublishingStatus::NotYetReleased => "NotYetReleased",
-        PublishingStatus::Unknown => "Unknown",
-    }
-}
-
-fn parse_publishing_status(s: &str) -> PublishingStatus {
-    match s {
-        "Completed" => PublishingStatus::Completed,
-        "Ongoing" => PublishingStatus::Ongoing,
-        "Hiatus" => PublishingStatus::Hiatus,
-        "Cancelled" => PublishingStatus::Cancelled,
-        "NotYetReleased" => PublishingStatus::NotYetReleased,
-        _ => PublishingStatus::Unknown,
-    }
-}
-
-// ---------------------------------------------------------------------------
-// POST /manga/add -- construct Manga from form fields, no AniList call
-// ---------------------------------------------------------------------------
-
-#[derive(rocket::FromForm)]
-struct MangaAddForm {
-    // User choices
-    library_id: String,
-    relative_path: String,
-    // Hidden manga data (serialised as strings, empty = None)
-    anilist_id: i32,
-    mal_id: String,
-    title: String,
-    title_og: String,
-    title_roman: String,
-    synopsis: String,
-    publishing_status: String,
-    start_year: String,
-    end_year: String,
-    chapter_count: String,
-    thumbnail_url: String,
-}
-
-#[post("/manga/add", data = "<form>")]
-async fn manga_add_post(
-    pool: &State<SqlitePool>,
-    form: Form<MangaAddForm>,
-) -> Result<Redirect, RawHtml<String>> {
-    let library_id = Uuid::parse_str(&form.library_id)
-        .map_err(|_| error_page("Invalid library ID."))?;
-
-    if form.relative_path.trim().is_empty() {
-        return Err(error_page("Folder name cannot be empty."));
-    }
-
-    if form.title.trim().is_empty() {
-        return Err(error_page("Manga title is missing from form data."));
-    }
-
-    let manga = Manga {
-        id: Uuid::new_v4(),
-        library_id,
-        anilist_id: Some(form.anilist_id as u32),
-        mal_id: form.mal_id.parse::<u32>().ok(),
-        relative_path: PathBuf::from(form.relative_path.trim()),
-        downloaded_count: None,
-        chapter_count: form.chapter_count.parse::<u32>().ok(),
-        metadata_source: MangaSource::AniList,
-        thumbnail_url: if form.thumbnail_url.is_empty() {
-            None
-        } else {
-            Some(form.thumbnail_url.clone())
-        },
-        created_at: Utc::now(),
-        metadata_updated_at: Utc::now(),
-        metadata: MangaMetadata {
-            title: form.title.clone(),
-            title_og: form.title_og.clone(),
-            title_roman: form.title_roman.clone(),
-            synopsis: if form.synopsis.is_empty() {
-                None
-            } else {
-                Some(form.synopsis.clone())
-            },
-            publishing_status: parse_publishing_status(&form.publishing_status),
-            tags: vec![], // tags aren't passed through the form; acceptable for now
-            start_year: form.start_year.parse::<i32>().ok(),
-            end_year: form.end_year.parse::<i32>().ok(),
-        },
-    };
-
-    db::manga::insert(pool.inner(), &manga)
-        .await
-        .map_err(|e| error_page(&e.to_string()))?;
-
-    Ok(Redirect::to(format!("/library/{library_id}")))
-}
-
-// ---------------------------------------------------------------------------
-// GET /manga/<uuid> -- manga detail (chapters stub)
-// ---------------------------------------------------------------------------
-
-#[get("/manga/<uuid>")]
-async fn manga_view(pool: &State<SqlitePool>, uuid: &str) -> RawHtml<String> {
-    let id = match Uuid::parse_str(uuid) {
-        Ok(id) => id,
-        Err(_) => return error_page("Invalid manga ID."),
-    };
-
-    let manga = match db::manga::get_by_id(pool.inner(), id).await {
-        Ok(Some(m)) => m,
-        Ok(None) => return error_page("Manga not found."),
-        Err(e) => return error_page(&e.to_string()),
-    };
-
-    let year_range = match (manga.metadata.start_year, manga.metadata.end_year) {
-        (Some(s), Some(e)) => format!("{s} - {e}"),
-        (Some(s), None) => format!("{s} - ongoing"),
-        _ => "?".to_string(),
-    };
-
-    let tags = if manga.metadata.tags.is_empty() {
-        "None".to_string()
-    } else {
-        manga.metadata.tags.join(", ")
-    };
-
-    let anilist_link = manga
-        .anilist_id
-        .map(|id| {
-            format!(
-                "<a href=\"https://anilist.co/manga/{id}\" target=\"_blank\">[View on AniList]</a>"
-            )
-        })
-        .unwrap_or_default();
-
-    let thumb_html = match &manga.thumbnail_url {
-        Some(url) => format!("<img src=\"{}\" width=\"150\" alt=\"cover\"><br><br>\n", html_escape(url)),
-        None => String::new(),
-    };
-
-    let body = format!(
-        r#"{thumb_html}<pre>Title    : {title}  {anilist_link}
-Romaji   : {romaji}
-Original : {og}
-Years    : {years}
-Status   : {status}
-Chapters : {dl} / {total} downloaded
-Folder   : {path}
-
-Synopsis:
-{synopsis}
-
-Tags: {tags}</pre>
-<p>[ Chapter listing and download functionality coming soon ]</p>
-<p><a href="/library/{lib_id}">[Back to Library]</a></p>"#,
-        title = html_escape(&manga.metadata.title),
-        romaji = html_escape(&manga.metadata.title_roman),
-        og = html_escape(&manga.metadata.title_og),
-        years = year_range,
-        status = publishing_status_str(&manga.metadata.publishing_status),
-        dl = manga.downloaded_count.unwrap_or(0),
-        total = manga
-            .chapter_count
-            .map(|c| c.to_string())
-            .unwrap_or_else(|| "?".to_string()),
-        path = html_escape(&manga.relative_path.to_string_lossy()),
-        synopsis = html_escape(
-            manga
-                .metadata
-                .synopsis
-                .as_deref()
-                .unwrap_or("No synopsis available.")
-        ),
-        tags = html_escape(&tags),
-        lib_id = manga.library_id,
-    );
-
-    page(&manga.metadata.title, body)
+pub fn index() -> RawHtml<&'static str> {
+    RawHtml(FRONTEND_HTML)
 }
 
 // ---------------------------------------------------------------------------
@@ -626,14 +15,322 @@ Tags: {tags}</pre>
 // ---------------------------------------------------------------------------
 
 pub fn routes() -> Vec<rocket::Route> {
-    routes![
-        index,
-        library_new_form,
-        library_new_post,
-        library_view,
-        search,
-        manga_add_form,
-        manga_add_post,
-        manga_view,
-    ]
+    routes![index]
 }
+
+// ---------------------------------------------------------------------------
+// Frontend HTML + JS
+// Replace this with a proper frontend framework later; the REST API stays the same.
+// ---------------------------------------------------------------------------
+
+const FRONTEND_HTML: &str = r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>REBARR</title>
+<style>
+  body { font-family: monospace; max-width: 900px; margin: 0 auto; padding: 1rem; }
+  nav { border-bottom: 1px solid #ccc; padding-bottom: 0.5rem; margin-bottom: 1rem; }
+  nav a { margin-right: 1rem; cursor: pointer; color: #06c; }
+  h2 { margin-top: 0; }
+  table { border-collapse: collapse; width: 100%; }
+  td, th { padding: 0.3rem 0.6rem; text-align: left; border-bottom: 1px solid #eee; }
+  th { font-weight: bold; }
+  img.cover { width: 80px; height: auto; }
+  img.cover-lg { width: 160px; height: auto; }
+  .error { color: red; }
+  .tag { background: #eee; padding: 0.1rem 0.4rem; border-radius: 3px; margin: 0.1rem; display: inline-block; font-size: 0.85em; }
+  input[type=text], select { width: 100%; box-sizing: border-box; padding: 0.3rem; margin-bottom: 0.4rem; }
+  button { padding: 0.4rem 0.8rem; cursor: pointer; }
+  #app { min-height: 200px; }
+  pre { white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<pre>+================================================+
+| REBARR -- Manga Library Manager                |
++================================================+</pre>
+<nav>
+  <a onclick="showHome()">Home</a>
+  <a onclick="showSearch()">Search Manga</a>
+  <a onclick="showAddLibrary()">Add Library</a>
+</nav>
+<div id="app"><p>Loading...</p></div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Tiny router / view switcher
+// ---------------------------------------------------------------------------
+let currentView = null;
+
+function render(html) {
+  document.getElementById('app').innerHTML = html;
+}
+
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const r = await fetch(path, opts);
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({ error: r.statusText }));
+    throw new Error(e.error || r.statusText);
+  }
+  if (r.status === 204) return null;
+  return r.json();
+}
+
+function escape(s) {
+  if (s == null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ---------------------------------------------------------------------------
+// Home — list libraries
+// ---------------------------------------------------------------------------
+async function showHome() {
+  render('<p>Loading libraries...</p>');
+  try {
+    const libs = await api('GET', '/api/libraries');
+    if (libs.length === 0) {
+      render('<p>No libraries configured yet. <a onclick="showAddLibrary()">Add one!</a></p>');
+      return;
+    }
+    let rows = libs.map(lib => {
+      const t = lib.type === 'Comics' ? 'Comics' : 'Manga';
+      return `<tr>
+        <td>${escape(t)}</td>
+        <td><a onclick='showLibrary("${lib.uuid}")'>${escape(lib.root_path)}</a></td>
+      </tr>`;
+    }).join('');
+    render(`<h2>Libraries</h2>
+      <table><tr><th>Type</th><th>Path</th></tr>${rows}</table>
+      <br><button onclick="showAddLibrary()">+ Add Library</button>`);
+  } catch(e) {
+    render(`<p class="error">Error: ${escape(e.message)}</p>`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Library view — list manga
+// ---------------------------------------------------------------------------
+async function showLibrary(libId) {
+  render('<p>Loading...</p>');
+  try {
+    const [lib, mangas] = await Promise.all([
+      api('GET', `/api/libraries/${libId}`),
+      api('GET', `/api/libraries/${libId}/manga`),
+    ]);
+    const t = lib.type === 'Comics' ? 'Comics' : 'Manga';
+    let rows = mangas.length === 0
+      ? '<tr><td colspan="4">No manga yet.</td></tr>'
+      : mangas.map(m => {
+          const dl = m.downloaded_count ?? 0;
+          const total = m.chapter_count != null ? m.chapter_count : '?';
+          const year = m.metadata?.start_year ?? '?';
+          const thumb = m.thumbnail_url
+            ? `<img class="cover" src="${escape(m.thumbnail_url)}" alt="">`
+            : '';
+          return `<tr>
+            <td>${thumb}</td>
+            <td><a onclick='showManga("${m.id}")'>${escape(m.metadata?.title)}</a></td>
+            <td>${escape(year)}</td>
+            <td>${dl} / ${total}</td>
+          </tr>`;
+        }).join('');
+    render(`<h2>${escape(lib.root_path)} <small>[${t}]</small></h2>
+      <table>
+        <tr><th></th><th>Title</th><th>Year</th><th>Chapters</th></tr>
+        ${rows}
+      </table>
+      <br><button onclick='showSearch("${libId}")'>+ Search &amp; Add Manga</button>
+      &nbsp;<a onclick="showHome()">[Back]</a>`);
+  } catch(e) {
+    render(`<p class="error">Error: ${escape(e.message)}</p>`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Search — AniList search results
+// ---------------------------------------------------------------------------
+async function showSearch(preselectedLibId) {
+  render(`<h2>Search Manga</h2>
+    <input type="text" id="sq" placeholder="Search for manga..." onkeydown="if(event.key==='Enter')doSearch()">
+    <button onclick="doSearch()">Search</button>
+    <div id="results"></div>`);
+  window._preselectedLibId = preselectedLibId || null;
+}
+
+async function doSearch() {
+  const q = document.getElementById('sq').value.trim();
+  if (!q) return;
+  document.getElementById('results').innerHTML = '<p>Searching...</p>';
+  try {
+    const results = await api('GET', `/api/manga/search?q=${encodeURIComponent(q)}`);
+    if (results.length === 0) {
+      document.getElementById('results').innerHTML = '<p>No results.</p>';
+      return;
+    }
+    const rows = results.map(m => {
+      const id = m.anilist_id ?? 0;
+      const title = m.metadata?.title ?? 'Unknown';
+      const year = m.metadata?.start_year ?? '?';
+      const status = m.metadata?.publishing_status ?? 'Unknown';
+      const thumb = m.thumbnail_url
+        ? `<img class="cover" src="${escape(m.thumbnail_url)}" alt="">`
+        : '';
+      return `<tr>
+        <td>${thumb}</td>
+        <td>
+          <b><a href="https://anilist.co/manga/${id}" target="_blank">${escape(title)}</a></b><br>
+          ${escape(year)} [${escape(status)}]<br>
+          Romaji: ${escape(m.metadata?.title_roman)}
+        </td>
+        <td><button onclick='showAddManga(${id}, ${JSON.stringify(title)})'>Add to Library</button></td>
+      </tr>`;
+    }).join('');
+    document.getElementById('results').innerHTML =
+      `<table><tr><th></th><th>Title</th><th></th></tr>${rows}</table>`;
+  } catch(e) {
+    document.getElementById('results').innerHTML =
+      `<p class="error">Error: ${escape(e.message)}</p>`;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Add manga — pick library + folder name, then POST /api/manga
+// ---------------------------------------------------------------------------
+function toPathSafe(s) {
+  // Remove characters not allowed in directory names, collapse spaces
+  return (s || '').replace(/[\/\\:*?"<>|]/g, '').replace(/\s+/g, ' ').trim() || 'manga';
+}
+
+async function showAddManga(anilistId, title) {
+  render('<p>Loading...</p>');
+  try {
+    const [preview, libs] = await Promise.all([
+      api('GET', `/api/manga/search?q=${anilistId}`).then(r => {
+        // search by ID gives fuzzy results; fetch exact via /api/manga/search isn't ideal
+        // We'll use the add form and let the POST do the real AniList lookup
+        return null;
+      }).catch(() => null),
+      api('GET', '/api/libraries'),
+    ]);
+
+    if (libs.length === 0) {
+      render('<p class="error">No libraries found. Please add a library first.</p>');
+      return;
+    }
+
+    const libOptions = libs.map(lib => {
+      const sel = window._preselectedLibId === lib.uuid ? 'selected' : '';
+      return `<option value="${lib.uuid}" ${sel}>${escape(lib.root_path)}</option>`;
+    }).join('');
+
+    render(`<h2>Add Manga (AniList #${anilistId})</h2>
+      <p>Choose a destination library and folder name. Metadata will be fetched on add.</p>
+      <label>Library:<br>
+        <select id="am-lib">${libOptions}</select>
+      </label>
+      <label>Folder name:<br>
+        <input type="text" id="am-path" value="${escape(toPathSafe(title))}">
+      </label>
+      <br>
+      <button onclick='doAddManga(${anilistId})'>Add to Library</button>
+      &nbsp;<a onclick="showSearch()">[Cancel]</a>
+      <div id="am-status"></div>`);
+  } catch(e) {
+    render(`<p class="error">Error: ${escape(e.message)}</p>`);
+  }
+}
+
+async function doAddManga(anilistId) {
+  const libId = document.getElementById('am-lib').value;
+  const path = document.getElementById('am-path').value.trim();
+  if (!path) { document.getElementById('am-status').innerHTML = '<p class="error">Folder name required.</p>'; return; }
+
+  document.getElementById('am-status').innerHTML = '<p>Adding... (downloading cover, fetching metadata)</p>';
+  try {
+    const manga = await api('POST', '/api/manga', {
+      anilist_id: anilistId,
+      library_id: libId,
+      relative_path: path,
+    });
+    showManga(manga.id);
+  } catch(e) {
+    document.getElementById('am-status').innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Manga detail
+// ---------------------------------------------------------------------------
+async function showManga(id) {
+  render('<p>Loading...</p>');
+  try {
+    const m = await api('GET', `/api/manga/${id}`);
+    const meta = m.metadata ?? {};
+    const year = meta.start_year ? (meta.end_year ? `${meta.start_year} - ${meta.end_year}` : `${meta.start_year} - ongoing`) : '?';
+    const dl = m.downloaded_count ?? 0;
+    const total = m.chapter_count != null ? m.chapter_count : '?';
+    const thumb = m.thumbnail_url
+      ? `<img class="cover-lg" src="${escape(m.thumbnail_url)}" alt="cover"><br><br>`
+      : '';
+    const tags = (meta.tags ?? []).map(t => `<span class="tag">${escape(t)}</span>`).join(' ');
+    const aniLink = m.anilist_id
+      ? `<a href="https://anilist.co/manga/${m.anilist_id}" target="_blank">[AniList]</a>`
+      : '';
+
+    render(`${thumb}<h2>${escape(meta.title)} ${aniLink}</h2>
+      <pre>Romaji   : ${escape(meta.title_roman)}
+Original : ${escape(meta.title_og)}
+Years    : ${escape(year)}
+Status   : ${escape(meta.publishing_status)}
+Chapters : ${dl} / ${total} downloaded
+Folder   : ${escape(m.relative_path)}</pre>
+      <p><b>Synopsis:</b><br>${escape(meta.synopsis ?? 'No synopsis available.')}</p>
+      <p><b>Tags:</b><br>${tags || 'None'}</p>
+      <p>[ Chapter listing and download functionality coming soon ]</p>
+      <p><a onclick='showLibrary("${m.library_id}")'>[Back to Library]</a></p>`);
+  } catch(e) {
+    render(`<p class="error">Error: ${escape(e.message)}</p>`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Add Library form
+// ---------------------------------------------------------------------------
+function showAddLibrary() {
+  render(`<h2>Add Library</h2>
+    <label>Library Type:<br>
+      <select id="al-type">
+        <option value="Manga">Manga</option>
+        <option value="Comics">Comics (Western)</option>
+      </select>
+    </label>
+    <label>Root Path:<br>
+      <input type="text" id="al-path" placeholder="/data/manga">
+    </label>
+    <br>
+    <button onclick="doAddLibrary()">Add Library</button>
+    &nbsp;<a onclick="showHome()">[Cancel]</a>
+    <div id="al-status"></div>`);
+}
+
+async function doAddLibrary() {
+  const t = document.getElementById('al-type').value;
+  const p = document.getElementById('al-path').value.trim();
+  if (!p) { document.getElementById('al-status').innerHTML = '<p class="error">Root path required.</p>'; return; }
+  try {
+    await api('POST', '/api/libraries', { library_type: t, root_path: p });
+    showHome();
+  } catch(e) {
+    document.getElementById('al-status').innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
+  }
+}
+
+// Boot
+showHome();
+</script>
+</body>
+</html>"#;

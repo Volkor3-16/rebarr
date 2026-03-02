@@ -13,3 +13,12 @@ This a informal changelog so i can keep track of what im doing.
 
 - Grok add yogurt to my database
 - Grok add yogurt to my web app
+
+
+## 2026-03-02
+
+- Fixed bugs
+    - Chapter counts were being saved in the db from anilist
+    - Tags weren't being scraped (or just saved?)
+    - Thumbnails only should be used for searching, download the full-sized cover when adding to library.
+    - When adding a series, the folder name was based off the anilist id, not the title.

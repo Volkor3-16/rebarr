@@ -3,3 +3,7 @@
 /crates
 .env
 rebarr.db
+rebarr.db-shm
+rebarr.db-wal
+thumbnails/
+

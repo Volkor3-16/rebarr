@@ -66,6 +66,56 @@ pub enum MangaSource {
     Local,
 }
 
+/// Strip HTML tags from AniList synopsis text.
+/// Converts `<br>` variants to newlines, removes all other tags,
+/// decodes common HTML entities, and collapses excessive blank lines.
+fn strip_html(s: &str) -> String {
+    // Normalise <br> variants to newlines before stripping
+    let mut work = s.to_owned();
+    for br in &["<br />", "<br/>", "<br>", "<BR />", "<BR/>", "<BR>"] {
+        work = work.replace(br, "\n");
+    }
+
+    // Remove remaining tags
+    let mut out = String::with_capacity(work.len());
+    let mut in_tag = false;
+    for ch in work.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(ch),
+            _ => {}
+        }
+    }
+
+    // Decode common HTML entities
+    let out = out
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#039;", "'")
+        .replace("&apos;", "'")
+        .replace("&nbsp;", " ");
+
+    // Collapse runs of 3+ newlines down to 2
+    let mut result = String::with_capacity(out.len());
+    let mut newline_run = 0u32;
+    for ch in out.chars() {
+        if ch == '\n' {
+            newline_run += 1;
+            if newline_run <= 2 {
+                result.push(ch);
+            }
+        } else {
+            newline_run = 0;
+            result.push(ch);
+        }
+    }
+
+    result.trim().to_owned()
+}
+
 impl From<Media> for Manga {
     /// Conversion from AniList API to Internal Struct
     fn from(media: Media) -> Self {
@@ -86,14 +136,14 @@ impl From<Media> for Manga {
             _ => PublishingStatus::Unknown,
         };
 
-        // Convert chapters from i32 to u32 if available
-        let chapter_count = media.chapters.map(|c| c as u32);
+        // chapter_count stays None until scraped from providers; AniList data is unreliable
+        let chapter_count = None;
 
         let metadata = MangaMetadata {
             title,
             title_og,
             title_roman,
-            synopsis: media.description,
+            synopsis: media.description.as_deref().map(strip_html),
             publishing_status: status,
             tags: media.tags
                 .unwrap_or_default()
@@ -106,7 +156,7 @@ impl From<Media> for Manga {
 
         let thumbnail_url = media.cover_image
             .as_ref()
-            .and_then(|c| c.large.clone().or_else(|| c.medium.clone()));
+            .and_then(|c| c.extra_large.clone().or_else(|| c.large.clone()).or_else(|| c.medium.clone()));
 
         Manga {
             id: Uuid::new_v4(),

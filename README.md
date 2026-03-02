@@ -72,11 +72,3 @@ thats it :)
 
 
 Please do note that this program was NOT entirely vibecoded, but I did use a little bit to help plan and implement some of the basics. It's a nice tool for rubber duck debugging too, and just to clarify, all LLM Generation was done on a Local Machine (lie), entirely powered with solar.
-
-
-
-## Bugs
-
-- Chapter counts are being used from Anilist, they should be None Values until we scrape providers.
-- Tags aren't being scraped, or not saved at least.
-- Thumbnails work, but when the manga is added to the library, I'd like to download the high resolution cover photo and use that.
