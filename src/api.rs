@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use chrono::Utc;
 use rocket::{State, delete, get, http::Status, post, routes, serde::json::Json};
@@ -8,8 +9,10 @@ use uuid::Uuid;
 
 use crate::{
     covers, db,
-    manga::{Library, Manga, MangaType},
+    db::task::TaskType,
+    manga::{Chapter, Library, Manga, MangaType},
     metadata::anilist::ALClient,
+    scraper::ProviderRegistry,
 };
 
 // ---------------------------------------------------------------------------
@@ -178,10 +181,10 @@ async fn add_manga(
     manga.metadata_updated_at = Utc::now();
 
     // Download high-res cover to disk; fall back to original URL on failure
-    if let Some(url) = &manga.thumbnail_url.clone() {
-        manga.thumbnail_url = covers::download_cover(http.inner(), url, manga.id)
+    if let Some(url) = manga.thumbnail_url.take() {
+        manga.thumbnail_url = covers::download_cover(http.inner(), &url, manga.id)
             .await
-            .or(manga.thumbnail_url);
+            .or(Some(url));
     }
 
     db::manga::insert(pool.inner(), &manga)
@@ -222,6 +225,142 @@ async fn delete_manga(
 }
 
 // ---------------------------------------------------------------------------
+// GET /api/providers
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+struct ProviderInfo {
+    name: String,
+    score: u8,
+    needs_browser: bool,
+}
+
+#[get("/api/providers")]
+async fn list_providers(registry: &State<Arc<ProviderRegistry>>) -> Json<Vec<ProviderInfo>> {
+    let providers = registry
+        .by_score()
+        .into_iter()
+        .map(|p| ProviderInfo {
+            name: p.name().to_owned(),
+            score: p.score(),
+            needs_browser: p.needs_browser(),
+        })
+        .collect();
+    Json(providers)
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/manga/<id>/scan
+// ---------------------------------------------------------------------------
+
+#[post("/api/manga/<id>/scan")]
+async fn scan_manga_api(
+    pool: &State<SqlitePool>,
+    id: &str,
+) -> Result<Status, (Status, Json<ApiError>)> {
+    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    db::manga::get_by_id(pool.inner(), manga_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("manga not found"))?;
+
+    db::task::enqueue(pool.inner(), TaskType::ScanLibrary, Some(manga_id), None, 5)
+        .await
+        .map_err(internal)?;
+
+    Ok(Status::Accepted)
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/manga/<id>/provider
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct SetProviderRequest {
+    provider_name: String,
+    provider_url: String,
+}
+
+#[post("/api/manga/<id>/provider", data = "<body>")]
+async fn set_provider(
+    pool: &State<SqlitePool>,
+    id: &str,
+    body: Json<SetProviderRequest>,
+) -> Result<Status, (Status, Json<ApiError>)> {
+    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    db::manga::get_by_id(pool.inner(), manga_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("manga not found"))?;
+
+    db::provider::upsert(
+        pool.inner(),
+        &db::provider::MangaProvider {
+            manga_id,
+            provider_name: body.provider_name.clone(),
+            provider_url: body.provider_url.clone(),
+            last_synced_at: None,
+        },
+    )
+    .await
+    .map_err(internal)?;
+
+    Ok(Status::Ok)
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/manga/<id>/chapters
+// ---------------------------------------------------------------------------
+
+#[get("/api/manga/<id>/chapters")]
+async fn list_chapters(pool: &State<SqlitePool>, id: &str) -> ApiResult<Vec<Chapter>> {
+    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    db::manga::get_by_id(pool.inner(), manga_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("manga not found"))?;
+
+    db::chapter::get_all_for_manga(pool.inner(), manga_id)
+        .await
+        .map(Json)
+        .map_err(internal)
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/manga/<id>/chapters/<num>/download
+// ---------------------------------------------------------------------------
+
+#[post("/api/manga/<id>/chapters/<num>/download")]
+async fn download_chapter_api(
+    pool: &State<SqlitePool>,
+    id: &str,
+    num: f32,
+) -> Result<Status, (Status, Json<ApiError>)> {
+    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    db::manga::get_by_id(pool.inner(), manga_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("manga not found"))?;
+
+    let chapter = db::chapter::get_by_number(pool.inner(), manga_id, num)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("chapter not found"))?;
+
+    db::task::enqueue(
+        pool.inner(),
+        TaskType::DownloadChapter,
+        Some(manga_id),
+        Some(chapter.id),
+        10,
+    )
+    .await
+    .map_err(internal)?;
+
+    Ok(Status::Accepted)
+}
+
+// ---------------------------------------------------------------------------
 // Route list
 // ---------------------------------------------------------------------------
 
@@ -235,5 +374,10 @@ pub fn routes() -> Vec<rocket::Route> {
         add_manga,
         get_manga,
         delete_manga,
+        list_providers,
+        scan_manga_api,
+        set_provider,
+        list_chapters,
+        download_chapter_api,
     ]
 }

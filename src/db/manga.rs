@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
@@ -38,11 +39,39 @@ struct MangaRow {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+/// Fetch tags for a single manga.
 async fn fetch_tags(pool: &SqlitePool, manga_id: &str) -> Result<Vec<String>, sqlx::Error> {
     sqlx::query_scalar::<_, String>("SELECT tag FROM MangaTag WHERE manga_id = ? ORDER BY tag ASC")
         .bind(manga_id)
         .fetch_all(pool)
         .await
+}
+
+/// Fetch tags for all manga in a library in one query, grouped by manga UUID.
+async fn fetch_tags_for_library(
+    pool: &SqlitePool,
+    library_id: &str,
+) -> Result<HashMap<String, Vec<String>>, sqlx::Error> {
+    #[derive(sqlx::FromRow)]
+    struct TagRow {
+        manga_id: String,
+        tag: String,
+    }
+
+    let rows = sqlx::query_as::<_, TagRow>(
+        "SELECT manga_id, tag FROM MangaTag
+         WHERE manga_id IN (SELECT uuid FROM Manga WHERE library_id = ?)
+         ORDER BY manga_id, tag ASC",
+    )
+    .bind(library_id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut map: HashMap<String, Vec<String>> = HashMap::new();
+    for row in rows {
+        map.entry(row.manga_id).or_default().push(row.tag);
+    }
+    Ok(map)
 }
 
 fn manga_from_parts(row: MangaRow, tags: Vec<String>) -> Result<Manga, sqlx::Error> {
@@ -196,6 +225,7 @@ pub async fn get_by_id(pool: &SqlitePool, id: Uuid) -> Result<Option<Manga>, sql
 }
 
 /// Fetch all manga in a library, each with their tags.
+/// Uses two queries (manga + all tags) instead of N+1.
 pub async fn get_all_for_library(
     pool: &SqlitePool,
     library_id: Uuid,
@@ -214,9 +244,11 @@ pub async fn get_all_for_library(
     .fetch_all(pool)
     .await?;
 
+    let mut tag_map = fetch_tags_for_library(pool, &lib_str).await?;
+
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
-        let tags = fetch_tags(pool, &row.uuid).await?;
+        let tags = tag_map.remove(&row.uuid).unwrap_or_default();
         out.push(manga_from_parts(row, tags)?);
     }
     Ok(out)

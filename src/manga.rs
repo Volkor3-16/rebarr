@@ -18,7 +18,7 @@ pub struct Manga {
     pub id: Uuid,                           // internal, canonical
     pub library_id: Uuid,                   // The Library the manga belongs to
     pub anilist_id: Option<u32>,            // external identity
-    pub mal_id: Option<u32>,                // external identity #2
+    pub mal_id: Option<u32>,                // MAL cross-reference ID (sourced from AniList's id_mal field)
     pub metadata: MangaMetadata,            // Stores all the metadata for the series
     pub relative_path: PathBuf, // Relative (to the library root) path of the manga files.
     pub downloaded_count: Option<i32>, // How many chapters are on disk already.
@@ -198,19 +198,30 @@ impl From<Media> for Manga {
     }
 }
 
+/// All the data about a specific chapter.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Chapter {
-    pub id: Uuid, // Randomly Generated for each downloaded chapter, Downloading a new one overrided, will replace it.
-    pub manga_id: Uuid, // The managa uuid that the chapter belongs to?
-    pub number_raw: String, // supports 12.5 chapter numbering. (what the provider said the chapter was)
+    pub id: Uuid, // Randomly generated for each downloaded chapter; downloading again will replace it.
+    pub manga_id: Uuid, // The manga UUID that the chapter belongs to.
+    pub number_raw: String, // Supports 12.5 chapter numbering. (what the provider said the chapter was)
     pub number_sort: f32,   // Easily sortable chapter number (what we pass to everyone else)
-    pub title: Option<String>, // The title of the chapter, if provded by the.. provider.
-    pub volume: Option<u32>, // The volume number of the chapter. if provded by the.. provider.
-    pub scanlator_group: Option<String>, // The name of the scanlator group, if provded by the.. provider.
+    pub title: Option<String>, // The title of the chapter, if provided by the provider.
+    pub volume: Option<u32>, // The volume number of the chapter, if provided by the provider.
+    pub scanlator_group: Option<String>, // The name of the scanlator group, if provided by the provider.
+    pub download_status: DownloadStatus, // Current download state.
     pub downloaded_at: Option<DateTime<Utc>>, // When the chapter was downloaded.
 }
 
-// We use this for storing the scraped-provided metadata, but since this can change on the site, we save it on scrape, and never again?
+/// Tracks whether a chapter has been downloaded.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum DownloadStatus {
+    Missing,
+    Downloading,
+    Downloaded,
+    Failed,
+}
+
+/// Alias titles are scraped from providers and saved once; they are not refreshed automatically.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MangaAlias {
     pub manga_id: Uuid,
@@ -218,54 +229,11 @@ pub struct MangaAlias {
     pub title: String,
 }
 
-/// Where the metadata came from
-/// It defaults to MAL api, and failing that, the scraped site, but also allowing for 'manual' entries, if you wanna do it yourself.
+/// Where an alias title came from.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AliasSource {
-    MyAnimeList,
+    AniList,
     Site(String),
     Manual,
 }
 
-/// Struct to help map internal chapters to Provider's Chapters
-pub struct ProviderMangaInfo {
-    pub provider: ProviderKind,
-    pub chapters: Vec<ProviderChapterInfo>,
-}
-
-/// Info about individual chapters from a specific provider
-pub struct ProviderChapterInfo {
-    pub raw_number: String, // Raw value of the full chapter as scraped from the provider
-    pub number: f32,        // Extracted chapter number
-    pub title: Option<String>, // Extracted chapter title (can be nothing)
-    pub volume: Option<u32>, // Extracted chapter volume (can be nothing)
-    pub scanlator_group: Option<Scanlator>, // Extracted scanlator group (can be nothing)
-}
-
-pub enum Scanlator {
-    Scanlator(String), // Yes, is a scanlator, and the name.
-    Official(String),  // No, is official release, and the publisher name.
-    Unknown,           // ¯\_(ツ)_/¯
-}
-
-impl Scanlator {
-    pub fn name(&self) -> &str {
-        match self {
-            Self::Scanlator(name) => name,
-            Self::Official(name) => name,
-            Self::Unknown => "Unknown",
-        }
-    }
-}
-
-pub enum ProviderKind {
-    Comix,
-    Kagane,
-    MangaFire,
-    Mangaball,
-    Atsumaru,
-    WeebCentral,
-    Mangago,
-    VyManga,
-    WeebDex,
-}

@@ -1,15 +1,16 @@
 use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
 use std::str::FromStr;
 
+pub mod chapter;
 pub mod library;
 pub mod manga;
+pub mod provider;
+pub mod task;
 
 /// Initialise the database pool.
 ///
 /// - Creates the SQLite file if it does not exist.
-/// - Enables foreign key enforcement on every pooled connection via
-///   `SqliteConnectOptions::pragma` (a per-connection setting that would be
-///   lost if set on a single connection after pool creation).
+/// - Enables foreign key enforcement and journal_mode on the connections.
 /// - Runs any pending migrations from the `migrations/` directory.
 pub async fn init(db_url: &str) -> Result<SqlitePool, sqlx::Error> {
     let opts = SqliteConnectOptions::from_str(db_url)?

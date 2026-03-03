@@ -1,0 +1,65 @@
+## This serves as the first provider, and an example for other providers.
+## It doesn't have any browser/js stuff, so it's relatively easy to get working.
+
+name: WeebCentral
+base_url: https://weebcentral.com
+needs_browser: false
+rate_limit:
+  requests_per_minute: 30
+
+# How to search for manga
+search:
+  url: "/search/data?text={query}&limit=32&offset=0&display_mode=Full Display"
+  results:
+    selector: "article > section > a"
+    fields:
+      title:
+        selector: "div:not([class]):last-child"
+        content: text
+      url:
+        selector: ""
+        content: attr
+        attr_name: href
+        prefix: "{base_url}"
+      cover:
+        selector: "source, img"
+        content: attr
+        attr_name: src
+
+# How to view the chapters
+chapters:
+  url_transform:
+    append: "full-chapter-list"
+  list:
+    selector: "div[x-data] > a"
+    fields:
+      number_raw:
+        selector: "span:nth-child(2) > span:first-child"
+        content: text
+      title:
+        selector: "span.flex > span"
+        content: text
+      url:
+        selector: ""
+        content: attr
+        attr_name: href
+        prefix: "{base_url}"
+      scanlator_group:
+        selector: "svg"
+        content: attr
+        attr_name: stroke
+        value_map:
+          "#d8b4fe": "Official"
+          "#4C4D54": "Unknown Scanlator"
+      date:
+        selector: "time[datetime]"
+        content: attr
+        attr_name: datetime
+
+# How to download the pages in a chapter
+pages:
+  url: "{chapter_url}/images?is_prev=False&reading_style=long_strip"
+  extract:
+    type: css_attr
+    selector: "img"
+    attr: "src"

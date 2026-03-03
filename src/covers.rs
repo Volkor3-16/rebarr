@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 /// Downloads the cover image at `url` and saves it to `./thumbnails/<manga_id>.<ext>`.
 /// Returns the local URL path `/thumbnails/<manga_id>.<ext>`, or `None` on failure.
+/// TODO: Move this to the series folder where manga is downloaded.
 pub async fn download_cover(client: &reqwest::Client, url: &str, manga_id: Uuid) -> Option<String> {
     let ext = Path::new(url)
         .extension()
