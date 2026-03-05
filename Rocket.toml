@@ -1,2 +1,5 @@
 [default.databases.rebarr]
 url = "rebarr.db"
+
+[debug]
+address = "0.0.0.0"

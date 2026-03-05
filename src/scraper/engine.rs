@@ -1,7 +1,7 @@
 use scraper::{ElementRef, Html, Selector};
 
 use crate::scraper::{
-    def::{BuildUrlDef, ChapterUrlTransform, ChaptersDef, ContentKind, ExtractDef, FieldDef, PagesDef, ProviderDef, SearchDef},
+    def::{BrowserPreloadDef, BuildUrlDef, ChapterUrlTransform, ChaptersDef, ContentKind, ExtractDef, FieldDef, PagesDef, ProviderDef, SearchDef},
     error::ScraperError,
     {PageUrl, Provider, ProviderChapterInfo, ProviderSearchResult, ScraperCtx},
 };
@@ -90,6 +90,18 @@ impl YamlProvider {
 
         let raw = match field.content {
             ContentKind::Text => child.text().collect::<String>().trim().to_owned(),
+            ContentKind::OwnText => {
+                use scraper::node::Node;
+                child
+                    .children()
+                    .filter_map(|n| match n.value() {
+                        Node::Text(t) => Some(t.to_string()),
+                        _ => None,
+                    })
+                    .collect::<String>()
+                    .trim()
+                    .to_owned()
+            }
             ContentKind::Attr => {
                 let attr_name = field.attr_name.as_deref().ok_or_else(|| {
                     ScraperError::Parse(format!(
@@ -132,35 +144,226 @@ impl YamlProvider {
         def: &SearchDef,
         title: &str,
     ) -> Result<Vec<ProviderSearchResult>, ScraperError> {
-        let encoded = urlencoding::encode(title);
-        let url = self.expand(&def.url, &[("query", &encoded)]);
-        let html = self.fetch_html(ctx, &url).await?;
-        let doc = Html::parse_document(&html);
+        // Browser preload path (JS-driven search).
+        if let Some(preload) = &def.browser_preload {
+            return self.do_browser_preload_search(ctx, def, preload, title).await;
+        }
 
-        let card_sel = Selector::parse(&def.results.selector).map_err(|e| {
-            ScraperError::Parse(format!("bad results selector: {e:?}"))
+        // Plain HTTP path.
+        let search_url = def.url.as_deref().ok_or_else(|| {
+            ScraperError::Parse(format!(
+                "provider '{}' search has neither 'url' nor 'browser_preload'",
+                self.def.name
+            ))
         })?;
+        let results_def = def.results.as_ref().ok_or_else(|| {
+            ScraperError::Parse(format!(
+                "provider '{}' search has no results definition",
+                self.def.name
+            ))
+        })?;
+
+        let encoded = urlencoding::encode(title);
+        let url = self.expand(search_url, &[("query", &encoded)]);
+        let html = self.fetch_html(ctx, &url).await?;
+        self.parse_search_results(&html, results_def)
+    }
+
+    /// Search via browser: navigate to a preload page, optionally capture the
+    /// AJAX response via fetch/XHR interception (`request_from_captured: true`),
+    /// or fall back to polling the DOM for the results selector.
+    async fn do_browser_preload_search(
+        &self,
+        ctx: &ScraperCtx,
+        def: &SearchDef,
+        preload: &BrowserPreloadDef,
+        title: &str,
+    ) -> Result<Vec<ProviderSearchResult>, ScraperError> {
+        let results_def = def.results.as_ref().ok_or_else(|| {
+            ScraperError::Parse(format!(
+                "provider '{}' search has no results definition",
+                self.def.name
+            ))
+        })?;
+
+        let browser = ctx.browser.get().await?;
+        let preload_url = self.expand(&preload.url, &[]);
+        let page = browser
+            .new_page(preload_url.as_str())
+            .await
+            .map_err(|e| ScraperError::Browser(e.to_string()))?;
+
+        // Wait for the page to be interactive (body + page JS loaded).
+        page.find_element("body")
+            .await
+            .map_err(|e| ScraperError::Browser(e.to_string()))?;
+        // Extra buffer for JS frameworks / search widget to initialise.
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+
+        // Escape the title for safe JS string embedding.
+        let safe_title =
+            title.replace('\\', "\\\\").replace('"', "\\\"").replace('\'', "\\'");
+
+        // ── Capture mode ────────────────────────────────────────────────────
+        // When request_from_captured: true we monkey-patch fetch() and
+        // XMLHttpRequest.prototype.open() BEFORE triggering the search so we
+        // capture the raw AJAX response instead of scraping the final DOM.
+        if def.request_from_captured {
+            if let Some(intercept) = &preload.intercept {
+                // Escape the URL fragment so it's safe inside a JS string literal.
+                let match_url = intercept.match_url_contains.replace('\'', "\\'");
+                let interceptor_js = format!(
+                    r#"
+                    window.__rebarr_captured = null;
+                    (function() {{
+                        var _match = '{match_url}';
+                        var _fetch = window.fetch;
+                        window.fetch = function() {{
+                            var args = arguments;
+                            var url = typeof args[0] === 'string' ? args[0]
+                                      : (args[0] && args[0].url ? args[0].url : '');
+                            return _fetch.apply(this, args).then(function(resp) {{
+                                if (url.indexOf(_match) !== -1 && window.__rebarr_captured === null) {{
+                                    resp.clone().text().then(function(t) {{
+                                        window.__rebarr_captured = t;
+                                    }});
+                                }}
+                                return resp;
+                            }});
+                        }};
+                        var _open = XMLHttpRequest.prototype.open;
+                        XMLHttpRequest.prototype.open = function(method, url) {{
+                            if (typeof url === 'string' && url.indexOf(_match) !== -1) {{
+                                this.addEventListener('load', function() {{
+                                    if (window.__rebarr_captured === null) {{
+                                        window.__rebarr_captured = this.responseText;
+                                    }}
+                                }});
+                            }}
+                            return _open.apply(this, arguments);
+                        }};
+                    }})();
+                    "#
+                );
+                let _ = page.evaluate(interceptor_js.as_str()).await;
+            }
+        }
+
+        // Inject the JS search trigger (fills the search box and fires events).
+        if let Some(js_template) = &preload.js_inject {
+            let js = js_template.replace("{query}", &safe_title);
+            let _ = page.evaluate(js.as_str()).await;
+        }
+
+        // ── Wait for results ────────────────────────────────────────────────
+        if def.request_from_captured {
+            // Poll window.__rebarr_captured until the AJAX response lands.
+            let mut captured_text: Option<String> = None;
+            for _ in 0..20u32 {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                if let Ok(val) = page.evaluate("window.__rebarr_captured").await {
+                    if let Ok(Some(s)) = val.into_value::<Option<String>>() {
+                        if !s.is_empty() {
+                            captured_text = Some(s);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if let Some(captured) = captured_text {
+                page.close().await.ok();
+
+                // The captured text may be JSON wrapping an HTML snippet, or raw HTML.
+                let html = if let Ok(json) = serde_json::from_str::<serde_json::Value>(&captured) {
+                    json.get("html")
+                        .or_else(|| json.get("result"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_owned())
+                        .unwrap_or(captured)
+                } else {
+                    captured
+                };
+
+                return self.parse_search_results(&html, results_def);
+            }
+
+            // Capture timed out — dump a snapshot and fall through to DOM polling.
+            if let Ok(snap) = page.content().await {
+                log::debug!(
+                    "provider '{}' page snapshot on capture timeout (first 3000 chars):\n{}",
+                    self.def.name,
+                    &snap[..snap.len().min(3000)]
+                );
+            }
+            log::warn!(
+                "provider '{}': AJAX capture timed out — falling back to DOM polling",
+                self.def.name
+            );
+        }
+
+        // ── DOM-poll (used when request_from_captured is false, or capture timed out) ──
+        let results_sel = results_def.selector.clone();
+        let appeared = async {
+            for _ in 0..20u32 {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                if page.find_element(results_sel.as_str()).await.is_ok() {
+                    return true;
+                }
+            }
+            false
+        }
+        .await;
+
+        if !appeared {
+            if let Ok(snap) = page.content().await {
+                log::debug!(
+                    "provider '{}' page snapshot on DOM timeout (first 3000 chars):\n{}",
+                    self.def.name,
+                    &snap[..snap.len().min(3000)]
+                );
+            }
+            page.close().await.ok();
+            return Err(ScraperError::Parse(format!(
+                "provider '{}': search results did not appear in DOM within 10s",
+                self.def.name
+            )));
+        }
+
+        let html = page
+            .content()
+            .await
+            .map_err(|e| ScraperError::Browser(e.to_string()))?;
+        page.close().await.ok();
+
+        self.parse_search_results(&html, results_def)
+    }
+
+    /// Shared helper: scrape a `ProviderSearchResult` list from HTML using a `ResultsDef`.
+    fn parse_search_results(
+        &self,
+        html: &str,
+        results_def: &crate::scraper::def::ResultsDef,
+    ) -> Result<Vec<ProviderSearchResult>, ScraperError> {
+        let doc = Html::parse_document(html);
+        let card_sel = Selector::parse(&results_def.selector)
+            .map_err(|e| ScraperError::Parse(format!("bad results selector: {e:?}")))?;
 
         let mut results = Vec::new();
         for card in doc.select(&card_sel) {
-            let Ok(title) = self.extract_field(&card, &def.results.fields.title) else {
+            let Ok(title) = self.extract_field(&card, &results_def.fields.title) else {
                 continue;
             };
-            let Ok(url) = self.extract_field(&card, &def.results.fields.url) else {
+            let Ok(url) = self.extract_field(&card, &results_def.fields.url) else {
                 continue;
             };
-            let cover_url = def
-                .results
+            let cover_url = results_def
                 .fields
                 .cover
                 .as_ref()
                 .and_then(|f| self.extract_field(&card, f).ok());
 
-            results.push(ProviderSearchResult {
-                title,
-                url,
-                cover_url,
-            });
+            results.push(ProviderSearchResult { title, url, cover_url });
         }
 
         Ok(results)

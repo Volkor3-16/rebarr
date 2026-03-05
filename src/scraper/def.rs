@@ -72,15 +72,50 @@ fn default_rpm() -> u32 {
 // Search
 // ---------------------------------------------------------------------------
 
+/// Open a page in the browser first (e.g. to get session cookies or to
+/// trigger a JS-driven search), then optionally capture a network response.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BrowserPreloadDef {
+    /// URL to navigate to. Supports `{base_url}` placeholder.
+    pub url: String,
+    /// Optional network response interception config.
+    pub intercept: Option<InterceptDef>,
+    /// Optional JavaScript to inject into the page after it loads.
+    /// Supports `{query}` placeholder (raw title, not URL-encoded).
+    pub js_inject: Option<String>,
+}
+
+/// Describes how to intercept a network response during browser_preload.
+#[derive(Debug, Clone, Deserialize)]
+pub struct InterceptDef {
+    /// Intercept responses whose URL contains this string.
+    pub match_url_contains: String,
+    /// Whether to capture the response body for use as search HTML.
+    #[serde(default)]
+    pub capture: bool,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct SearchDef {
     /// URL template for the search page. `{query}` is replaced with the
     /// URL-encoded search string. May be a path (appended to base_url) or
     /// an absolute URL.
-    pub url: String,
+    ///
+    /// Either `url` or `browser_preload` is required.
+    pub url: Option<String>,
+
+    /// Use a browser to load a page and inject JS to trigger a search,
+    /// then scrape the resulting DOM for results.
+    pub browser_preload: Option<BrowserPreloadDef>,
+
+    /// When true, use the captured network response body as the HTML source
+    /// rather than the final DOM. Currently informational — the engine always
+    /// scrapes the final DOM after JS execution.
+    #[serde(default)]
+    pub request_from_captured: bool,
 
     /// How to extract individual result entries from the search page HTML.
-    pub results: ResultsDef,
+    pub results: Option<ResultsDef>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -270,5 +305,7 @@ pub struct FieldDef {
 #[serde(rename_all = "snake_case")]
 pub enum ContentKind {
     Text,
+    /// Only direct child text nodes — excludes text inside descendant elements.
+    OwnText,
     Attr,
 }

@@ -2,14 +2,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use chrono::Utc;
-use rocket::{State, delete, get, http::Status, post, routes, serde::json::Json};
+use log::debug;
+use rocket::{State, delete, get, http::Status, post, put, routes, serde::json::Json};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::{
     covers, db,
-    db::task::TaskType,
+    db::task::{RecentTask, TaskType},
     manga::{Chapter, Library, Manga, MangaType},
     metadata::anilist::ALClient,
     scraper::ProviderRegistry,
@@ -314,7 +315,10 @@ async fn set_provider(
 
 #[get("/api/manga/<id>/chapters")]
 async fn list_chapters(pool: &State<SqlitePool>, id: &str) -> ApiResult<Vec<Chapter>> {
+    // Build a manga_id object from the id provided
     let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+
+    //
     db::manga::get_by_id(pool.inner(), manga_id)
         .await
         .map_err(internal)?
@@ -361,6 +365,68 @@ async fn download_chapter_api(
 }
 
 // ---------------------------------------------------------------------------
+// PUT /api/libraries/<id>
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct UpdateLibraryRequest {
+    root_path: String,
+}
+
+#[put("/api/libraries/<id>", data = "<body>")]
+async fn update_library(
+    pool: &State<SqlitePool>,
+    id: &str,
+    body: Json<UpdateLibraryRequest>,
+) -> ApiResult<Library> {
+    let uuid = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    if body.root_path.trim().is_empty() {
+        return Err(bad_request("root_path cannot be empty"));
+    }
+    db::library::update_root_path(pool.inner(), uuid, body.root_path.trim())
+        .await
+        .map_err(internal)?;
+    db::library::get_by_id(pool.inner(), uuid)
+        .await
+        .map_err(internal)?
+        .map(Json)
+        .ok_or_else(|| not_found("library not found"))
+}
+
+// ---------------------------------------------------------------------------
+// DELETE /api/libraries/<id>
+// ---------------------------------------------------------------------------
+
+#[delete("/api/libraries/<id>")]
+async fn delete_library(
+    pool: &State<SqlitePool>,
+    id: &str,
+) -> Result<Status, (Status, Json<ApiError>)> {
+    let uuid = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    db::library::delete(pool.inner(), uuid)
+        .await
+        .map_err(internal)?;
+    Ok(Status::NoContent)
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/tasks
+// ---------------------------------------------------------------------------
+
+#[get("/api/tasks?<manga_id>&<limit>")]
+async fn list_tasks(
+    pool: &State<SqlitePool>,
+    manga_id: Option<&str>,
+    limit: Option<i64>,
+) -> ApiResult<Vec<RecentTask>> {
+    let mid = manga_id.and_then(|s| Uuid::parse_str(s).ok());
+    db::task::get_recent(pool.inner(), mid, limit.unwrap_or(50))
+        .await
+        .map(Json)
+        .map_err(internal)
+}
+
+// ---------------------------------------------------------------------------
 // Route list
 // ---------------------------------------------------------------------------
 
@@ -369,6 +435,8 @@ pub fn routes() -> Vec<rocket::Route> {
         list_libraries,
         create_library,
         get_library,
+        update_library,
+        delete_library,
         list_library_manga,
         search_manga,
         add_manga,
@@ -379,5 +447,6 @@ pub fn routes() -> Vec<rocket::Route> {
         set_provider,
         list_chapters,
         download_chapter_api,
+        list_tasks,
     ]
 }

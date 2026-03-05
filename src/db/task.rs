@@ -1,4 +1,5 @@
 use chrono::{DateTime, Duration, Utc};
+use serde::Serialize;
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
@@ -250,4 +251,84 @@ pub async fn fail(pool: &SqlitePool, task_id: Uuid, error: &str) -> Result<(), s
         .await?;
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Recent tasks for the API / logs page
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RecentTask {
+    pub id: String,
+    pub task_type: String,
+    pub status: String,
+    pub manga_id: Option<String>,
+    pub chapter_id: Option<String>,
+    pub priority: i64,
+    pub attempt: i64,
+    pub max_attempts: i64,
+    pub last_error: Option<String>,
+    pub manga_title: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(sqlx::FromRow)]
+struct RecentTaskRow {
+    uuid: String,
+    task_type: String,
+    status: String,
+    manga_id: Option<String>,
+    chapter_id: Option<String>,
+    priority: i64,
+    attempt: i64,
+    max_attempts: i64,
+    last_error: Option<String>,
+    manga_title: Option<String>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+/// Fetch recent tasks ordered by created_at DESC. Optionally filter by manga_id.
+/// Includes manga title via LEFT JOIN for display purposes.
+pub async fn get_recent(
+    pool: &SqlitePool,
+    manga_id: Option<Uuid>,
+    limit: i64,
+) -> Result<Vec<RecentTask>, sqlx::Error> {
+    let manga_id_str = manga_id.map(|v| v.to_string());
+    sqlx::query_as::<_, RecentTaskRow>(
+        "SELECT t.uuid, t.task_type, t.status, t.manga_id, t.chapter_id,
+                t.priority, t.attempt, t.max_attempts, t.last_error,
+                t.created_at, t.updated_at,
+                m.title AS manga_title
+         FROM Task t
+         LEFT JOIN Manga m ON t.manga_id = m.uuid
+         WHERE (? IS NULL OR t.manga_id = ?)
+         ORDER BY t.created_at DESC
+         LIMIT ?",
+    )
+    .bind(&manga_id_str)
+    .bind(&manga_id_str)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map(|rows| {
+        rows.into_iter()
+            .map(|r| RecentTask {
+                id: r.uuid,
+                task_type: r.task_type,
+                status: r.status,
+                manga_id: r.manga_id,
+                chapter_id: r.chapter_id,
+                priority: r.priority,
+                attempt: r.attempt,
+                max_attempts: r.max_attempts,
+                last_error: r.last_error,
+                manga_title: r.manga_title,
+                created_at: r.created_at,
+                updated_at: r.updated_at,
+            })
+            .collect()
+    })
 }

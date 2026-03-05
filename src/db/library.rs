@@ -76,3 +76,16 @@ pub async fn delete(pool: &SqlitePool, id: Uuid) -> Result<(), sqlx::Error> {
         .await?;
     Ok(())
 }
+
+pub async fn update_root_path(
+    pool: &SqlitePool,
+    id: Uuid,
+    new_path: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE Library SET root_path = ? WHERE uuid = ?")
+        .bind(new_path)
+        .bind(id.to_string())
+        .execute(pool)
+        .await?;
+    Ok(())
+}

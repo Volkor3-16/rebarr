@@ -27,8 +27,20 @@ impl BrowserPool {
     pub async fn get(&self) -> Result<Arc<Browser>, ScraperError> {
         self.inner
             .get_or_try_init(|| async {
+                // Use a per-process user-data-dir so concurrent or successive
+                // runs never hit a stale SingletonLock from a previous crash.
+                // Use user_data_dir() on the builder (not a raw --user-data-dir
+                // arg) so chromiumoxide doesn't also create /tmp/chromiumoxide-runner.
+                let user_data_dir =
+                    format!("/tmp/rebarr-chrome-{}", std::process::id());
+
+                // Remove any stale SingletonLock left by a previous crash with
+                // the same PID (rare, but possible on PID reuse).
+                let _ = std::fs::remove_file(format!("{user_data_dir}/SingletonLock"));
+
                 let config = BrowserConfig::builder()
                     .no_sandbox()
+                    .user_data_dir(&user_data_dir)
                     .build()
                     .map_err(|e| ScraperError::Browser(e.to_string()))?;
 
