@@ -57,11 +57,18 @@ pub struct ScraperCtx {
     /// Lazily-started headless browser pool. Only materialised if a
     /// provider calls `browser.get()`.
     pub browser: BrowserPool,
+    /// When true, dump page HTML to `./scraper_dump_N.html` after every `open` step.
+    /// Useful for debugging provider YAML issues.
+    pub dump_html: bool,
+    /// Base URL of a running FlareSolverr instance (e.g. `http://localhost:8191`).
+    /// When set, Cloudflare challenge pages are bypassed by calling FlareSolverr
+    /// and injecting the resulting cookies before reloading.
+    pub flaresolverr_url: Option<String>,
 }
 
 impl ScraperCtx {
     pub fn new(http: reqwest::Client, browser: BrowserPool) -> Self {
-        Self { http, browser }
+        Self { http, browser, dump_html: false, flaresolverr_url: None }
     }
 }
 
@@ -84,8 +91,10 @@ pub trait Provider: Send + Sync {
     fn score(&self) -> u8;
 
     /// Returns true if this provider requires JavaScript rendering.
-    /// The `BrowserPool` is only started if at least one provider needs it.
-    fn needs_browser(&self) -> bool;
+    /// Always true for YAML-driven providers (all actions use the headless browser).
+    fn needs_browser(&self) -> bool {
+        true
+    }
 
     /// Maximum requests per minute to enforce for this provider.
     /// Used by the worker rate limiter. Defaults to 30.

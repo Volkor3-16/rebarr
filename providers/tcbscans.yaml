@@ -1,0 +1,70 @@
+name: TCB Scans
+# The main domain name.
+base_url: https://tcbonepiecechapters.com
+# Default scoring, used to figure out what provider to download from.
+score: 60
+# Rate limits for the queue.
+rate_limit:
+  requests_per_minute: 30
+
+# Searching and parsing the search results
+search:
+  steps:
+    - open: "/projects" # Opens main page, since this is a dedicated scanlation site, lists all manga on the main page :)
+    # For each manga on the main page
+    - foreach:
+        # Selector for the thingo that has the list of search result.
+        selector: ".bg-card"
+
+        # Extract the values from the search results.
+        extract:
+          title:
+            selector: "a.font-bold"
+            content: text
+
+          url:
+            selector: "a.font-bold"
+            content: attr
+            attr_name: href
+            prefix: "{base_url}"
+
+          cover:
+            selector: "img"
+            content: attr
+            attr_name: src
+
+# Parsing and building the chapter list
+chapters:
+  steps:
+    - open: "{manga_url}"
+    - foreach:
+        selector: "div.col-span-2 > a.bg-card"
+        extract:
+          # Extract the chapter number from the title.
+          number_raw:
+            selector: "div.text-lg"
+            content: text
+          # Extract the title from the 'subtitle' how silly.
+          title:
+            selector: "div.text-gray-500"
+            content: text
+          url:
+            selector: ""
+            content: attr
+            attr_name: href
+            prefix: "{base_url}"
+          scanlator_group:
+            static_value: "TCB Scans"
+
+# Extracting chapter pages
+pages:
+  steps:
+    - open: "{chapter_url}"
+    - foreach:
+        # Only select images from their cdn, sometimes a discord image gets copied in by mistake and fucks everything up.
+        selector: 'picture.fixed-ratio > img[src*="cdn.onepiecechapters.com"]'
+        extract:
+          url:
+            selector: ""
+            content: attr
+            attr_name: src

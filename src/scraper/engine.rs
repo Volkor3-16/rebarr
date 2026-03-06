@@ -1,13 +1,18 @@
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
+
+static DUMP_COUNTER: AtomicU32 = AtomicU32::new(0);
+
 use scraper::{ElementRef, Html, Selector};
 
 use crate::scraper::{
-    def::{BrowserPreloadDef, BuildUrlDef, ChapterUrlTransform, ChaptersDef, ContentKind, ExtractDef, FieldDef, PagesDef, ProviderDef, SearchDef},
+    def::{ActionDef, ContentKind, FieldDef, ForeachDef, InterceptDef, ProviderDef, StepDef},
     error::ScraperError,
     {PageUrl, Provider, ProviderChapterInfo, ProviderSearchResult, ScraperCtx},
 };
 
-/// A scraping provider driven by a YAML `ProviderDef`. Implements the
-/// `Provider` trait — no Rust code required to add a new site.
+/// A scraping provider driven by a YAML `ProviderDef`.
 pub struct YamlProvider {
     pub(crate) def: ProviderDef,
 }
@@ -18,16 +23,18 @@ impl YamlProvider {
     }
 
     // ------------------------------------------------------------------
-    // Shared helpers
+    // Template expansion
     // ------------------------------------------------------------------
 
-    /// Expand `{key}` placeholders in a URL template.
-    fn expand(&self, template: &str, extra: &[(&str, &str)]) -> String {
+    /// Replace `{key}` placeholders. Relative paths get base_url prepended.
+    fn expand(&self, template: &str, vars: &HashMap<String, String>) -> String {
         let mut s = template.replace("{base_url}", &self.def.base_url);
-        for (k, v) in extra {
-            s = s.replace(&format!("{{{}}}", k), v);
+        for (k, v) in vars {
+            s = s.replace(&format!("{{{k}}}"), v);
+            // {var|strip_last_segment}: remove the last /segment from a URL path.
+            let stripped = v.rfind('/').filter(|&i| i > 0).map_or(v.as_str(), |i| &v[..i]);
+            s = s.replace(&format!("{{{k}|strip_last_segment}}"), stripped);
         }
-        // If the result is a path (starts with /), prepend base_url.
         if s.starts_with('/') {
             format!("{}{}", self.def.base_url.trim_end_matches('/'), s)
         } else {
@@ -35,48 +42,15 @@ impl YamlProvider {
         }
     }
 
-    /// Fetch the HTML for a URL, using the headless browser if the provider
-    /// needs JavaScript rendering, or plain HTTP otherwise.
-    async fn fetch_html(&self, ctx: &ScraperCtx, url: &str) -> Result<String, ScraperError> {
-        if self.def.needs_browser {
-            let browser = ctx.browser.get().await?;
-            let page = browser
-                .new_page(url)
-                .await
-                .map_err(|e| ScraperError::Browser(e.to_string()))?;
-            // find_element waits until the element appears in the DOM.
-            page.find_element("body")
-                .await
-                .map_err(|e| ScraperError::Browser(e.to_string()))?;
-            let html = page
-                .content()
-                .await
-                .map_err(|e| ScraperError::Browser(e.to_string()))?;
-            page.close().await.ok();
-            Ok(html)
-        } else {
-            Ok(ctx
-                .http
-                .get(url)
-                .header("User-Agent", "Mozilla/5.0 (compatible; Rebarr/0.1)")
-                .send()
-                .await?
-                .text()
-                .await?)
+    // ------------------------------------------------------------------
+    // Field extraction (used inside foreach)
+    // ------------------------------------------------------------------
+
+    fn extract_field(&self, element: &ElementRef, field: &FieldDef) -> Result<String, ScraperError> {
+        if let Some(ref v) = field.static_value {
+            return Ok(v.clone());
         }
-    }
 
-    // ------------------------------------------------------------------
-    // Field extraction helpers (used by search + chapters)
-    // ------------------------------------------------------------------
-
-    fn extract_field(
-        &self,
-        element: &ElementRef,
-        field: &FieldDef,
-    ) -> Result<String, ScraperError> {
-        // Empty selector means "use the element itself" (e.g. to read an
-        // attribute from the row/card element rather than a descendant).
         let child = if field.selector.is_empty() {
             *element
         } else {
@@ -88,7 +62,10 @@ impl YamlProvider {
                 .ok_or_else(|| ScraperError::Parse(format!("selector '{}' matched nothing", field.selector)))?
         };
 
-        let raw = match field.content {
+        let content = field.content.as_ref().ok_or_else(|| {
+            ScraperError::Parse(format!("field with selector '{}' has no 'content'", field.selector))
+        })?;
+        let raw = match content {
             ContentKind::Text => child.text().collect::<String>().trim().to_owned(),
             ContentKind::OwnText => {
                 use scraper::node::Node;
@@ -112,21 +89,13 @@ impl YamlProvider {
                 child
                     .value()
                     .attr(attr_name)
-                    .ok_or_else(|| {
-                        ScraperError::Parse(format!("attr '{attr_name}' not found on element"))
-                    })?
+                    .ok_or_else(|| ScraperError::Parse(format!("attr '{attr_name}' not found")))?
                     .to_owned()
             }
         };
 
-        // Apply value_map before prefix/URL logic.
-        let raw = if let Some(mapped) = field.value_map.get(&raw) {
-            mapped.clone()
-        } else {
-            raw
-        };
+        let raw = field.value_map.get(&raw).cloned().unwrap_or(raw);
 
-        // Skip prefix when the value is already an absolute URL.
         if raw.starts_with("http://") || raw.starts_with("https://") {
             return Ok(raw);
         }
@@ -135,449 +104,245 @@ impl YamlProvider {
     }
 
     // ------------------------------------------------------------------
-    // Search
+    // Step execution engine
     // ------------------------------------------------------------------
 
-    async fn do_search(
+    async fn execute_action(
         &self,
         ctx: &ScraperCtx,
-        def: &SearchDef,
-        title: &str,
-    ) -> Result<Vec<ProviderSearchResult>, ScraperError> {
-        // Browser preload path (JS-driven search).
-        if let Some(preload) = &def.browser_preload {
-            return self.do_browser_preload_search(ctx, def, preload, title).await;
-        }
-
-        // Plain HTTP path.
-        let search_url = def.url.as_deref().ok_or_else(|| {
-            ScraperError::Parse(format!(
-                "provider '{}' search has neither 'url' nor 'browser_preload'",
-                self.def.name
-            ))
-        })?;
-        let results_def = def.results.as_ref().ok_or_else(|| {
-            ScraperError::Parse(format!(
-                "provider '{}' search has no results definition",
-                self.def.name
-            ))
-        })?;
-
-        let encoded = urlencoding::encode(title);
-        let url = self.expand(search_url, &[("query", &encoded)]);
-        let html = self.fetch_html(ctx, &url).await?;
-        self.parse_search_results(&html, results_def)
-    }
-
-    /// Search via browser: navigate to a preload page, optionally capture the
-    /// AJAX response via fetch/XHR interception (`request_from_captured: true`),
-    /// or fall back to polling the DOM for the results selector.
-    async fn do_browser_preload_search(
-        &self,
-        ctx: &ScraperCtx,
-        def: &SearchDef,
-        preload: &BrowserPreloadDef,
-        title: &str,
-    ) -> Result<Vec<ProviderSearchResult>, ScraperError> {
-        let results_def = def.results.as_ref().ok_or_else(|| {
-            ScraperError::Parse(format!(
-                "provider '{}' search has no results definition",
-                self.def.name
-            ))
-        })?;
-
+        action: &ActionDef,
+        input_vars: HashMap<String, String>,
+    ) -> Result<ActionResult, ScraperError> {
         let browser = ctx.browser.get().await?;
-        let preload_url = self.expand(&preload.url, &[]);
-        let page = browser
-            .new_page(preload_url.as_str())
-            .await
-            .map_err(|e| ScraperError::Browser(e.to_string()))?;
 
-        // Wait for the page to be interactive (body + page JS loaded).
-        page.find_element("body")
-            .await
-            .map_err(|e| ScraperError::Browser(e.to_string()))?;
-        // Extra buffer for JS frameworks / search widget to initialise.
-        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        // Lazily create the browser page on the first `open` step.
+        let mut page: Option<eoka::Page> = None;
+        let mut vars = input_vars;
+        vars.insert("base_url".to_owned(), self.def.base_url.clone());
 
-        // Escape the title for safe JS string embedding.
-        let safe_title =
-            title.replace('\\', "\\\\").replace('"', "\\\"").replace('\'', "\\'");
+        let mut results: Vec<HashMap<String, String>> = Vec::new();
+        // Intercept configs registered before any `open` step.
+        let mut pending_intercepts: Vec<InterceptDef> = Vec::new();
+        let mut early_return: Option<String> = None;
 
-        // ── Capture mode ────────────────────────────────────────────────────
-        // When request_from_captured: true we monkey-patch fetch() and
-        // XMLHttpRequest.prototype.open() BEFORE triggering the search so we
-        // capture the raw AJAX response instead of scraping the final DOM.
-        if def.request_from_captured {
-            if let Some(intercept) = &preload.intercept {
-                // Escape the URL fragment so it's safe inside a JS string literal.
-                let match_url = intercept.match_url_contains.replace('\'', "\\'");
-                let interceptor_js = format!(
-                    r#"
-                    window.__rebarr_captured = null;
-                    (function() {{
-                        var _match = '{match_url}';
-                        var _fetch = window.fetch;
-                        window.fetch = function() {{
-                            var args = arguments;
-                            var url = typeof args[0] === 'string' ? args[0]
-                                      : (args[0] && args[0].url ? args[0].url : '');
-                            return _fetch.apply(this, args).then(function(resp) {{
-                                if (url.indexOf(_match) !== -1 && window.__rebarr_captured === null) {{
-                                    resp.clone().text().then(function(t) {{
-                                        window.__rebarr_captured = t;
-                                    }});
-                                }}
-                                return resp;
-                            }});
-                        }};
-                        var _open = XMLHttpRequest.prototype.open;
-                        XMLHttpRequest.prototype.open = function(method, url) {{
-                            if (typeof url === 'string' && url.indexOf(_match) !== -1) {{
-                                this.addEventListener('load', function() {{
-                                    if (window.__rebarr_captured === null) {{
-                                        window.__rebarr_captured = this.responseText;
-                                    }}
-                                }});
-                            }}
-                            return _open.apply(this, arguments);
-                        }};
-                    }})();
-                    "#
-                );
-                let _ = page.evaluate(interceptor_js.as_str()).await;
-            }
-        }
+        for step in &action.steps {
+            match step {
+                StepDef::Open { open: url_tmpl } => {
+                    let url = self.expand(url_tmpl, &vars);
+                    log::info!("open: {url}");
 
-        // Inject the JS search trigger (fills the search box and fires events).
-        if let Some(js_template) = &preload.js_inject {
-            let js = js_template.replace("{query}", &safe_title);
-            let _ = page.evaluate(js.as_str()).await;
-        }
+                    if let Some(ref p) = page {
+                        // Subsequent navigation on the same page.
+                        p.goto(url.as_str())
+                            .await
+                            .map_err(|e| ScraperError::Browser(e.to_string()))?;
+                        // Post-nav: inject any pending intercepts.
+                        for intercept in &pending_intercepts {
+                            inject_intercept(p, &intercept.url_contains).await;
+                        }
+                    } else {
+                        // eoka injects 15 stealth evasion scripts automatically on page creation.
+                        let new_page = browser
+                            .new_blank_page()
+                            .await
+                            .map_err(|e| ScraperError::Browser(e.to_string()))?;
+                        new_page
+                            .goto(url.as_str())
+                            .await
+                            .map_err(|e| ScraperError::Browser(e.to_string()))?;
+                        // Post-nav: inject any pending intercepts.
+                        for intercept in &pending_intercepts {
+                            inject_intercept(&new_page, &intercept.url_contains).await;
+                        }
+                        page = Some(new_page);
+                    }
 
-        // ── Wait for results ────────────────────────────────────────────────
-        if def.request_from_captured {
-            // Poll window.__rebarr_captured until the AJAX response lands.
-            let mut captured_text: Option<String> = None;
-            for _ in 0..20u32 {
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                if let Ok(val) = page.evaluate("window.__rebarr_captured").await {
-                    if let Ok(Some(s)) = val.into_value::<Option<String>>() {
-                        if !s.is_empty() {
-                            captured_text = Some(s);
-                            break;
+                    let p = page.as_ref().unwrap();
+
+                    // Wait for page body to load.
+                    p.wait_for("body", 10_000)
+                        .await
+                        .map_err(|e| ScraperError::Timeout(format!("body did not appear: {e}")))?;
+                    // Wait for any XHR/fetch requests triggered by page JS to settle.
+                    // Ignored on timeout — some pages never reach true network idle.
+                    p.wait_for_network_idle(5000, 30_000).await.ok();
+
+                    // Create screenshot of website (for debugging)
+                    if ctx.dump_html {
+                        let png = p.screenshot().await.unwrap();
+                        std::fs::write("screenshot.png", png)?;
+                    }
+
+                    // Dump HTML to file if requested (for debugging).
+                    if ctx.dump_html {
+                        if let Ok(html) = p.content().await {
+                            let n = DUMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+                            let fname = format!("scraper_dump_{n}.html");
+                            if let Err(e) = std::fs::write(&fname, html.as_bytes()) {
+                                log::warn!("dump_html: failed to write {fname}: {e}");
+                            } else {
+                                log::info!("dump_html: wrote {fname} ({} bytes)", html.len());
+                            }
+                        }
+                    }
+
+                    // Resolve all pending intercept captures (post-navigation).
+                    let intercepts = std::mem::take(&mut pending_intercepts);
+                    for intercept in intercepts {
+                        match poll_capture(p, &intercept.url_contains).await {
+                            Some(body) => {
+                                let val = parse_capture_body(&body, intercept.json_path.as_deref());
+                                vars.insert(intercept.var.clone(), val);
+                            }
+                            None => {
+                                log::warn!(
+                                    "provider '{}': intercept for '{}' timed out",
+                                    self.def.name,
+                                    intercept.url_contains
+                                );
+                            }
                         }
                     }
                 }
-            }
 
-            if let Some(captured) = captured_text {
-                page.close().await.ok();
+                StepDef::WaitFor { wait_for: selector } => {
+                    let sel = self.expand(selector, &vars);
+                    let p = require_page(&page, "wait_for")?;
+                    p.wait_for(&sel, 10_000)
+                        .await
+                        .map_err(|e| ScraperError::Timeout(format!("wait_for '{sel}': {e}")))?;
+                }
 
-                // The captured text may be JSON wrapping an HTML snippet, or raw HTML.
-                let html = if let Ok(json) = serde_json::from_str::<serde_json::Value>(&captured) {
-                    json.get("html")
-                        .or_else(|| json.get("result"))
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_owned())
-                        .unwrap_or(captured)
-                } else {
-                    captured
-                };
+                StepDef::Click { click: selector } => {
+                    let sel = self.expand(selector, &vars);
+                    let p = require_page(&page, "click")?;
+                    p.human_click(&sel)
+                        .await
+                        .map_err(|e| ScraperError::Browser(format!("click '{sel}': {e}")))?;
+                }
 
-                return self.parse_search_results(&html, results_def);
-            }
+                StepDef::Type { type_def } => {
+                    let selector = self.expand(&type_def.selector, &vars);
+                    let value = self.expand(&type_def.value, &vars);
+                    let p = require_page(&page, "type")?;
+                    p.human_type(&selector, &value)
+                        .await
+                        .map_err(|e| ScraperError::Browser(format!("type '{selector}': {e}")))?;
+                }
 
-            // Capture timed out — dump a snapshot and fall through to DOM polling.
-            if let Ok(snap) = page.content().await {
-                log::debug!(
-                    "provider '{}' page snapshot on capture timeout (first 3000 chars):\n{}",
-                    self.def.name,
-                    &snap[..snap.len().min(3000)]
-                );
-            }
-            log::warn!(
-                "provider '{}': AJAX capture timed out — falling back to DOM polling",
-                self.def.name
-            );
-        }
+                StepDef::Sleep { sleep: ms } => {
+                    tokio::time::sleep(Duration::from_millis(*ms)).await;
+                }
 
-        // ── DOM-poll (used when request_from_captured is false, or capture timed out) ──
-        let results_sel = results_def.selector.clone();
-        let appeared = async {
-            for _ in 0..20u32 {
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                if page.find_element(results_sel.as_str()).await.is_ok() {
-                    return true;
+                StepDef::Script { script: js_tmpl } => {
+                    let js = self.expand(js_tmpl, &vars);
+                    let p = require_page(&page, "script")?;
+                    let _ = p.execute(&js).await;
+                }
+
+                StepDef::ExtractJs { extract_js: def } => {
+                    let script = self.expand(&def.script, &vars);
+                    let p = require_page(&page, "extract_js")?;
+                    match p.evaluate::<serde_json::Value>(&script).await {
+                        Ok(v) => {
+                            let s = match v {
+                                serde_json::Value::String(s) => s,
+                                other => other.to_string(),
+                            };
+                            vars.insert(def.var.clone(), s);
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "provider '{}': extract_js '{}' failed: {e}",
+                                self.def.name,
+                                def.var
+                            );
+                        }
+                    }
+                }
+
+                StepDef::Intercept { intercept: intercept_def } => {
+                    if let Some(ref p) = page {
+                        // Page already open: inject immediately and poll.
+                        inject_intercept(p, &intercept_def.url_contains).await;
+                        match poll_capture(p, &intercept_def.url_contains).await {
+                            Some(body) => {
+                                let val = parse_capture_body(&body, intercept_def.json_path.as_deref());
+                                vars.insert(intercept_def.var.clone(), val);
+                            }
+                            None => {
+                                log::warn!(
+                                    "provider '{}': intercept for '{}' timed out",
+                                    self.def.name,
+                                    intercept_def.url_contains
+                                );
+                            }
+                        }
+                    } else {
+                        // No page yet: defer until the next `open`.
+                        pending_intercepts.push(intercept_def.clone());
+                    }
+                }
+
+                StepDef::Foreach { foreach: foreach_def } => {
+                    let p = require_page(&page, "foreach")?;
+                    let html = p
+                        .content()
+                        .await
+                        .map_err(|e| ScraperError::Browser(e.to_string()))?;
+                    self.collect_foreach_results(&html, foreach_def, &mut results)?;
+                }
+
+                StepDef::Return { value: tmpl } => {
+                    early_return = Some(self.expand(tmpl, &vars));
+                    break;
+                }
+
+                StepDef::Scroll { scroll: target } => {
+                    let p = require_page(&page, "scroll")?;
+                    let js = if target == "bottom" {
+                        "window.scrollTo(0, document.body.scrollHeight)".to_owned()
+                    } else {
+                        let safe = js_escape(target);
+                        format!("document.querySelector('{safe}')?.scrollIntoView()")
+                    };
+                    let _ = p.execute(&js).await;
                 }
             }
-            false
-        }
-        .await;
-
-        if !appeared {
-            if let Ok(snap) = page.content().await {
-                log::debug!(
-                    "provider '{}' page snapshot on DOM timeout (first 3000 chars):\n{}",
-                    self.def.name,
-                    &snap[..snap.len().min(3000)]
-                );
-            }
-            page.close().await.ok();
-            return Err(ScraperError::Parse(format!(
-                "provider '{}': search results did not appear in DOM within 10s",
-                self.def.name
-            )));
         }
 
-        let html = page
-            .content()
-            .await
-            .map_err(|e| ScraperError::Browser(e.to_string()))?;
-        page.close().await.ok();
+        // Page closes when dropped.
+        drop(page);
 
-        self.parse_search_results(&html, results_def)
+        if let Some(val) = early_return {
+            Ok(ActionResult::Value(val))
+        } else {
+            Ok(ActionResult::Records(results))
+        }
     }
 
-    /// Shared helper: scrape a `ProviderSearchResult` list from HTML using a `ResultsDef`.
-    fn parse_search_results(
+    fn collect_foreach_results(
         &self,
         html: &str,
-        results_def: &crate::scraper::def::ResultsDef,
-    ) -> Result<Vec<ProviderSearchResult>, ScraperError> {
+        foreach_def: &ForeachDef,
+        results: &mut Vec<HashMap<String, String>>,
+    ) -> Result<(), ScraperError> {
         let doc = Html::parse_document(html);
-        let card_sel = Selector::parse(&results_def.selector)
-            .map_err(|e| ScraperError::Parse(format!("bad results selector: {e:?}")))?;
+        let sel = Selector::parse(&foreach_def.selector)
+            .map_err(|e| ScraperError::Parse(format!("bad foreach selector: {e:?}")))?;
 
-        let mut results = Vec::new();
-        for card in doc.select(&card_sel) {
-            let Ok(title) = self.extract_field(&card, &results_def.fields.title) else {
-                continue;
-            };
-            let Ok(url) = self.extract_field(&card, &results_def.fields.url) else {
-                continue;
-            };
-            let cover_url = results_def
-                .fields
-                .cover
-                .as_ref()
-                .and_then(|f| self.extract_field(&card, f).ok());
-
-            results.push(ProviderSearchResult { title, url, cover_url });
-        }
-
-        Ok(results)
-    }
-
-    // ------------------------------------------------------------------
-    // Chapters
-    // ------------------------------------------------------------------
-
-    async fn do_chapters(
-        &self,
-        ctx: &ScraperCtx,
-        def: &ChaptersDef,
-        manga_url: &str,
-    ) -> Result<Vec<ProviderChapterInfo>, ScraperError> {
-        let url = if let Some(transform) = &def.url_transform {
-            chapter_list_url(manga_url, transform)?
-        } else if let Some(tmpl) = &def.url {
-            self.expand(tmpl, &[("manga_url", manga_url)])
-        } else {
-            return Err(ScraperError::Parse(
-                "chapters config must have either 'url' or 'url_transform'".to_owned(),
-            ));
-        };
-        let html = self.fetch_html(ctx, &url).await?;
-        let doc = Html::parse_document(&html);
-
-        let row_sel = Selector::parse(&def.list.selector)
-            .map_err(|e| ScraperError::Parse(format!("bad chapter list selector: {e:?}")))?;
-
-        let mut chapters = Vec::new();
-        for row in doc.select(&row_sel) {
-            let Ok(raw_number) = self.extract_field(&row, &def.list.fields.number_raw) else {
-                continue;
-            };
-            let number: f32 = raw_number
-                .split_whitespace()
-                .last()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0.0);
-
-            let title = def
-                .list
-                .fields
-                .title
-                .as_ref()
-                .and_then(|f| self.extract_field(&row, f).ok())
-                .filter(|s| !s.is_empty());
-
-            let url = self
-                .extract_field(&row, &def.list.fields.url)
-                .ok()
-                .filter(|s| !s.is_empty());
-
-            let scanlator_group = def
-                .list
-                .fields
-                .scanlator_group
-                .as_ref()
-                .and_then(|f| self.extract_field(&row, f).ok())
-                .filter(|s| !s.is_empty());
-
-
-            chapters.push(ProviderChapterInfo {
-                raw_number,
-                number,
-                title,
-                url,
-                volume: None,
-                scanlator_group,
-            });
-        }
-
-        chapters.sort_by(|a, b| a.number.partial_cmp(&b.number).unwrap_or(std::cmp::Ordering::Equal));
-        Ok(chapters)
-    }
-
-    // ------------------------------------------------------------------
-    // Pages
-    // ------------------------------------------------------------------
-
-    async fn do_pages(
-        &self,
-        ctx: &ScraperCtx,
-        def: &PagesDef,
-        chapter_url: &str,
-    ) -> Result<Vec<PageUrl>, ScraperError> {
-        let fetch_url = match &def.url {
-            Some(tmpl) => self.expand(tmpl, &[("chapter_url", chapter_url)]),
-            None => chapter_url.to_owned(),
-        };
-
-        // Lua script takes priority over declarative rules.
-        if let Some(script) = &def.script {
-            let html = self.fetch_html(ctx, &fetch_url).await?;
-            let base_url = self.def.base_url.clone();
-            return run_lua_script(script, html, base_url).await;
-        }
-
-        let extract = def
-            .extract
-            .as_ref()
-            .ok_or(ScraperError::Unsupported)?;
-
-        let html = self.fetch_html(ctx, &fetch_url).await?;
-
-        match extract {
-            ExtractDef::CssAttr { selector, attr, prefix } => {
-                let doc = Html::parse_document(&html);
-                let sel = Selector::parse(selector)
-                    .map_err(|e| ScraperError::Parse(format!("{e:?}")))?;
-                let pages = doc
-                    .select(&sel)
-                    .enumerate()
-                    .filter_map(|(i, el)| {
-                        el.value().attr(attr.as_str()).map(|v| PageUrl {
-                            url: format!(
-                                "{}{}",
-                                prefix.replace("{base_url}", &self.def.base_url),
-                                v
-                            ),
-                            index: (i + 1) as u32,
-                        })
-                    })
-                    .collect();
-                Ok(pages)
+        for element in doc.select(&sel) {
+            let mut record: HashMap<String, String> = HashMap::new();
+            for (name, field_def) in &foreach_def.extract {
+                if let Ok(val) = self.extract_field(&element, field_def) {
+                    record.insert(name.clone(), val);
+                }
             }
-
-            ExtractDef::CssText { selector, prefix } => {
-                let doc = Html::parse_document(&html);
-                let sel = Selector::parse(selector)
-                    .map_err(|e| ScraperError::Parse(format!("{e:?}")))?;
-                let pages = doc
-                    .select(&sel)
-                    .enumerate()
-                    .map(|(i, el)| PageUrl {
-                        url: format!(
-                            "{}{}",
-                            prefix.replace("{base_url}", &self.def.base_url),
-                            el.text().collect::<String>().trim()
-                        ),
-                        index: (i + 1) as u32,
-                    })
-                    .collect();
-                Ok(pages)
-            }
-
-            ExtractDef::ScriptJson {
-                selector,
-                after,
-                trim,
-                remove_suffix,
-                json_path,
-                build_url,
-            } => {
-                let doc = Html::parse_document(&html);
-                let sel = Selector::parse(selector)
-                    .map_err(|e| ScraperError::Parse(format!("{e:?}")))?;
-                let script_el = doc.select(&sel).next().ok_or(ScraperError::NotFound)?;
-                let mut text = script_el.text().collect::<String>();
-
-                if let Some(after_str) = after {
-                    if let Some(pos) = text.find(after_str.as_str()) {
-                        text = text[pos + after_str.len()..].to_owned();
-                    }
-                }
-                if *trim {
-                    text = text.trim().to_owned();
-                }
-                if let Some(suffix) = remove_suffix {
-                    if text.ends_with(suffix.as_str()) {
-                        text.truncate(text.len() - suffix.len());
-                    }
-                }
-
-                let mut json: serde_json::Value = serde_json::from_str(&text)
-                    .map_err(|e| ScraperError::Parse(format!("JSON parse error: {e}")))?;
-
-                if let Some(path) = json_path {
-                    json = apply_json_path(json, path);
-                }
-
-                let urls = json_array_to_urls(&json)?;
-                Ok(urls
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, url)| PageUrl {
-                        url: apply_build_url(build_url.as_ref(), &url, &self.def.base_url),
-                        index: (i + 1) as u32,
-                    })
-                    .collect())
-            }
-
-            ExtractDef::ApiJson { url_template, json_path, build_url } => {
-                let url = self.expand(url_template, &[("chapter_url", chapter_url)]);
-                let resp = ctx.http.get(&url).send().await?.text().await?;
-                let mut json: serde_json::Value = serde_json::from_str(&resp)
-                    .map_err(|e| ScraperError::Parse(format!("API JSON parse error: {e}")))?;
-
-                if let Some(path) = json_path {
-                    json = apply_json_path(json, path);
-                }
-
-                let urls = json_array_to_urls(&json)?;
-                Ok(urls
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, url)| PageUrl {
-                        url: apply_build_url(build_url.as_ref(), &url, &self.def.base_url),
-                        index: (i + 1) as u32,
-                    })
-                    .collect())
+            if !record.is_empty() {
+                results.push(record);
             }
         }
+        Ok(())
     }
 }
 
@@ -596,7 +361,7 @@ impl Provider for YamlProvider {
     }
 
     fn needs_browser(&self) -> bool {
-        self.def.needs_browser
+        true
     }
 
     fn rate_limit_rpm(&self) -> u32 {
@@ -608,10 +373,13 @@ impl Provider for YamlProvider {
         ctx: &ScraperCtx,
         title: &str,
     ) -> Result<Vec<ProviderSearchResult>, ScraperError> {
-        match &self.def.search {
-            Some(def) => self.do_search(ctx, def, title).await,
-            None => Err(ScraperError::Unsupported),
-        }
+        let def = self.def.search.as_ref().ok_or(ScraperError::Unsupported)?;
+        let encoded = urlencoding::encode(title).into_owned();
+        let mut input = HashMap::new();
+        input.insert("query".to_owned(), encoded);
+
+        let result = self.execute_action(ctx, def, input).await?;
+        Ok(records_to_search_results(result.into_records()))
     }
 
     async fn chapters(
@@ -619,10 +387,12 @@ impl Provider for YamlProvider {
         ctx: &ScraperCtx,
         manga_url: &str,
     ) -> Result<Vec<ProviderChapterInfo>, ScraperError> {
-        match &self.def.chapters {
-            Some(def) => self.do_chapters(ctx, def, manga_url).await,
-            None => Err(ScraperError::Unsupported),
-        }
+        let def = self.def.chapters.as_ref().ok_or(ScraperError::Unsupported)?;
+        let mut input = HashMap::new();
+        input.insert("manga_url".to_owned(), manga_url.to_owned());
+
+        let result = self.execute_action(ctx, def, input).await?;
+        Ok(records_to_chapters(result.into_records()))
     }
 
     async fn pages(
@@ -630,260 +400,196 @@ impl Provider for YamlProvider {
         ctx: &ScraperCtx,
         chapter_url: &str,
     ) -> Result<Vec<PageUrl>, ScraperError> {
-        match &self.def.pages {
-            Some(def) => self.do_pages(ctx, def, chapter_url).await,
-            None => Err(ScraperError::Unsupported),
+        let def = self.def.pages.as_ref().ok_or(ScraperError::Unsupported)?;
+        let mut input = HashMap::new();
+        input.insert("chapter_url".to_owned(), chapter_url.to_owned());
+
+        let result = self.execute_action(ctx, def, input).await?;
+        result_to_pages(result)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ActionResult
+// ---------------------------------------------------------------------------
+
+enum ActionResult {
+    Records(Vec<HashMap<String, String>>),
+    Value(String),
+}
+
+impl ActionResult {
+    fn into_records(self) -> Vec<HashMap<String, String>> {
+        match self {
+            ActionResult::Records(r) => r,
+            ActionResult::Value(_) => Vec::new(),
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Utilities
+// Record → output type conversions
 // ---------------------------------------------------------------------------
 
-/// Build a chapter-list URL by stripping N segments from the end of the series
-/// URL path and appending a new segment.
-///
-/// `/series/ID/Manga-Title` + strip 1 + append "full-chapter-list"
-/// → `/series/ID/full-chapter-list`
-fn chapter_list_url(series_url: &str, t: &ChapterUrlTransform) -> Result<String, ScraperError> {
-    // Split at the start of the path (after scheme://host).
-    let path_start = series_url
-        .find("://")
-        .and_then(|i| series_url[i + 3..].find('/').map(|j| i + 3 + j))
-        .ok_or_else(|| ScraperError::Parse(format!("url_transform: no path in '{series_url}'")))?;
-
-    let origin = &series_url[..path_start];
-    let path = series_url[path_start..].trim_end_matches('/');
-    let mut segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-
-    let n = t.strip_last_segments;
-    if n > segments.len() {
-        return Err(ScraperError::Parse(format!(
-            "url_transform: strip_last_segments={n} but path only has {} segments",
-            segments.len()
-        )));
-    }
-    segments.truncate(segments.len() - n);
-    segments.push(&t.append);
-
-    Ok(format!("{}/{}", origin, segments.join("/")))
+fn records_to_search_results(records: Vec<HashMap<String, String>>) -> Vec<ProviderSearchResult> {
+    records
+        .into_iter()
+        .filter_map(|mut r| {
+            Some(ProviderSearchResult {
+                title: r.remove("title")?,
+                url: r.remove("url")?,
+                cover_url: r.remove("cover"),
+            })
+        })
+        .collect()
 }
 
-/// Navigate a JSON value along a dotted key path, consuming each level.
-fn apply_json_path(mut json: serde_json::Value, path: &str) -> serde_json::Value {
-    for key in path.split('.') {
-        json = json[key].take();
-    }
-    json
+fn records_to_chapters(records: Vec<HashMap<String, String>>) -> Vec<ProviderChapterInfo> {
+    let mut chapters: Vec<ProviderChapterInfo> = records
+        .into_iter()
+        .filter_map(|mut r| {
+            let raw_number = r.remove("number_raw")?;
+            let number = raw_number
+                .split_whitespace()
+                .last()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0.0);
+            Some(ProviderChapterInfo {
+                raw_number,
+                number,
+                title: r.remove("title").filter(|s| !s.is_empty()),
+                url: r.remove("url").filter(|s| !s.is_empty()),
+                volume: r.remove("volume").and_then(|s| s.parse().ok()),
+                scanlator_group: r.remove("scanlator_group").filter(|s| !s.is_empty()),
+            })
+        })
+        .collect();
+    chapters.sort_by(|a, b| a.number.partial_cmp(&b.number).unwrap_or(std::cmp::Ordering::Equal));
+    chapters
 }
 
-/// Extract a flat `Vec<String>` from a JSON value that must be an array of strings.
-fn json_array_to_urls(json: &serde_json::Value) -> Result<Vec<String>, ScraperError> {
-    match json {
-        serde_json::Value::Array(arr) => Ok(arr
-            .iter()
-            .filter_map(|v| v.as_str().map(str::to_owned))
+fn result_to_pages(result: ActionResult) -> Result<Vec<PageUrl>, ScraperError> {
+    match result {
+        ActionResult::Records(records) => Ok(records
+            .into_iter()
+            .enumerate()
+            .filter_map(|(i, mut r)| {
+                r.remove("url").map(|url| PageUrl { url, index: (i + 1) as u32 })
+            })
             .collect()),
-        _ => Err(ScraperError::Parse(
-            "expected JSON array of URL strings".to_owned(),
-        )),
+        ActionResult::Value(s) => {
+            let arr: serde_json::Value = serde_json::from_str(&s)
+                .map_err(|e| ScraperError::Parse(format!("return value is not valid JSON: {e}")))?;
+            match arr {
+                serde_json::Value::Array(items) => Ok(items
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(i, v)| {
+                        v.as_str().map(|u| PageUrl { url: u.to_owned(), index: (i + 1) as u32 })
+                    })
+                    .collect()),
+                _ => Err(ScraperError::Parse(
+                    "return value for pages must be a JSON array of URL strings".to_owned(),
+                )),
+            }
+        }
     }
 }
 
-fn apply_build_url(rule: Option<&BuildUrlDef>, value: &str, base_url: &str) -> String {
-    match rule {
-        None => value.to_owned(),
-        Some(r) => {
-            let template = if value.starts_with(&r.if_starts_with) {
-                &r.then
-            } else {
-                &r.r#else
+// ---------------------------------------------------------------------------
+// Browser helpers
+// ---------------------------------------------------------------------------
+
+/// Return a reference to the page, or an error if it has not been opened yet.
+fn require_page<'a>(page: &'a Option<eoka::Page>, step: &str) -> Result<&'a eoka::Page, ScraperError> {
+    page.as_ref().ok_or_else(|| {
+        ScraperError::Parse(format!(
+            "step '{step}' used before any 'open' step — no page available"
+        ))
+    })
+}
+
+/// Build the JS monkey-patch that intercepts fetch + XHR matching `url_fragment`.
+fn build_intercept_js(url_fragment: &str) -> String {
+    let safe = url_fragment.replace('\'', "\\'");
+    format!(
+        r#"(function(){{
+            window.__rebarr_captures = window.__rebarr_captures || {{}};
+            var _key = '{safe}';
+            var _match = '{safe}';
+            // Patch fetch
+            var _fetch = window.fetch;
+            window.fetch = function() {{
+                var args = arguments;
+                var url = typeof args[0] === 'string' ? args[0]
+                          : (args[0] && args[0].url ? args[0].url : '');
+                return _fetch.apply(this, args).then(function(resp) {{
+                    if (url.indexOf(_match) !== -1 && !window.__rebarr_captures[_key]) {{
+                        resp.clone().text().then(function(t) {{
+                            window.__rebarr_captures[_key] = t;
+                        }});
+                    }}
+                    return resp;
+                }});
+            }};
+            // Patch XMLHttpRequest
+            var _open = XMLHttpRequest.prototype.open;
+            XMLHttpRequest.prototype.open = function(method, url) {{
+                if (typeof url === 'string' && url.indexOf(_match) !== -1) {{
+                    this.addEventListener('load', function() {{
+                        if (!window.__rebarr_captures[_key]) {{
+                            window.__rebarr_captures[_key] = this.responseText;
+                        }}
+                    }});
+                }}
+                return _open.apply(this, arguments);
+            }};
+        }})();"#
+    )
+}
+
+/// Inject the monkey-patch via execute (post-navigation injection).
+async fn inject_intercept(page: &eoka::Page, url_fragment: &str) {
+    let js = build_intercept_js(url_fragment);
+    let _ = page.execute(&js).await;
+}
+
+/// Poll for a captured response in `window.__rebarr_captures[url_fragment]`.
+/// Returns `Some(body)` or `None` on timeout (10 s).
+async fn poll_capture(page: &eoka::Page, url_fragment: &str) -> Option<String> {
+    let safe = url_fragment.replace('\'', "\\'");
+    let js = format!("(window.__rebarr_captures && window.__rebarr_captures['{safe}']) || null");
+    for _ in 0..20u32 {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        if let Ok(Some(s)) = page.evaluate::<Option<String>>(&js).await {
+            if !s.is_empty() {
+                return Some(s);
+            }
+        }
+    }
+    None
+}
+
+/// Parse an intercepted response body, optionally navigating a JSON path.
+fn parse_capture_body(body: &str, json_path: Option<&str>) -> String {
+    if let Some(path) = json_path {
+        if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(body) {
+            for key in path.split('.') {
+                json = json[key].take();
+            }
+            return match json {
+                serde_json::Value::String(s) => s,
+                other => other.to_string(),
             };
-            template
-                .replace("{value}", value)
-                .replace("{base_url}", base_url)
         }
     }
+    body.to_owned()
 }
 
-// ---------------------------------------------------------------------------
-// Lua script execution
-// ---------------------------------------------------------------------------
-
-/// Run an inline Lua script that returns an array of `{url, index}` tables.
-///
-/// Executes in `spawn_blocking` so the async runtime is not blocked.
-async fn run_lua_script(
-    script: &str,
-    html: String,
-    base_url: String,
-) -> Result<Vec<PageUrl>, ScraperError> {
-    let script = script.to_owned();
-
-    tokio::task::spawn_blocking(move || run_lua_blocking(&script, &html, &base_url))
-        .await
-        .map_err(|e| ScraperError::Script(format!("spawn_blocking panic: {e}")))?
-}
-
-fn run_lua_blocking(script: &str, html: &str, base_url: &str) -> Result<Vec<PageUrl>, ScraperError> {
-    let lua = mlua::Lua::new();
-
-    // -- select(html_string, css_selector) -> array of element tables
-    // Each element table: { text = "...", attrs = { key = value, ... } }
-    let select_fn = lua
-        .create_function(|lua_ctx, (html_str, selector): (String, String)| {
-            let doc = Html::parse_document(&html_str);
-            let sel = Selector::parse(&selector)
-                .map_err(|e| mlua::Error::RuntimeError(format!("bad selector '{selector}': {e:?}")))?;
-
-            let result = lua_ctx.create_table()?;
-            for (i, el) in doc.select(&sel).enumerate() {
-                let el_table = lua_ctx.create_table()?;
-                el_table.set("text", el.text().collect::<String>().trim().to_owned())?;
-                el_table.set("inner_html", el.inner_html())?;
-
-                let attrs_table = lua_ctx.create_table()?;
-                for (name, value) in el.value().attrs() {
-                    attrs_table.set(name, value)?;
-                }
-                el_table.set("attrs", attrs_table)?;
-                result.set(i + 1, el_table)?;
-            }
-            Ok(result)
-        })
-        .map_err(|e| ScraperError::Script(e.to_string()))?;
-    lua.globals()
-        .set("select", select_fn)
-        .map_err(|e| ScraperError::Script(e.to_string()))?;
-
-    // -- attr(element, name) -> string  (convenience wrapper)
-    let attr_fn = lua
-        .create_function(|_, (element, name): (mlua::Table, String)| {
-            let attrs: mlua::Table = element.get("attrs")?;
-            let val: Option<String> = attrs.get(name)?;
-            Ok(val.unwrap_or_default())
-        })
-        .map_err(|e| ScraperError::Script(e.to_string()))?;
-    lua.globals()
-        .set("attr", attr_fn)
-        .map_err(|e| ScraperError::Script(e.to_string()))?;
-
-    // -- text(element) -> string  (convenience wrapper)
-    let text_fn = lua
-        .create_function(|_, element: mlua::Table| {
-            let t: String = element.get("text")?;
-            Ok(t)
-        })
-        .map_err(|e| ScraperError::Script(e.to_string()))?;
-    lua.globals()
-        .set("text", text_fn)
-        .map_err(|e| ScraperError::Script(e.to_string()))?;
-
-    // -- json_decode(str) -> table
-    let json_decode_fn = lua
-        .create_function(|lua_ctx, json_str: String| {
-            let value: serde_json::Value = serde_json::from_str(&json_str)
-                .map_err(|e| mlua::Error::RuntimeError(format!("json_decode: {e}")))?;
-            json_to_lua(lua_ctx, &value)
-        })
-        .map_err(|e| ScraperError::Script(e.to_string()))?;
-    lua.globals()
-        .set("json_decode", json_decode_fn)
-        .map_err(|e| ScraperError::Script(e.to_string()))?;
-
-    // -- url_join(base, path) -> string
-    let url_join_fn = lua
-        .create_function(|_, (base, path): (String, String)| {
-            if path.starts_with("http://") || path.starts_with("https://") {
-                Ok(path)
-            } else {
-                Ok(format!(
-                    "{}/{}",
-                    base.trim_end_matches('/'),
-                    path.trim_start_matches('/')
-                ))
-            }
-        })
-        .map_err(|e| ScraperError::Script(e.to_string()))?;
-    lua.globals()
-        .set("url_join", url_join_fn)
-        .map_err(|e| ScraperError::Script(e.to_string()))?;
-
-    // Set the input globals.
-    lua.globals()
-        .set("html", html)
-        .map_err(|e| ScraperError::Script(e.to_string()))?;
-    lua.globals()
-        .set("base_url", base_url)
-        .map_err(|e| ScraperError::Script(e.to_string()))?;
-
-    // Execute the script; it must return an array of {url, index} tables.
-    let result: mlua::Value = lua
-        .load(script)
-        .eval()
-        .map_err(|e| ScraperError::Script(format!("Lua error: {e}")))?;
-
-    let table = match result {
-        mlua::Value::Table(t) => t,
-        _ => return Err(ScraperError::Script("script must return a table".to_owned())),
-    };
-
-    let mut pages = Vec::new();
-    let mut i = 1i64;
-    loop {
-        match table
-            .get::<mlua::Value>(i)
-            .map_err(|e| ScraperError::Script(e.to_string()))?
-        {
-            mlua::Value::Table(entry) => {
-                let url: String = entry
-                    .get("url")
-                    .map_err(|e| ScraperError::Script(format!("entry missing 'url': {e}")))?;
-                let index: u32 = entry
-                    .get("index")
-                    .map_err(|e| ScraperError::Script(format!("entry missing 'index': {e}")))?;
-                pages.push(PageUrl { url, index });
-                i += 1;
-            }
-            mlua::Value::Nil => break,
-            _ => {
-                return Err(ScraperError::Script(
-                    "each entry in the return table must be a table".to_owned(),
-                ))
-            }
-        }
-    }
-
-    Ok(pages)
-}
-
-/// Recursively convert a `serde_json::Value` into a Lua value.
-fn json_to_lua(lua: &mlua::Lua, value: &serde_json::Value) -> mlua::Result<mlua::Value> {
-    match value {
-        serde_json::Value::Null => Ok(mlua::Value::Nil),
-        serde_json::Value::Bool(b) => Ok(mlua::Value::Boolean(*b)),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Ok(mlua::Value::Integer(i))
-            } else {
-                Ok(mlua::Value::Number(n.as_f64().unwrap_or(0.0)))
-            }
-        }
-        serde_json::Value::String(s) => Ok(mlua::Value::String(lua.create_string(s)?)),
-        serde_json::Value::Array(arr) => {
-            let t = lua.create_table()?;
-            for (i, v) in arr.iter().enumerate() {
-                t.set(i + 1, json_to_lua(lua, v)?)?;
-            }
-            Ok(mlua::Value::Table(t))
-        }
-        serde_json::Value::Object(obj) => {
-            let t = lua.create_table()?;
-            for (k, v) in obj {
-                t.set(k.as_str(), json_to_lua(lua, v)?)?;
-            }
-            Ok(mlua::Value::Table(t))
-        }
-    }
+/// Escape a string for safe embedding in a JS single-quoted string literal.
+fn js_escape(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('\'', "\\'")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
 }

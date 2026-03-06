@@ -7,3 +7,5 @@ rebarr.db-shm
 rebarr.db-wal
 thumbnails/
 manga/
+scraper_dump_*
+screenshot.png

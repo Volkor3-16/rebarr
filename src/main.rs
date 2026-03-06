@@ -54,7 +54,8 @@ async fn main() -> Result<(), rocket::Error> {
         }
     }
 
-    let scraper_ctx = ScraperCtx::new(http_client.clone(), browser_pool);
+    let mut scraper_ctx = ScraperCtx::new(http_client.clone(), browser_pool);
+    scraper_ctx.flaresolverr_url = std::env::var("REBARR_FLARESOLVERR_URL").ok();
 
     // Background Task Handler start
     let _worker = worker::start(pool.clone(), Arc::clone(&registry), scraper_ctx.clone());

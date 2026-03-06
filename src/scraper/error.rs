@@ -14,6 +14,9 @@ pub enum ScraperError {
     #[error("Script error: {0}")]
     Script(String),
 
+    #[error("Timed out waiting: {0}")]
+    Timeout(String),
+
     #[error("No results found")]
     NotFound,
 

@@ -4,13 +4,15 @@
 ///   cargo run --bin scraper_test -- [OPTIONS] "manga title"
 ///
 /// Options:
-///   -p, --provider <name>   Provider to test (default: highest-scored)
-///   -d                      Also download the first chapter pages to ./test_dl/
+///   -p, --provider <name>      Provider to test (default: highest-scored)
+///   -d                         Also download the first chapter pages to ./test_dl/
+///   -H, --dump-html            Dump page HTML to ./scraper_dump_N.html after each open step
 ///
 /// Examples:
 ///   cargo run --bin scraper_test -- "berserk"
 ///   cargo run --bin scraper_test -- -p MangaFire "berserk"
 ///   cargo run --bin scraper_test -- -p WeebCentral -d "berserk"
+///   cargo run --bin scraper_test -- -H "berserk"
 ///
 /// What it does:
 ///   1. Loads providers from ./providers/ (or REBARR_PROVIDERS_DIR)
@@ -21,6 +23,7 @@
 use std::process;
 
 use rebarr::scraper::{browser::BrowserPool, ProviderRegistry, ScraperCtx};
+use strsim::jaro_winkler;
 
 #[tokio::main]
 async fn main() {
@@ -35,6 +38,7 @@ async fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut provider_name: Option<String> = None;
     let mut download = false;
+    let mut dump_html = false;
     let mut query: Option<String> = None;
 
     let mut i = 0;
@@ -50,9 +54,12 @@ async fn main() {
             "-d" => {
                 download = true;
             }
+            "-H" | "--dump-html" => {
+                dump_html = true;
+            }
             flag if flag.starts_with('-') => {
                 eprintln!("Unknown flag: {flag}");
-                eprintln!("Usage: scraper_test [-p <provider>] [-d] <query>");
+                eprintln!("Usage: scraper_test [-p <provider>] [-d] [-H] <query>");
                 process::exit(1);
             }
             _ => {
@@ -63,7 +70,7 @@ async fn main() {
     }
 
     let query = query.unwrap_or_else(|| {
-        eprintln!("Usage: scraper_test [-p <provider>] [-d] <query>");
+        eprintln!("Usage: scraper_test [-p <provider>] [-d] [-H] <query>");
         eprintln!("Example: cargo run --bin scraper_test -- -p MangaFire \"berserk\"");
         process::exit(1);
     });
@@ -75,7 +82,8 @@ async fn main() {
         .user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
         .build()
         .expect("failed to build HTTP client");
-    let ctx = ScraperCtx::new(http.clone(), BrowserPool::new());
+    let mut ctx = ScraperCtx::new(http.clone(), BrowserPool::new());
+    ctx.dump_html = dump_html;
 
     // -------------------------------------------------------------------------
     // Load providers
@@ -131,13 +139,50 @@ async fn main() {
         process::exit(1);
     }
 
-    println!("Search results:");
-    for (i, r) in results.iter().enumerate() {
-        println!("  [{i}] {} — {}", r.title, r.url);
+    // Score and sort results by similarity to query
+    let query_lower = query.to_lowercase();
+    let mut scored: Vec<(usize, f64)> = results
+        .iter()
+        .enumerate()
+        .map(|(i, r)| (i, jaro_winkler(&query_lower, &r.title.to_lowercase())))
+        .collect();
+    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+    println!("Search results (sorted by similarity):");
+    for (rank, &(orig_idx, score)) in scored.iter().enumerate() {
+        let r = &results[orig_idx];
+        println!("  [{rank}] ({:.0}%) {} — {}", score * 100.0, r.title, r.url);
     }
 
-    let manga = &results[0];
-    println!("\nUsing first result: {} ({})\n", manga.title, manga.url);
+    const AUTO_SELECT_THRESHOLD: f64 = 0.90;
+    let best_idx = scored[0].0;
+    let best_score = scored[0].1;
+
+    let manga = if best_score >= AUTO_SELECT_THRESHOLD {
+        println!(
+            "\nAuto-selecting best match ({:.0}%): {}",
+            best_score * 100.0,
+            results[best_idx].title
+        );
+        &results[best_idx]
+    } else {
+        print!(
+            "\nNo confident match (best: {:.0}%). Enter index [0..{}] or press Enter for [0]: ",
+            best_score * 100.0,
+            scored.len() - 1
+        );
+        use std::io::{self, Write as _};
+        io::stdout().flush().ok();
+        let mut input = String::new();
+        io::stdin()
+            .read_line(&mut input)
+            .expect("failed to read input");
+        let chosen_rank: usize = input.trim().parse().unwrap_or(0).min(scored.len() - 1);
+        let chosen_orig = scored[chosen_rank].0;
+        println!("Selected: {}", results[chosen_orig].title);
+        &results[chosen_orig]
+    };
+    println!();
 
     // -------------------------------------------------------------------------
     // Chapters
@@ -149,13 +194,13 @@ async fn main() {
     });
 
     println!("Found {} chapters:", chapters.len());
-    for ch in chapters.iter().take(10) {
+    for ch in chapters.iter().take(1000) {
         let title = ch.title.as_deref().unwrap_or("(no title)");
         let scanlator = ch.scanlator_group.as_deref().unwrap_or("—");
         let url = ch.url.as_deref().unwrap_or("(no url)");
         println!("  Ch.{} — {} [{}] {}", ch.number, title, scanlator, url);
     }
-    if chapters.len() > 10 {
+    if chapters.len() > 1000 {
         println!("  ... and {} more", chapters.len() - 10);
     }
 
