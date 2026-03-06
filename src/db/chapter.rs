@@ -37,8 +37,7 @@ fn download_status_str(s: &DownloadStatus) -> &'static str {
 
 fn chapter_from_row(row: ChapterRow) -> Result<Chapter, sqlx::Error> {
     let id = Uuid::parse_str(&row.uuid).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
-    let manga_id =
-        Uuid::parse_str(&row.manga_id).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
+    let manga_id = Uuid::parse_str(&row.manga_id).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
 
     let download_status = match row.download_status.as_str() {
         "Downloading" => DownloadStatus::Downloading,
@@ -183,14 +182,12 @@ pub async fn set_status(
     status: DownloadStatus,
     downloaded_at: Option<DateTime<Utc>>,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "UPDATE Chapter SET download_status = ?, downloaded_at = ? WHERE uuid = ?",
-    )
-    .bind(download_status_str(&status))
-    .bind(downloaded_at)
-    .bind(chapter_id.to_string())
-    .execute(pool)
-    .await?;
+    sqlx::query("UPDATE Chapter SET download_status = ?, downloaded_at = ? WHERE uuid = ?")
+        .bind(download_status_str(&status))
+        .bind(downloaded_at)
+        .bind(chapter_id.to_string())
+        .execute(pool)
+        .await?;
     Ok(())
 }
 

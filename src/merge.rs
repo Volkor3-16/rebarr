@@ -2,8 +2,8 @@ use chrono::Utc;
 use sqlx::SqlitePool;
 use thiserror::Error;
 
-use crate::db::{chapter as db_chapter, provider as db_provider};
 use crate::db::provider::MangaProvider;
+use crate::db::{chapter as db_chapter, provider as db_provider};
 use crate::manga::Manga;
 use crate::scraper::{Provider, ProviderRegistry, ScraperCtx};
 
@@ -143,8 +143,11 @@ pub async fn scan_manga(
     let mut total_new = 0usize;
 
     // Build a map from name → Arc<dyn Provider> for quick lookup
-    let provider_map: std::collections::HashMap<&str, &std::sync::Arc<dyn Provider>> =
-        registry.by_score().into_iter().map(|p| (p.name(), p)).collect();
+    let provider_map: std::collections::HashMap<&str, &std::sync::Arc<dyn Provider>> = registry
+        .by_score()
+        .into_iter()
+        .map(|p| (p.name(), p))
+        .collect();
 
     for entry in &provider_entries {
         let Some(provider) = provider_map.get(entry.provider_name.as_str()) else {

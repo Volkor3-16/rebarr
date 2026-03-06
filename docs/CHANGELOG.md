@@ -2,6 +2,13 @@
 
 This a informal changelog so i can keep track of what im doing.
 
+## 2026-03-06
+
+- Moved scraper/browser engine from chromiumoxide to eoka, because its simpler and bypasses cloudflare easier.
+- Implemented tcbsans (because brother loves his one piece)
+- scraper_test actually matches on the title now.
+-
+
 ## 2026-03-03
 
 - Vibecoded up a scraper system

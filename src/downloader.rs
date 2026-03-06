@@ -62,15 +62,15 @@ pub async fn download_chapter(
 
     // Build a score-ordered list of (entry, provider)
     let provider_map: std::collections::HashMap<&str, &Arc<dyn crate::scraper::Provider>> =
-        registry.by_score().into_iter().map(|p| (p.name(), p)).collect();
+        registry
+            .by_score()
+            .into_iter()
+            .map(|p| (p.name(), p))
+            .collect();
 
     let mut ordered: Vec<_> = provider_entries
         .iter()
-        .filter_map(|e| {
-            provider_map
-                .get(e.provider_name.as_str())
-                .map(|p| (e, *p))
-        })
+        .filter_map(|e| provider_map.get(e.provider_name.as_str()).map(|p| (e, *p)))
         .collect();
     // Sort by provider score descending
     ordered.sort_by(|a, b| b.1.score().cmp(&a.1.score()));
@@ -95,7 +95,11 @@ pub async fn download_chapter(
                     chapter.number_raw,
                     provider.name()
                 );
-                last_err = format!("chapter {} not found on {}", chapter.number_raw, provider.name());
+                last_err = format!(
+                    "chapter {} not found on {}",
+                    chapter.number_raw,
+                    provider.name()
+                );
                 continue;
             }
         };
@@ -111,7 +115,11 @@ pub async fn download_chapter(
         };
 
         if pages.is_empty() {
-            log::warn!("[dl] {} returned 0 pages for chapter {}.", provider.name(), chapter.number_raw);
+            log::warn!(
+                "[dl] {} returned 0 pages for chapter {}.",
+                provider.name(),
+                chapter.number_raw
+            );
             last_err = format!("0 pages returned by {}", provider.name());
             continue;
         }
@@ -124,14 +132,27 @@ pub async fn download_chapter(
                     .join(&manga.relative_path)
                     .join(format!("Chapter {}.cbz", chapter.number_raw));
 
-                if let Err(e) = write_cbz(&cbz_path, &manga.metadata.title, &chapter.number_raw, image_data).await {
+                if let Err(e) = write_cbz(
+                    &cbz_path,
+                    &manga.metadata.title,
+                    &chapter.number_raw,
+                    image_data,
+                )
+                .await
+                {
                     log::warn!("[dl] CBZ write failed: {e}");
                     last_err = e.to_string();
                     continue;
                 }
 
                 // Mark downloaded and update counts
-                db_chapter::set_status(pool, chapter.id, DownloadStatus::Downloaded, Some(Utc::now())).await?;
+                db_chapter::set_status(
+                    pool,
+                    chapter.id,
+                    DownloadStatus::Downloaded,
+                    Some(Utc::now()),
+                )
+                .await?;
                 db_chapter::update_manga_counts(pool, manga.id).await?;
 
                 log::info!(

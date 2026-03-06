@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 use sqlx::SqlitePool;
 use tokio::task::JoinHandle;
 
-use crate::db::{library as db_library, manga as db_manga, chapter as db_chapter, task as db_task};
 use crate::db::task::{Task, TaskType};
+use crate::db::{chapter as db_chapter, library as db_library, manga as db_manga, task as db_task};
 use crate::downloader;
 use crate::merge;
 use crate::scraper::{ProviderRegistry, ScraperCtx};
@@ -17,17 +17,17 @@ use crate::scraper::{ProviderRegistry, ScraperCtx};
 
 /// Spawn the background worker as a detached tokio task.
 /// The worker loops indefinitely, polling for pending tasks every 5 seconds.
-pub fn start(
-    pool: SqlitePool,
-    registry: Arc<ProviderRegistry>,
-    ctx: ScraperCtx,
-) -> JoinHandle<()> {
+pub fn start(pool: SqlitePool, registry: Arc<ProviderRegistry>, ctx: ScraperCtx) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut rate_limiter = RateLimiter::new(&registry);
         loop {
             match db_task::claim_next(&pool).await {
                 Ok(Some(task)) => {
-                    log::info!("[worker] Claimed task {:?} (id={})", task.task_type, task.id);
+                    log::info!(
+                        "[worker] Claimed task {:?} (id={})",
+                        task.task_type,
+                        task.id
+                    );
 
                     // Throttle based on provider(s) involved
                     throttle_for_task(&pool, &registry, &task, &mut rate_limiter).await;
@@ -93,7 +93,9 @@ async fn dispatch(
         }
 
         TaskType::DownloadChapter => {
-            let chapter_id = task.chapter_id.ok_or("DownloadChapter task missing chapter_id")?;
+            let chapter_id = task
+                .chapter_id
+                .ok_or("DownloadChapter task missing chapter_id")?;
 
             let chapter = db_chapter::get_by_id(pool, chapter_id)
                 .await
@@ -117,7 +119,10 @@ async fn dispatch(
 
         // Not yet implemented task types — log and succeed silently
         TaskType::RefreshAniList | TaskType::Backup => {
-            log::info!("[worker] Task type {:?} not yet implemented, skipping.", task.task_type);
+            log::info!(
+                "[worker] Task type {:?} not yet implemented, skipping.",
+                task.task_type
+            );
             Ok(())
         }
     }
@@ -143,7 +148,11 @@ impl RateLimiter {
         for provider in registry.by_score() {
             // Minimum interval = 60_000ms / rpm  (floor at 100ms)
             let rpm = provider.rate_limit_rpm();
-            let millis = if rpm > 0 { (60_000u64 / rpm as u64).max(100) } else { 2_000 };
+            let millis = if rpm > 0 {
+                (60_000u64 / rpm as u64).max(100)
+            } else {
+                2_000
+            };
             intervals.insert(provider.name().to_owned(), Duration::from_millis(millis));
         }
         Self {
@@ -163,7 +172,8 @@ impl RateLimiter {
                 tokio::time::sleep(interval - elapsed).await;
             }
         }
-        self.last_used.insert(provider_name.to_owned(), Instant::now());
+        self.last_used
+            .insert(provider_name.to_owned(), Instant::now());
     }
 }
 
@@ -179,7 +189,11 @@ async fn throttle_for_task(
         if let Ok(entries) = crate::db::provider::get_all_for_manga(pool, manga_id).await {
             for entry in entries {
                 // Only throttle if this provider is actually loaded
-                if registry.by_score().iter().any(|p| p.name() == entry.provider_name) {
+                if registry
+                    .by_score()
+                    .iter()
+                    .any(|p| p.name() == entry.provider_name)
+                {
                     limiter.throttle(&entry.provider_name).await;
                 }
             }
@@ -193,7 +207,11 @@ async fn throttle_for_task(
                 crate::db::provider::get_all_for_manga(pool, chapter.manga_id).await
             {
                 for entry in entries {
-                    if registry.by_score().iter().any(|p| p.name() == entry.provider_name) {
+                    if registry
+                        .by_score()
+                        .iter()
+                        .any(|p| p.name() == entry.provider_name)
+                    {
                         limiter.throttle(&entry.provider_name).await;
                     }
                 }

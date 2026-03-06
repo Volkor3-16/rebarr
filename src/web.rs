@@ -40,7 +40,14 @@ pub fn logs_page() -> RawHtml<&'static str> {
 // ---------------------------------------------------------------------------
 
 pub fn routes() -> Vec<rocket::Route> {
-    routes![index, library_page, series_page, search_page, settings_page, logs_page]
+    routes![
+        index,
+        library_page,
+        series_page,
+        search_page,
+        settings_page,
+        logs_page
+    ]
 }
 
 // ---------------------------------------------------------------------------

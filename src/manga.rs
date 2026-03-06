@@ -18,8 +18,8 @@ pub struct Manga {
     pub id: Uuid,                           // internal, canonical
     pub library_id: Uuid,                   // The Library the manga belongs to
     pub anilist_id: Option<u32>,            // external identity
-    pub mal_id: Option<u32>,                // MAL cross-reference ID (sourced from AniList's id_mal field)
-    pub metadata: MangaMetadata,            // Stores all the metadata for the series
+    pub mal_id: Option<u32>, // MAL cross-reference ID (sourced from AniList's id_mal field)
+    pub metadata: MangaMetadata, // Stores all the metadata for the series
     pub relative_path: PathBuf, // Relative (to the library root) path of the manga files.
     pub downloaded_count: Option<i32>, // How many chapters are on disk already.
     pub chapter_count: Option<u32>, // anilist doesn't support chapter counts in any sane way, we need to build this from providers @ scrape time.
@@ -236,4 +236,3 @@ pub enum AliasSource {
     Site(String),
     Manual,
 }
-

@@ -22,7 +22,7 @@
 ///   5. (With -d) Downloads all pages to ./test_dl/ch_<number>/
 use std::process;
 
-use rebarr::scraper::{browser::BrowserPool, ProviderRegistry, ScraperCtx};
+use rebarr::scraper::{ProviderRegistry, ScraperCtx, browser::BrowserPool};
 use strsim::jaro_winkler;
 
 #[tokio::main]
@@ -123,7 +123,11 @@ async fn main() {
         })
     };
 
-    println!("Using provider: {} (score={})\n", provider.name(), provider.score());
+    println!(
+        "Using provider: {} (score={})\n",
+        provider.name(),
+        provider.score()
+    );
 
     // -------------------------------------------------------------------------
     // Search
@@ -188,10 +192,13 @@ async fn main() {
     // Chapters
     // -------------------------------------------------------------------------
     log::info!("Fetching chapter list...");
-    let chapters = provider.chapters(&ctx, &manga.url).await.unwrap_or_else(|e| {
-        eprintln!("chapters() failed: {e}");
-        process::exit(1);
-    });
+    let chapters = provider
+        .chapters(&ctx, &manga.url)
+        .await
+        .unwrap_or_else(|e| {
+            eprintln!("chapters() failed: {e}");
+            process::exit(1);
+        });
 
     println!("Found {} chapters:", chapters.len());
     for ch in chapters.iter().take(1000) {
@@ -247,7 +254,11 @@ async fn main() {
         .await
         .expect("failed to create output directory");
 
-    println!("\nDownloading {} pages to {}/ ...", pages.len(), out_dir.display());
+    println!(
+        "\nDownloading {} pages to {}/ ...",
+        pages.len(),
+        out_dir.display()
+    );
 
     let mut downloaded = 0usize;
     for page in &pages {

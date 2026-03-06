@@ -32,7 +32,10 @@ impl YamlProvider {
         for (k, v) in vars {
             s = s.replace(&format!("{{{k}}}"), v);
             // {var|strip_last_segment}: remove the last /segment from a URL path.
-            let stripped = v.rfind('/').filter(|&i| i > 0).map_or(v.as_str(), |i| &v[..i]);
+            let stripped = v
+                .rfind('/')
+                .filter(|&i| i > 0)
+                .map_or(v.as_str(), |i| &v[..i]);
             s = s.replace(&format!("{{{k}|strip_last_segment}}"), stripped);
         }
         if s.starts_with('/') {
@@ -46,7 +49,11 @@ impl YamlProvider {
     // Field extraction (used inside foreach)
     // ------------------------------------------------------------------
 
-    fn extract_field(&self, element: &ElementRef, field: &FieldDef) -> Result<String, ScraperError> {
+    fn extract_field(
+        &self,
+        element: &ElementRef,
+        field: &FieldDef,
+    ) -> Result<String, ScraperError> {
         if let Some(ref v) = field.static_value {
             return Ok(v.clone());
         }
@@ -54,16 +61,19 @@ impl YamlProvider {
         let child = if field.selector.is_empty() {
             *element
         } else {
-            let sel = Selector::parse(&field.selector)
-                .map_err(|e| ScraperError::Parse(format!("bad selector '{}': {e:?}", field.selector)))?;
-            element
-                .select(&sel)
-                .next()
-                .ok_or_else(|| ScraperError::Parse(format!("selector '{}' matched nothing", field.selector)))?
+            let sel = Selector::parse(&field.selector).map_err(|e| {
+                ScraperError::Parse(format!("bad selector '{}': {e:?}", field.selector))
+            })?;
+            element.select(&sel).next().ok_or_else(|| {
+                ScraperError::Parse(format!("selector '{}' matched nothing", field.selector))
+            })?
         };
 
         let content = field.content.as_ref().ok_or_else(|| {
-            ScraperError::Parse(format!("field with selector '{}' has no 'content'", field.selector))
+            ScraperError::Parse(format!(
+                "field with selector '{}' has no 'content'",
+                field.selector
+            ))
         })?;
         let raw = match content {
             ContentKind::Text => child.text().collect::<String>().trim().to_owned(),
@@ -261,13 +271,16 @@ impl YamlProvider {
                     }
                 }
 
-                StepDef::Intercept { intercept: intercept_def } => {
+                StepDef::Intercept {
+                    intercept: intercept_def,
+                } => {
                     if let Some(ref p) = page {
                         // Page already open: inject immediately and poll.
                         inject_intercept(p, &intercept_def.url_contains).await;
                         match poll_capture(p, &intercept_def.url_contains).await {
                             Some(body) => {
-                                let val = parse_capture_body(&body, intercept_def.json_path.as_deref());
+                                let val =
+                                    parse_capture_body(&body, intercept_def.json_path.as_deref());
                                 vars.insert(intercept_def.var.clone(), val);
                             }
                             None => {
@@ -284,7 +297,9 @@ impl YamlProvider {
                     }
                 }
 
-                StepDef::Foreach { foreach: foreach_def } => {
+                StepDef::Foreach {
+                    foreach: foreach_def,
+                } => {
                     let p = require_page(&page, "foreach")?;
                     let html = p
                         .content()
@@ -387,7 +402,11 @@ impl Provider for YamlProvider {
         ctx: &ScraperCtx,
         manga_url: &str,
     ) -> Result<Vec<ProviderChapterInfo>, ScraperError> {
-        let def = self.def.chapters.as_ref().ok_or(ScraperError::Unsupported)?;
+        let def = self
+            .def
+            .chapters
+            .as_ref()
+            .ok_or(ScraperError::Unsupported)?;
         let mut input = HashMap::new();
         input.insert("manga_url".to_owned(), manga_url.to_owned());
 
@@ -464,7 +483,11 @@ fn records_to_chapters(records: Vec<HashMap<String, String>>) -> Vec<ProviderCha
             })
         })
         .collect();
-    chapters.sort_by(|a, b| a.number.partial_cmp(&b.number).unwrap_or(std::cmp::Ordering::Equal));
+    chapters.sort_by(|a, b| {
+        a.number
+            .partial_cmp(&b.number)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     chapters
 }
 
@@ -474,7 +497,10 @@ fn result_to_pages(result: ActionResult) -> Result<Vec<PageUrl>, ScraperError> {
             .into_iter()
             .enumerate()
             .filter_map(|(i, mut r)| {
-                r.remove("url").map(|url| PageUrl { url, index: (i + 1) as u32 })
+                r.remove("url").map(|url| PageUrl {
+                    url,
+                    index: (i + 1) as u32,
+                })
             })
             .collect()),
         ActionResult::Value(s) => {
@@ -485,7 +511,10 @@ fn result_to_pages(result: ActionResult) -> Result<Vec<PageUrl>, ScraperError> {
                     .into_iter()
                     .enumerate()
                     .filter_map(|(i, v)| {
-                        v.as_str().map(|u| PageUrl { url: u.to_owned(), index: (i + 1) as u32 })
+                        v.as_str().map(|u| PageUrl {
+                            url: u.to_owned(),
+                            index: (i + 1) as u32,
+                        })
                     })
                     .collect()),
                 _ => Err(ScraperError::Parse(
@@ -501,7 +530,10 @@ fn result_to_pages(result: ActionResult) -> Result<Vec<PageUrl>, ScraperError> {
 // ---------------------------------------------------------------------------
 
 /// Return a reference to the page, or an error if it has not been opened yet.
-fn require_page<'a>(page: &'a Option<eoka::Page>, step: &str) -> Result<&'a eoka::Page, ScraperError> {
+fn require_page<'a>(
+    page: &'a Option<eoka::Page>,
+    step: &str,
+) -> Result<&'a eoka::Page, ScraperError> {
     page.as_ref().ok_or_else(|| {
         ScraperError::Parse(format!(
             "step '{step}' used before any 'open' step — no page available"

@@ -48,7 +48,9 @@ pub struct RateLimitDef {
 
 impl Default for RateLimitDef {
     fn default() -> Self {
-        Self { requests_per_minute: default_rpm() }
+        Self {
+            requests_per_minute: default_rpm(),
+        }
     }
 }
 

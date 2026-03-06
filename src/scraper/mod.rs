@@ -27,8 +27,8 @@ pub struct ProviderSearchResult {
 /// Info about a single chapter as returned by a provider's chapter list.
 #[derive(Debug, Clone)]
 pub struct ProviderChapterInfo {
-    pub raw_number: String,          // Raw value as scraped (e.g. "12.5")
-    pub number: f32,                 // Parsed chapter number for ordering
+    pub raw_number: String, // Raw value as scraped (e.g. "12.5")
+    pub number: f32,        // Parsed chapter number for ordering
     pub title: Option<String>,
     pub url: Option<String>,
     pub volume: Option<u32>,
@@ -68,7 +68,12 @@ pub struct ScraperCtx {
 
 impl ScraperCtx {
     pub fn new(http: reqwest::Client, browser: BrowserPool) -> Self {
-        Self { http, browser, dump_html: false, flaresolverr_url: None }
+        Self {
+            http,
+            browser,
+            dump_html: false,
+            flaresolverr_url: None,
+        }
     }
 }
 
@@ -167,10 +172,7 @@ impl ProviderRegistry {
                     providers.push(Arc::new(YamlProvider::new(def)));
                 }
                 Err(e) => {
-                    log::warn!(
-                        "Skipping invalid provider config '{}': {e}",
-                        path.display()
-                    );
+                    log::warn!("Skipping invalid provider config '{}': {e}", path.display());
                 }
             }
         }

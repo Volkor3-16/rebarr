@@ -29,8 +29,7 @@ struct MangaProviderRow {
 }
 
 fn from_row(row: MangaProviderRow) -> Result<MangaProvider, sqlx::Error> {
-    let manga_id =
-        Uuid::parse_str(&row.manga_id).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
+    let manga_id = Uuid::parse_str(&row.manga_id).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
     Ok(MangaProvider {
         manga_id,
         provider_name: row.provider_name,
