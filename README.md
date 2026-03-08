@@ -7,6 +7,36 @@ I never liked how **all** the other manga scrapers work. They all use the scrape
 
 The plan is to use AniList as the metadata source, and to automatically* match manga across different sites. Sorta like how sonarr works with multiple indexers.
 
+## Bugs / Dev TODO
+
+- [ ] Providers list under chapter list should provide more info
+    - Providers that couldn't find anything
+    - Provider score breakdowns
+    - Direct provider links/metadata to help with matching
+- [ ] Better scoring
+    - We shouldn't really care which provider it's uploaded to. No 'provider wide scores'
+    - We should change it to work on tiers. Tiers are the strict order, we never select a lower source if a better one exists.
+        - Tier 1: Official Publisher
+        - Tier 2: Known scanlator group (from a 'trusted' community list or something, idk)
+        - Tier 3: Unknown scnalator group (for ones that have a group name but we don't know, or just bad naming from a provider)
+        - Tier 4: No Group / unlabelled
+    - Additionally, the metadata should be ranked too, as to help scoring within a tier. Really here for a tiebreaker.
+        - Score presence of:
+            - title
+            - scanlator group name
+            - upload date
+            - chapter number (2 v s 2.1 and 2.2)
+            - Volume number
+        - Combined into a normalised score
+            - Then added to the tier scoring.
+- [ ] Partial/Split Chapters handling
+    - [ ] Split chapter numbers (currently number_sort) into `chapter_base` and `chapter_variant`
+        - Somehow handle 2.5 'extras' variant differently from split chapters
+        - [ ] Group variants under a chapter_base
+        - [ ] Assign a score bonus to full chapters, than a partial/split chapter collection.
+        - [ ] Normalise other naming schemes (2a -> 2.1)
+
+
 ## Features
 ### Minimum Viable Release
 
