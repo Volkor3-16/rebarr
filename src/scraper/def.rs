@@ -14,10 +14,6 @@ pub struct ProviderDef {
     /// Root URL (e.g. "https://weebcentral.com"). Used as `{base_url}` in templates.
     pub base_url: String,
 
-    /// Preference score 0–100. Higher = preferred when multiple providers have the same chapter.
-    #[serde(default = "default_score")]
-    pub score: u8,
-
     /// Per-provider rate limiting.
     #[serde(default)]
     pub rate_limit: RateLimitDef,
@@ -30,10 +26,6 @@ pub struct ProviderDef {
 
     /// Steps to fetch page image URLs for a single chapter.
     pub pages: Option<ActionDef>,
-}
-
-fn default_score() -> u8 {
-    50
 }
 
 // ---------------------------------------------------------------------------
@@ -201,6 +193,10 @@ pub struct FieldDef {
     /// Skipped when the value is already an absolute URL.
     #[serde(default)]
     pub prefix: String,
+
+    /// Optional regex applied to the extracted value. If the pattern has a
+    /// capture group, the first group is returned; otherwise the full match.
+    pub regex: Option<String>,
 
     /// Map raw extracted value → display label.
     /// Useful for turning attribute values (e.g. an SVG stroke color) into

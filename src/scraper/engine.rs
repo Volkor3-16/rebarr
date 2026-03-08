@@ -12,6 +12,14 @@ use crate::scraper::{
     {PageUrl, Provider, ProviderChapterInfo, ProviderSearchResult, ScraperCtx},
 };
 
+/// Diagnostic data collected during a `foreach` step.
+struct ForeachStats {
+    element_count: usize,
+    /// Per-field: (success_count, fail_count).
+    field_counts: Vec<(String, usize, usize)>,
+    first_record: Option<HashMap<String, String>>,
+}
+
 /// A scraping provider driven by a YAML `ProviderDef`.
 pub struct YamlProvider {
     pub(crate) def: ProviderDef,
@@ -106,6 +114,21 @@ impl YamlProvider {
 
         let raw = field.value_map.get(&raw).cloned().unwrap_or(raw);
 
+        let raw = if let Some(ref pattern) = field.regex {
+            let re = regex::Regex::new(pattern)
+                .map_err(|e| ScraperError::Parse(format!("bad regex '{pattern}': {e}")))?;
+            match re.captures(&raw) {
+                Some(caps) => caps
+                    .get(1)
+                    .or_else(|| caps.get(0))
+                    .map(|m| m.as_str().to_owned())
+                    .unwrap_or_default(),
+                None => raw,
+            }
+        } else {
+            raw
+        };
+
         if raw.starts_with("http://") || raw.starts_with("https://") {
             return Ok(raw);
         }
@@ -140,6 +163,9 @@ impl YamlProvider {
                 StepDef::Open { open: url_tmpl } => {
                     let url = self.expand(url_tmpl, &vars);
                     log::info!("open: {url}");
+                    if ctx.verbose {
+                        eprintln!("[step] open → {url}");
+                    }
 
                     if let Some(ref p) = page {
                         // Subsequent navigation on the same page.
@@ -175,7 +201,8 @@ impl YamlProvider {
                         .map_err(|e| ScraperError::Timeout(format!("body did not appear: {e}")))?;
                     // Wait for any XHR/fetch requests triggered by page JS to settle.
                     // Ignored on timeout — some pages never reach true network idle.
-                    p.wait_for_network_idle(5000, 30_000).await.ok();
+                    // ZAC NOTE: this sucks
+                    p.wait_for_network_idle(1000, 30_000).await.ok();
 
                     // Create screenshot of website (for debugging)
                     if ctx.dump_html {
@@ -201,6 +228,13 @@ impl YamlProvider {
                     for intercept in intercepts {
                         match poll_capture(p, &intercept.url_contains).await {
                             Some(body) => {
+                                if ctx.verbose {
+                                    eprintln!(
+                                        "[step] intercept captured {} bytes for '{}'",
+                                        body.len(),
+                                        intercept.url_contains
+                                    );
+                                }
                                 let val = parse_capture_body(&body, intercept.json_path.as_deref());
                                 vars.insert(intercept.var.clone(), val);
                             }
@@ -210,6 +244,12 @@ impl YamlProvider {
                                     self.def.name,
                                     intercept.url_contains
                                 );
+                                if ctx.verbose {
+                                    eprintln!(
+                                        "[step] intercept TIMEOUT for '{}'",
+                                        intercept.url_contains
+                                    );
+                                }
                             }
                         }
                     }
@@ -217,14 +257,30 @@ impl YamlProvider {
 
                 StepDef::WaitFor { wait_for: selector } => {
                     let sel = self.expand(selector, &vars);
+                    if ctx.verbose {
+                        eprintln!("[step] wait_for → {sel}");
+                    }
                     let p = require_page(&page, "wait_for")?;
-                    p.wait_for(&sel, 10_000)
-                        .await
-                        .map_err(|e| ScraperError::Timeout(format!("wait_for '{sel}': {e}")))?;
+                    match p.wait_for(&sel, 10_000).await {
+                        Ok(_) => {
+                            if ctx.verbose {
+                                eprintln!("[step] wait_for '{sel}' → found");
+                            }
+                        }
+                        Err(e) => {
+                            if ctx.verbose {
+                                eprintln!("[step] wait_for '{sel}' → TIMEOUT");
+                            }
+                            return Err(ScraperError::Timeout(format!("wait_for '{sel}': {e}")));
+                        }
+                    }
                 }
 
                 StepDef::Click { click: selector } => {
                     let sel = self.expand(selector, &vars);
+                    if ctx.verbose {
+                        eprintln!("[step] click → {sel}");
+                    }
                     let p = require_page(&page, "click")?;
                     p.human_click(&sel)
                         .await
@@ -234,6 +290,9 @@ impl YamlProvider {
                 StepDef::Type { type_def } => {
                     let selector = self.expand(&type_def.selector, &vars);
                     let value = self.expand(&type_def.value, &vars);
+                    if ctx.verbose {
+                        eprintln!("[step] type → {selector}");
+                    }
                     let p = require_page(&page, "type")?;
                     p.human_type(&selector, &value)
                         .await
@@ -241,17 +300,27 @@ impl YamlProvider {
                 }
 
                 StepDef::Sleep { sleep: ms } => {
+                    if ctx.verbose {
+                        eprintln!("[step] sleep → {ms}ms");
+                    }
                     tokio::time::sleep(Duration::from_millis(*ms)).await;
                 }
 
                 StepDef::Script { script: js_tmpl } => {
                     let js = self.expand(js_tmpl, &vars);
+                    if ctx.verbose {
+                        let preview = &js[..js.len().min(80)];
+                        eprintln!("[step] script → {preview}…");
+                    }
                     let p = require_page(&page, "script")?;
                     let _ = p.execute(&js).await;
                 }
 
                 StepDef::ExtractJs { extract_js: def } => {
                     let script = self.expand(&def.script, &vars);
+                    if ctx.verbose {
+                        eprintln!("[step] extract_js → var={}", def.var);
+                    }
                     let p = require_page(&page, "extract_js")?;
                     match p.evaluate::<serde_json::Value>(&script).await {
                         Ok(v) => {
@@ -259,6 +328,10 @@ impl YamlProvider {
                                 serde_json::Value::String(s) => s,
                                 other => other.to_string(),
                             };
+                            if ctx.verbose {
+                                let preview = &s[..s.len().min(120)];
+                                eprintln!("[step] extract_js '{}' = {preview}", def.var);
+                            }
                             vars.insert(def.var.clone(), s);
                         }
                         Err(e) => {
@@ -267,6 +340,9 @@ impl YamlProvider {
                                 self.def.name,
                                 def.var
                             );
+                            if ctx.verbose {
+                                eprintln!("[step] extract_js '{}' → FAILED: {e}", def.var);
+                            }
                         }
                     }
                 }
@@ -274,11 +350,24 @@ impl YamlProvider {
                 StepDef::Intercept {
                     intercept: intercept_def,
                 } => {
+                    if ctx.verbose {
+                        eprintln!(
+                            "[step] intercept → url_contains='{}', var='{}'",
+                            intercept_def.url_contains, intercept_def.var
+                        );
+                    }
                     if let Some(ref p) = page {
                         // Page already open: inject immediately and poll.
                         inject_intercept(p, &intercept_def.url_contains).await;
                         match poll_capture(p, &intercept_def.url_contains).await {
                             Some(body) => {
+                                if ctx.verbose {
+                                    eprintln!(
+                                        "[step] intercept captured {} bytes for '{}'",
+                                        body.len(),
+                                        intercept_def.url_contains
+                                    );
+                                }
                                 let val =
                                     parse_capture_body(&body, intercept_def.json_path.as_deref());
                                 vars.insert(intercept_def.var.clone(), val);
@@ -289,10 +378,22 @@ impl YamlProvider {
                                     self.def.name,
                                     intercept_def.url_contains
                                 );
+                                if ctx.verbose {
+                                    eprintln!(
+                                        "[step] intercept TIMEOUT for '{}'",
+                                        intercept_def.url_contains
+                                    );
+                                }
                             }
                         }
                     } else {
                         // No page yet: defer until the next `open`.
+                        if ctx.verbose {
+                            eprintln!(
+                                "[step] intercept deferred (no page yet) for '{}'",
+                                intercept_def.url_contains
+                            );
+                        }
                         pending_intercepts.push(intercept_def.clone());
                     }
                 }
@@ -300,20 +401,59 @@ impl YamlProvider {
                 StepDef::Foreach {
                     foreach: foreach_def,
                 } => {
+                    if ctx.verbose {
+                        eprintln!("[step] foreach → selector='{}'", foreach_def.selector);
+                    }
                     let p = require_page(&page, "foreach")?;
                     let html = p
                         .content()
                         .await
                         .map_err(|e| ScraperError::Browser(e.to_string()))?;
-                    self.collect_foreach_results(&html, foreach_def, &mut results)?;
+                    let stats = self.collect_foreach_results(&html, foreach_def, &mut results)?;
+                    if ctx.verbose {
+                        eprintln!(
+                            "[step] foreach → {} elements matched '{}'",
+                            stats.element_count, foreach_def.selector
+                        );
+                        for (field, ok, fail) in &stats.field_counts {
+                            eprintln!("         field '{field}': {ok} extracted, {fail} failed");
+                        }
+                        if let Some(ref first) = stats.first_record {
+                            eprintln!("         sample (first match):");
+                            let mut keys: Vec<&String> = first.keys().collect();
+                            keys.sort();
+                            for k in keys {
+                                let v = &first[k];
+                                let preview = &v[..v.len().min(100)];
+                                eprintln!("           {k} = {preview}");
+                            }
+                        }
+                    }
                 }
 
                 StepDef::Return { value: tmpl } => {
-                    early_return = Some(self.expand(tmpl, &vars));
+                    let val = self.expand(tmpl, &vars);
+                    if ctx.verbose {
+                        let count_hint = if val.starts_with('[') {
+                            serde_json::from_str::<serde_json::Value>(&val)
+                                .ok()
+                                .and_then(|v| v.as_array().map(|a| a.len()))
+                                .map(|n| format!(" ({n} URLs in array)"))
+                                .unwrap_or_default()
+                        } else {
+                            String::new()
+                        };
+                        let preview = &val[..val.len().min(120)];
+                        eprintln!("[step] return → {preview}{count_hint}");
+                    }
+                    early_return = Some(val);
                     break;
                 }
 
                 StepDef::Scroll { scroll: target } => {
+                    if ctx.verbose {
+                        eprintln!("[step] scroll → {target}");
+                    }
                     let p = require_page(&page, "scroll")?;
                     let js = if target == "bottom" {
                         "window.scrollTo(0, document.body.scrollHeight)".to_owned()
@@ -341,23 +481,53 @@ impl YamlProvider {
         html: &str,
         foreach_def: &ForeachDef,
         results: &mut Vec<HashMap<String, String>>,
-    ) -> Result<(), ScraperError> {
+    ) -> Result<ForeachStats, ScraperError> {
         let doc = Html::parse_document(html);
         let sel = Selector::parse(&foreach_def.selector)
             .map_err(|e| ScraperError::Parse(format!("bad foreach selector: {e:?}")))?;
 
+        // Pre-allocate per-field counters in a stable order.
+        let mut field_counts: Vec<(String, usize, usize)> = foreach_def
+            .extract
+            .keys()
+            .map(|k| (k.clone(), 0, 0))
+            .collect();
+        field_counts.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let mut element_count = 0usize;
+        let mut first_record: Option<HashMap<String, String>> = None;
+
         for element in doc.select(&sel) {
+            element_count += 1;
             let mut record: HashMap<String, String> = HashMap::new();
             for (name, field_def) in &foreach_def.extract {
-                if let Ok(val) = self.extract_field(&element, field_def) {
-                    record.insert(name.clone(), val);
+                match self.extract_field(&element, field_def) {
+                    Ok(val) => {
+                        record.insert(name.clone(), val);
+                        if let Some(c) = field_counts.iter_mut().find(|c| c.0 == *name) {
+                            c.1 += 1;
+                        }
+                    }
+                    Err(_) => {
+                        if let Some(c) = field_counts.iter_mut().find(|c| c.0 == *name) {
+                            c.2 += 1;
+                        }
+                    }
                 }
             }
             if !record.is_empty() {
+                if first_record.is_none() {
+                    first_record = Some(record.clone());
+                }
                 results.push(record);
             }
         }
-        Ok(())
+
+        Ok(ForeachStats {
+            element_count,
+            field_counts,
+            first_record,
+        })
     }
 }
 
@@ -369,10 +539,6 @@ impl YamlProvider {
 impl Provider for YamlProvider {
     fn name(&self) -> &str {
         &self.def.name
-    }
-
-    fn score(&self) -> u8 {
-        self.def.score
     }
 
     fn needs_browser(&self) -> bool {

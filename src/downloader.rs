@@ -6,7 +6,8 @@ use chrono::Utc;
 use thiserror::Error;
 use tokio::sync::Semaphore;
 
-use crate::db::{chapter as db_chapter, provider as db_provider};
+use crate::comicinfo;
+use crate::db::{chapter as db_chapter, chapter_url as db_chapter_url, provider as db_provider};
 use crate::manga::{Chapter, DownloadStatus, Manga};
 use crate::scraper::{ProviderRegistry, ScraperCtx};
 
@@ -60,10 +61,10 @@ pub async fn download_chapter(
         return Err(DownloadError::NoProviders);
     }
 
-    // Build a score-ordered list of (entry, provider)
+    // Build a lookup from provider name → Arc<dyn Provider>
     let provider_map: std::collections::HashMap<&str, &Arc<dyn crate::scraper::Provider>> =
         registry
-            .by_score()
+            .all()
             .into_iter()
             .map(|p| (p.name(), p))
             .collect();
@@ -72,8 +73,13 @@ pub async fn download_chapter(
         .iter()
         .filter_map(|e| provider_map.get(e.provider_name.as_str()).map(|p| (e, *p)))
         .collect();
-    // Sort by provider score descending
-    ordered.sort_by(|a, b| b.1.score().cmp(&a.1.score()));
+    // Sort by effective score descending:
+    //   score_override (user-set) > provider_score (auto-computed)
+    ordered.sort_by(|a, b| {
+        let eff_a = a.0.effective_score();
+        let eff_b = b.0.effective_score();
+        eff_b.partial_cmp(&eff_a).unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     let mut last_err = String::new();
 
@@ -85,8 +91,8 @@ pub async fn download_chapter(
             manga.metadata.title
         );
 
-        // Re-scrape chapter list to find the URL for this chapter number
-        let chapter_url = match find_chapter_url(ctx, provider, &entry.provider_url, chapter).await
+        // Find chapter URL — check cache first, re-scrape only if missing
+        let chapter_url = match find_chapter_url(pool, ctx, provider, manga.id, &entry.provider_url, chapter).await
         {
             Some(url) => url,
             None => {
@@ -127,18 +133,24 @@ pub async fn download_chapter(
         // Download images concurrently (max 4 at once)
         match download_pages(ctx, &pages).await {
             Ok(image_data) => {
-                // Build CBZ
+                // Build CBZ filename matching the web UI label format.
+                let mut cbz_name = format!("Chapter {}", chapter.number_sort);
+                if let Some(ref t) = chapter.title {
+                    cbz_name.push_str(&format!(" - {t}"));
+                }
+                if let Some(ref g) = chapter.scanlator_group {
+                    cbz_name.push_str(&format!(" [{g}]"));
+                }
+                // Sanitize: strip characters that are illegal in filenames.
+                let cbz_name: String = cbz_name
+                    .chars()
+                    .map(|c| if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { '_' } else { c })
+                    .collect();
                 let cbz_path = lib_root
                     .join(&manga.relative_path)
-                    .join(format!("Chapter {}.cbz", chapter.number_raw));
+                    .join(format!("{cbz_name}.cbz"));
 
-                if let Err(e) = write_cbz(
-                    &cbz_path,
-                    &manga.metadata.title,
-                    &chapter.number_raw,
-                    image_data,
-                )
-                .await
+                if let Err(e) = write_cbz(&cbz_path, manga, chapter, image_data).await
                 {
                     log::warn!("[dl] CBZ write failed: {e}");
                     last_err = e.to_string();
@@ -179,14 +191,32 @@ pub async fn download_chapter(
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Re-scrape the chapter list and find the URL for the given chapter number.
+/// Find the chapter page URL, checking the DB cache before re-scraping.
 async fn find_chapter_url(
+    pool: &sqlx::SqlitePool,
     ctx: &ScraperCtx,
     provider: &Arc<dyn crate::scraper::Provider>,
+    manga_id: uuid::Uuid,
     manga_url: &str,
     chapter: &Chapter,
 ) -> Option<String> {
+    // Check the cache first — avoids re-scraping the full chapter list
+    if let Ok(Some(url)) = db_chapter_url::get(pool, manga_id, provider.name(), chapter.number_sort).await {
+        log::debug!("[dl] Using cached URL for chapter {} from {}.", chapter.number_raw, provider.name());
+        return Some(url);
+    }
+
+    // Cache miss — scrape the full chapter list and cache all URLs for future use
+    log::debug!("[dl] Cache miss for chapter {} on {}; re-scraping chapter list.", chapter.number_raw, provider.name());
     let infos = provider.chapters(ctx, manga_url).await.ok()?;
+
+    // Cache every URL we got back
+    for info in &infos {
+        if let Some(url) = &info.url {
+            let _ = db_chapter_url::upsert(pool, manga_id, provider.name(), info.number, url).await;
+        }
+    }
+
     infos
         .into_iter()
         .find(|info| (info.number - chapter.number_sort).abs() < 0.01)
@@ -228,11 +258,11 @@ async fn download_pages(
     Ok(results)
 }
 
-/// Write image data as a CBZ (ZIP) file with a minimal ComicInfo.xml.
+/// Write image data as a CBZ (ZIP) file with a rich ComicInfo.xml.
 async fn write_cbz(
     path: &Path,
-    series_title: &str,
-    chapter_number: &str,
+    manga: &Manga,
+    chapter: &Chapter,
     images: Vec<(u32, Vec<u8>)>,
 ) -> Result<(), DownloadError> {
     if let Some(parent) = path.parent() {
@@ -241,8 +271,7 @@ async fn write_cbz(
 
     // Spawn blocking because zip I/O is synchronous
     let path = path.to_owned();
-    let series_title = series_title.to_owned();
-    let chapter_number = chapter_number.to_owned();
+    let comic_info = comicinfo::generate_chapter_xml(manga, chapter, images.len());
 
     tokio::task::spawn_blocking(move || {
         let file = std::fs::File::create(&path)?;
@@ -250,15 +279,6 @@ async fn write_cbz(
         let options = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Stored);
 
-        // ComicInfo.xml stub — recognized by Komga, Kavita, etc.
-        let comic_info = format!(
-            r#"<?xml version="1.0" encoding="utf-8"?>
-<ComicInfo xmlns:xsd="http://www.w3.org/2001/XMLSchema"
-           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-  <Series>{series_title}</Series>
-  <Number>{chapter_number}</Number>
-</ComicInfo>"#
-        );
         zip.start_file("ComicInfo.xml", options)?;
         zip.write_all(comic_info.as_bytes())?;
 

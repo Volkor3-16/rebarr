@@ -1,8 +1,6 @@
 name: TCB Scans
 # The main domain name.
 base_url: https://tcbonepiecechapters.com
-# Default scoring, used to figure out what provider to download from.
-score: 60
 # Rate limits for the queue.
 rate_limit:
   requests_per_minute: 30

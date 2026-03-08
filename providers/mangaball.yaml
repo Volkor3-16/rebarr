@@ -1,0 +1,107 @@
+name: MangaBall
+base_url: https://mangaball.net
+rate_limit:
+  requests_per_minute: 20
+
+search:
+  steps:
+    - open: "/search-advanced?search_input={query}"
+    - wait_for: ".chapter-card"
+    - foreach:
+        selector: ".table-item-new-chapter"
+        extract:
+          title:
+            selector: "a.chapter-title"
+            content: text
+          url:
+            selector: "a.chapter-title"
+            content: attr
+            attr_name: href
+          cover:
+            selector: "img.chapter-cover"
+            content: attr
+            attr_name: src
+
+chapters:
+  steps:
+    - open: "{manga_url}"
+    # Extract the MongoDB ID from the end of the slug.
+    # URL format: /title-detail/{slug}-{id}/
+    - extract_js:
+        var: manga_id
+        script: "window.location.pathname.split('/').filter(Boolean).pop().split('-').pop()"
+    # POST to the chapters API. CSRF token is read from the page meta tag.
+    # Response: { ALL_CHAPTERS: [{ number, number_float, title, translations: [{ id, language, url }] }] }
+    - script: |
+        (function() {
+          var csrf = (document.querySelector('meta[name="csrf-token"]') || {}).content || '';
+          fetch('/api/v1/chapter/chapter-listing-by-title-id/', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+              'X-CSRF-TOKEN': csrf,
+              'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: 'title_id={manga_id}'
+          })
+          .then(function(r) { return r.json(); })
+          .then(function(j) { window._mb_chapters = j.ALL_CHAPTERS || []; })
+          .catch(function() { window._mb_chapters = []; });
+        })();
+    - sleep: 3000
+    # Filter to English (fallback to first translation), deduplicate by chapter number,
+    # inject synthetic DOM elements, then foreach to collect results.
+    - script: |
+        document.body.innerHTML = '<div id="mb-ch-list"></div>';
+        var seen = {};
+        var container = document.getElementById('mb-ch-list');
+        (window._mb_chapters || []).forEach(function(ch) {
+          var num = String(ch.number_float !== undefined ? ch.number_float : (ch.number || ''));
+          if (!num || seen[num]) return;
+          var translations = ch.translations || [];
+          var tr = null;
+          for (var i = 0; i < translations.length; i++) {
+            if (translations[i].language === 'en') { tr = translations[i]; break; }
+          }
+          if (!tr && translations.length > 0) tr = translations[0];
+          if (!tr) return;
+          seen[num] = true;
+          var url = tr.url || ('{base_url}/chapter-detail/' + tr.id + '/');
+          var div = document.createElement('div');
+          div.className = 'mb-chapter';
+          div.setAttribute('data-number', num);
+          div.setAttribute('data-title', ch.title || '');
+          div.setAttribute('data-url', url);
+          container.appendChild(div);
+        });
+    - foreach:
+        selector: ".mb-chapter"
+        extract:
+          number_raw:
+            selector: ""
+            content: attr
+            attr_name: data-number
+          title:
+            selector: ""
+            content: attr
+            attr_name: data-title
+          url:
+            selector: ""
+            content: attr
+            attr_name: data-url
+
+pages:
+  steps:
+    - open: "{chapter_url}"
+    # Pages are embedded as: const chapterImages = JSON.parse(`[...]`)
+    # Extract the template literal content (which is valid JSON) via regex.
+    - extract_js:
+        var: pages_json
+        script: |
+          (function() {
+            var m = document.documentElement.outerHTML.match(
+              /const\s+chapterImages\s*=\s*JSON\.parse\(`([^`]+)`\)/
+            );
+            return m ? m[1] : '[]';
+          })()
+    - return: "{pages_json}"

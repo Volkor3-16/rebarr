@@ -84,6 +84,7 @@ async fn main() {
         .expect("failed to build HTTP client");
     let mut ctx = ScraperCtx::new(http.clone(), BrowserPool::new());
     ctx.dump_html = dump_html;
+    ctx.verbose = true;
 
     // -------------------------------------------------------------------------
     // Load providers
@@ -99,12 +100,12 @@ async fn main() {
         process::exit(1);
     }
 
-    let all = registry.by_score();
+    let all = registry.all();
 
     // List available providers
-    println!("Available providers (by score):");
+    println!("Available providers:");
     for p in &all {
-        println!("  {} (score={})", p.name(), p.score());
+        println!("  {}", p.name());
     }
     println!();
 
@@ -123,11 +124,7 @@ async fn main() {
         })
     };
 
-    println!(
-        "Using provider: {} (score={})\n",
-        provider.name(),
-        provider.score()
-    );
+    println!("Using provider: {}\n", provider.name());
 
     // -------------------------------------------------------------------------
     // Search

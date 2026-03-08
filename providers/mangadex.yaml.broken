@@ -1,0 +1,117 @@
+name: MangaDex
+base_url: https://mangadex.org
+rate_limit:
+  requests_per_minute: 40
+
+search:
+  steps:
+    - open: "/"
+    - script: |
+        fetch('https://api.mangadex.org/manga?limit=20&title={query}&contentRating[]=safe&contentRating[]=suggestive&contentRating[]=erotica&includes[]=cover_art')
+          .then(r => r.json())
+          .then(function(j) { window._md_search = j.data || []; });
+    - sleep: 2000
+    - script: |
+        document.body.innerHTML = '<div id="md-results"></div>';
+        var container = document.getElementById('md-results');
+        (window._md_search || []).forEach(function(m) {
+          var attrs = m.attributes || {};
+          var title = (attrs.title && (attrs.title.en || Object.values(attrs.title)[0])) || '';
+          var rel = m.relationships || [];
+          var coverRel = rel.find(function(r) { return r.type === 'cover_art'; });
+          var coverFile = (coverRel && coverRel.attributes && coverRel.attributes.fileName) || '';
+          var cover = coverFile ? 'https://uploads.mangadex.org/covers/' + m.id + '/' + coverFile : '';
+          var div = document.createElement('div');
+          div.className = 'md-result';
+          div.setAttribute('data-title', title);
+          div.setAttribute('data-url', 'https://mangadex.org/title/' + m.id);
+          div.setAttribute('data-cover', cover);
+          container.appendChild(div);
+        });
+    - foreach:
+        selector: ".md-result"
+        extract:
+          title:
+            selector: ""
+            content: attr
+            attr_name: data-title
+          url:
+            selector: ""
+            content: attr
+            attr_name: data-url
+          cover:
+            selector: ""
+            content: attr
+            attr_name: data-cover
+
+chapters:
+  steps:
+    - open: "{manga_url}"
+    - extract_js:
+        var: manga_id
+        script: "window.location.pathname.split('/')[2]"
+    - script: |
+        fetch('https://api.mangadex.org/manga/{manga_id}/feed?limit=500&translatedLanguage[]=en&contentRating[]=safe&contentRating[]=suggestive&contentRating[]=erotica&includeFutureUpdates=0&includeEmptyPages=0&includes[]=scanlation_group&order[chapter]=asc')
+          .then(r => r.json())
+          .then(function(j) { window._md_chapters = j.data || []; });
+    - sleep: 2000
+    - script: |
+        document.body.innerHTML = '<div id="md-ch-list"></div>';
+        var container = document.getElementById('md-ch-list');
+        (window._md_chapters || []).forEach(function(ch) {
+          var attrs = ch.attributes || {};
+          var rel = ch.relationships || [];
+          var sgRel = rel.find(function(r) { return r.type === 'scanlation_group'; });
+          var scanlator = (sgRel && sgRel.attributes && sgRel.attributes.name) || '';
+          var div = document.createElement('div');
+          div.className = 'md-chapter';
+          div.setAttribute('data-number', attrs.chapter || '0');
+          div.setAttribute('data-title', attrs.title || '');
+          div.setAttribute('data-volume', attrs.volume || '');
+          div.setAttribute('data-url', 'https://mangadex.org/chapter/' + ch.id);
+          div.setAttribute('data-scanlator', scanlator);
+          container.appendChild(div);
+        });
+    - foreach:
+        selector: ".md-chapter"
+        extract:
+          number_raw:
+            selector: ""
+            content: attr
+            attr_name: data-number
+          title:
+            selector: ""
+            content: attr
+            attr_name: data-title
+          volume:
+            selector: ""
+            content: attr
+            attr_name: data-volume
+          url:
+            selector: ""
+            content: attr
+            attr_name: data-url
+          scanlator_group:
+            selector: ""
+            content: attr
+            attr_name: data-scanlator
+
+pages:
+  steps:
+    - open: "{chapter_url}"
+    - extract_js:
+        var: chapter_id
+        script: "window.location.pathname.split('/')[2]"
+    - script: |
+        fetch('https://api.mangadex.org/at-home/server/{chapter_id}')
+          .then(r => r.json())
+          .then(function(j) {
+            var base = j.baseUrl;
+            var hash = j.chapter.hash;
+            window._md_pages = j.chapter.data.map(function(f) { return base + '/data/' + hash + '/' + f; });
+          });
+    - sleep: 2000
+    - extract_js:
+        var: pages_json
+        script: "JSON.stringify(window._md_pages || [])"
+    - return: "{pages_json}"

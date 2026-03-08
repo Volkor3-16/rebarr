@@ -3,15 +3,15 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use log::debug;
-use rocket::{State, delete, get, http::Status, post, put, routes, serde::json::Json};
+use rocket::{State, delete, get, http::Status, patch, post, put, routes, serde::json::Json};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::{
-    covers, db,
+    comicinfo, covers, db,
     db::task::{RecentTask, TaskType},
-    manga::{Chapter, Library, Manga, MangaType},
+    manga::{Chapter, DownloadStatus, Library, Manga, MangaMetadata, MangaSource, MangaType, PublishingStatus},
     metadata::anilist::ALClient,
     scraper::ProviderRegistry,
 };
@@ -164,7 +164,7 @@ async fn add_manga(
         Uuid::parse_str(&body.library_id).map_err(|_| bad_request("invalid library_id UUID"))?;
 
     // Verify library exists
-    db::library::get_by_id(pool.inner(), library_id)
+    let library = db::library::get_by_id(pool.inner(), library_id)
         .await
         .map_err(internal)?
         .ok_or_else(|| not_found("library not found"))?;
@@ -181,14 +181,119 @@ async fn add_manga(
     manga.created_at = Utc::now();
     manga.metadata_updated_at = Utc::now();
 
-    // Download high-res cover to disk; fall back to original URL on failure
+    // Download cover into the manga's series folder; fall back to original URL on failure
     if let Some(url) = manga.thumbnail_url.take() {
-        manga.thumbnail_url = covers::download_cover(http.inner(), &url, manga.id)
+        let series_dir = library.root_path.join(&manga.relative_path);
+        manga.thumbnail_url = covers::download_cover(http.inner(), &url, manga.id, &series_dir)
             .await
             .or(Some(url));
     }
 
     db::manga::insert(pool.inner(), &manga)
+        .await
+        .map_err(internal)?;
+
+    // Write series-level ComicInfo.xml into the series folder
+    let series_dir = library.root_path.join(&manga.relative_path);
+    if let Err(e) = comicinfo::write_series_comicinfo(&series_dir, &manga).await {
+        log::warn!("[api] Failed to write ComicInfo.xml for '{}': {e}", manga.metadata.title);
+    }
+
+    // Auto-trigger a scan so provider URLs and chapters are populated immediately
+    db::task::enqueue(pool.inner(), TaskType::ScanLibrary, Some(manga.id), None, 5)
+        .await
+        .map_err(internal)?;
+
+    Ok(Json(manga))
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/manga/manual
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct AddMangaManualRequest {
+    library_id: String,
+    relative_path: String,
+    title: String,
+    title_og: Option<String>,
+    title_roman: Option<String>,
+    synopsis: Option<String>,
+    publishing_status: Option<PublishingStatus>,
+    tags: Option<Vec<String>>,
+    start_year: Option<i32>,
+    end_year: Option<i32>,
+    cover_url: Option<String>,
+}
+
+#[post("/api/manga/manual", data = "<body>")]
+async fn add_manga_manual(
+    pool: &State<SqlitePool>,
+    http: &State<reqwest::Client>,
+    body: Json<AddMangaManualRequest>,
+) -> ApiResult<Manga> {
+    if body.title.trim().is_empty() {
+        return Err(bad_request("title cannot be empty"));
+    }
+    if body.relative_path.trim().is_empty() {
+        return Err(bad_request("relative_path cannot be empty"));
+    }
+
+    let library_id =
+        Uuid::parse_str(&body.library_id).map_err(|_| bad_request("invalid library_id UUID"))?;
+
+    let library = db::library::get_by_id(pool.inner(), library_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("library not found"))?;
+
+    let metadata = MangaMetadata {
+        title: body.title.trim().to_owned(),
+        title_og: body.title_og.as_deref().unwrap_or("").trim().to_owned(),
+        title_roman: body.title_roman.as_deref().unwrap_or("").trim().to_owned(),
+        synopsis: body.synopsis.as_deref().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()),
+        publishing_status: body.publishing_status.clone().unwrap_or(PublishingStatus::Unknown),
+        tags: body.tags.clone().unwrap_or_default(),
+        start_year: body.start_year,
+        end_year: body.end_year,
+    };
+
+    let mut manga = Manga {
+        id: uuid::Uuid::new_v4(),
+        library_id,
+        anilist_id: None,
+        mal_id: None,
+        metadata,
+        relative_path: PathBuf::from(body.relative_path.trim()),
+        downloaded_count: None,
+        chapter_count: None,
+        metadata_source: MangaSource::Local,
+        thumbnail_url: body.cover_url.clone().filter(|s| !s.is_empty()),
+        monitored: true,
+        created_at: Utc::now(),
+        metadata_updated_at: Utc::now(),
+    };
+
+    // Download cover if a URL was provided
+    if let Some(url) = manga.thumbnail_url.take() {
+        let series_dir = library.root_path.join(&manga.relative_path);
+        manga.thumbnail_url = covers::download_cover(http.inner(), &url, manga.id, &series_dir)
+            .await
+            .or(Some(url));
+    }
+
+    db::manga::insert(pool.inner(), &manga)
+        .await
+        .map_err(internal)?;
+
+    // Write series-level ComicInfo.xml
+    let series_dir = library.root_path.join(&manga.relative_path);
+    if let Err(e) = comicinfo::write_series_comicinfo(&series_dir, &manga).await {
+        log::warn!("[api] Failed to write ComicInfo.xml for '{}': {e}", manga.metadata.title);
+    }
+
+    // Auto-trigger a scan so providers can be searched immediately
+    db::task::enqueue(pool.inner(), TaskType::ScanLibrary, Some(manga.id), None, 5)
         .await
         .map_err(internal)?;
 
@@ -226,24 +331,50 @@ async fn delete_manga(
 }
 
 // ---------------------------------------------------------------------------
+// PATCH /api/manga/<id>
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct PatchMangaRequest {
+    monitored: Option<bool>,
+}
+
+#[patch("/api/manga/<id>", data = "<body>")]
+async fn patch_manga(
+    pool: &State<SqlitePool>,
+    id: &str,
+    body: Json<PatchMangaRequest>,
+) -> ApiResult<Manga> {
+    let uuid = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    if let Some(monitored) = body.monitored {
+        db::manga::set_monitored(pool.inner(), uuid, monitored)
+            .await
+            .map_err(internal)?;
+    }
+    db::manga::get_by_id(pool.inner(), uuid)
+        .await
+        .map_err(internal)?
+        .map(Json)
+        .ok_or_else(|| not_found("manga not found"))
+}
+
+// ---------------------------------------------------------------------------
 // GET /api/providers
 // ---------------------------------------------------------------------------
 
 #[derive(Serialize)]
 struct ProviderInfo {
     name: String,
-    score: u8,
     needs_browser: bool,
 }
 
 #[get("/api/providers")]
 async fn list_providers(registry: &State<Arc<ProviderRegistry>>) -> Json<Vec<ProviderInfo>> {
     let providers = registry
-        .by_score()
+        .all()
         .into_iter()
         .map(|p| ProviderInfo {
             name: p.name().to_owned(),
-            score: p.score(),
             needs_browser: p.needs_browser(),
         })
         .collect();
@@ -301,6 +432,8 @@ async fn set_provider(
             provider_name: body.provider_name.clone(),
             provider_url: body.provider_url.clone(),
             last_synced_at: None,
+            provider_score: 0.0,
+            score_override: None,
         },
     )
     .await
@@ -310,24 +443,117 @@ async fn set_provider(
 }
 
 // ---------------------------------------------------------------------------
+// GET /api/manga/<id>/providers
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+struct MangaProviderResponse {
+    provider_name: String,
+    provider_url: String,
+    auto_score: f64,
+    score_override: Option<f64>,
+    effective_score: f64,
+    last_synced_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[get("/api/manga/<id>/providers")]
+async fn list_manga_providers(
+    pool: &State<SqlitePool>,
+    id: &str,
+) -> ApiResult<Vec<MangaProviderResponse>> {
+    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    let entries = db::provider::get_all_for_manga(pool.inner(), manga_id)
+        .await
+        .map_err(internal)?;
+
+    let resp = entries
+        .into_iter()
+        .map(|e| {
+            let effective = e.effective_score();
+            MangaProviderResponse {
+                provider_name: e.provider_name,
+                provider_url: e.provider_url,
+                auto_score: e.provider_score,
+                score_override: e.score_override,
+                effective_score: effective,
+                last_synced_at: e.last_synced_at,
+            }
+        })
+        .collect();
+
+    Ok(Json(resp))
+}
+
+// ---------------------------------------------------------------------------
+// PATCH /api/manga/<id>/providers/<provider_name>
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct PatchProviderRequest {
+    /// Set to a number to override, or null/absent to reset to auto scoring.
+    score_override: Option<f64>,
+}
+
+#[patch("/api/manga/<id>/providers/<provider_name>", data = "<body>")]
+async fn patch_manga_provider(
+    pool: &State<SqlitePool>,
+    id: &str,
+    provider_name: &str,
+    body: Json<PatchProviderRequest>,
+) -> Result<Status, (Status, Json<ApiError>)> {
+    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    db::provider::set_score_override(pool.inner(), manga_id, provider_name, body.score_override)
+        .await
+        .map_err(internal)?;
+    Ok(Status::Ok)
+}
+
+// ---------------------------------------------------------------------------
 // GET /api/manga/<id>/chapters
 // ---------------------------------------------------------------------------
 
-#[get("/api/manga/<id>/chapters")]
-async fn list_chapters(pool: &State<SqlitePool>, id: &str) -> ApiResult<Vec<Chapter>> {
-    // Build a manga_id object from the id provided
-    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+#[derive(Serialize)]
+struct ChapterListItem {
+    #[serde(flatten)]
+    chapter: Chapter,
+    /// Human-readable age, e.g. "3days" or "2months". Use as "{found_ago} ago".
+    found_ago: String,
+}
 
-    //
+fn format_found_ago(created_at: chrono::DateTime<chrono::Utc>) -> String {
+    let age = chrono::Utc::now().signed_duration_since(created_at);
+    let secs = age.num_seconds().max(0) as u64;
+    let std_dur = std::time::Duration::from_secs(secs);
+    // Take only the most significant unit from humantime output.
+    humantime::format_duration(std_dur)
+        .to_string()
+        .split_whitespace()
+        .next()
+        .unwrap_or("just now")
+        .to_string()
+}
+
+#[get("/api/manga/<id>/chapters")]
+async fn list_chapters(pool: &State<SqlitePool>, id: &str) -> ApiResult<Vec<ChapterListItem>> {
+    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
     db::manga::get_by_id(pool.inner(), manga_id)
         .await
         .map_err(internal)?
         .ok_or_else(|| not_found("manga not found"))?;
 
-    db::chapter::get_all_for_manga(pool.inner(), manga_id)
+    let chapters = db::chapter::get_all_for_manga(pool.inner(), manga_id)
         .await
-        .map(Json)
-        .map_err(internal)
+        .map_err(internal)?;
+
+    let items = chapters
+        .into_iter()
+        .map(|ch| {
+            let found_ago = format_found_ago(ch.created_at);
+            ChapterListItem { chapter: ch, found_ago }
+        })
+        .collect();
+
+    Ok(Json(items))
 }
 
 // ---------------------------------------------------------------------------
@@ -357,6 +583,116 @@ async fn download_chapter_api(
         Some(manga_id),
         Some(chapter.id),
         10,
+    )
+    .await
+    .map_err(internal)?;
+
+    Ok(Status::Accepted)
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/manga/<id>/refresh
+// ---------------------------------------------------------------------------
+
+#[post("/api/manga/<id>/refresh")]
+async fn refresh_manga_api(
+    pool: &State<SqlitePool>,
+    id: &str,
+) -> Result<Status, (Status, Json<ApiError>)> {
+    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    db::manga::get_by_id(pool.inner(), manga_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("manga not found"))?;
+
+    db::task::enqueue(pool.inner(), TaskType::RefreshAniList, Some(manga_id), None, 5)
+        .await
+        .map_err(internal)?;
+
+    Ok(Status::Accepted)
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/manga/<id>/scan-disk
+// ---------------------------------------------------------------------------
+
+#[post("/api/manga/<id>/scan-disk")]
+async fn scan_disk_api(
+    pool: &State<SqlitePool>,
+    id: &str,
+) -> Result<Status, (Status, Json<ApiError>)> {
+    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    db::manga::get_by_id(pool.inner(), manga_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("manga not found"))?;
+
+    db::task::enqueue(pool.inner(), TaskType::ScanDisk, Some(manga_id), None, 5)
+        .await
+        .map_err(internal)?;
+
+    Ok(Status::Accepted)
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/manga/<id>/chapters/<num>/mark-downloaded
+// ---------------------------------------------------------------------------
+
+#[post("/api/manga/<id>/chapters/<num>/mark-downloaded")]
+async fn mark_chapter_downloaded(
+    pool: &State<SqlitePool>,
+    id: &str,
+    num: f32,
+) -> Result<Status, (Status, Json<ApiError>)> {
+    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    let chapter = db::chapter::get_by_number(pool.inner(), manga_id, num)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("chapter not found"))?;
+
+    db::chapter::set_status(
+        pool.inner(),
+        chapter.id,
+        DownloadStatus::Downloaded,
+        Some(Utc::now()),
+    )
+    .await
+    .map_err(internal)?;
+
+    db::chapter::update_manga_counts(pool.inner(), manga_id)
+        .await
+        .map_err(internal)?;
+
+    Ok(Status::NoContent)
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/manga/<id>/chapters/<num>/optimise
+// ---------------------------------------------------------------------------
+
+#[post("/api/manga/<id>/chapters/<num>/optimise")]
+async fn optimise_chapter_api(
+    pool: &State<SqlitePool>,
+    id: &str,
+    num: f32,
+) -> Result<Status, (Status, Json<ApiError>)> {
+    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    db::manga::get_by_id(pool.inner(), manga_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("manga not found"))?;
+
+    let chapter = db::chapter::get_by_number(pool.inner(), manga_id, num)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("chapter not found"))?;
+
+    db::task::enqueue(
+        pool.inner(),
+        TaskType::OptimiseChapter,
+        Some(manga_id),
+        Some(chapter.id),
+        15,
     )
     .await
     .map_err(internal)?;
@@ -420,10 +756,106 @@ async fn list_tasks(
     limit: Option<i64>,
 ) -> ApiResult<Vec<RecentTask>> {
     let mid = manga_id.and_then(|s| Uuid::parse_str(s).ok());
-    db::task::get_recent(pool.inner(), mid, limit.unwrap_or(50))
+    // limit=0 (or omitted when no manga_id filter) means "all tasks"
+    let effective_limit = limit.unwrap_or(0);
+    db::task::get_recent(pool.inner(), mid, effective_limit)
         .await
         .map(Json)
         .map_err(internal)
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/tasks/<id>/cancel
+// ---------------------------------------------------------------------------
+
+#[post("/api/tasks/<id>/cancel")]
+async fn cancel_task(
+    pool: &State<SqlitePool>,
+    id: &str,
+) -> Result<Status, (Status, Json<ApiError>)> {
+    let uuid = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    db::task::cancel(pool.inner(), uuid)
+        .await
+        .map_err(internal)?;
+    Ok(Status::NoContent)
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/settings  +  PUT /api/settings
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+struct SettingsResponse {
+    scan_interval_hours: u64,
+    queue_paused: bool,
+}
+
+#[derive(Deserialize)]
+struct UpdateSettingsRequest {
+    scan_interval_hours: Option<u64>,
+    queue_paused: Option<bool>,
+}
+
+#[get("/api/settings")]
+async fn get_settings(pool: &State<SqlitePool>) -> ApiResult<SettingsResponse> {
+    let hours = db::settings::get(pool.inner(), "scan_interval_hours", "6")
+        .await
+        .map_err(internal)?
+        .parse::<u64>()
+        .unwrap_or(6);
+    let queue_paused = db::settings::get(pool.inner(), "queue_paused", "false")
+        .await
+        .map_err(internal)?
+        == "true";
+    Ok(Json(SettingsResponse {
+        scan_interval_hours: hours,
+        queue_paused,
+    }))
+}
+
+#[put("/api/settings", data = "<body>")]
+async fn update_settings(
+    pool: &State<SqlitePool>,
+    body: Json<UpdateSettingsRequest>,
+) -> Result<Status, (Status, Json<ApiError>)> {
+    if let Some(hours) = body.scan_interval_hours {
+        if hours < 1 || hours > 168 {
+            return Err(bad_request("scan_interval_hours must be 1–168"));
+        }
+        db::settings::set(pool.inner(), "scan_interval_hours", &hours.to_string())
+            .await
+            .map_err(internal)?;
+    }
+    if let Some(paused) = body.queue_paused {
+        db::settings::set(pool.inner(), "queue_paused", if paused { "true" } else { "false" })
+            .await
+            .map_err(internal)?;
+    }
+    Ok(Status::NoContent)
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/manga/<id>/cover
+// Serve cover.<ext> from the manga's series folder on disk.
+// ---------------------------------------------------------------------------
+
+#[get("/api/manga/<id>/cover")]
+async fn serve_cover(
+    pool: &State<SqlitePool>,
+    id: &str,
+) -> Option<rocket::fs::NamedFile> {
+    let manga_id = Uuid::parse_str(id).ok()?;
+    let manga = db::manga::get_by_id(pool.inner(), manga_id).await.ok()??;
+    let library = db::library::get_by_id(pool.inner(), manga.library_id).await.ok()??;
+    let series_dir = library.root_path.join(&manga.relative_path);
+
+    for ext in &["jpg", "jpeg", "png", "webp", "avif"] {
+        let path = series_dir.join(format!("cover.{ext}"));
+        if path.exists() {
+            return rocket::fs::NamedFile::open(path).await.ok();
+        }
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -440,13 +872,25 @@ pub fn routes() -> Vec<rocket::Route> {
         list_library_manga,
         search_manga,
         add_manga,
+        add_manga_manual,
         get_manga,
         delete_manga,
+        patch_manga,
         list_providers,
         scan_manga_api,
         set_provider,
+        list_manga_providers,
+        patch_manga_provider,
         list_chapters,
         download_chapter_api,
+        refresh_manga_api,
+        scan_disk_api,
+        mark_chapter_downloaded,
+        optimise_chapter_api,
         list_tasks,
+        cancel_task,
+        get_settings,
+        update_settings,
+        serve_cover,
     ]
 }

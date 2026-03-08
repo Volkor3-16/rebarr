@@ -2,12 +2,31 @@
 
 This a informal changelog so i can keep track of what im doing.
 
+## 2026-03-08
+
+- MVR completion pass
+- RefreshAniList task: re-fetches metadata from AniList and updates DB + cover image
+- ScanDisk task: scans library directory for existing CBZ files and marks chapters Downloaded
+- OptimiseChapter task: re-encodes chapter images to WebP, rebuilds CBZ
+- Mark as Downloaded: new API endpoint + UI button for manually marking chapters
+- Refresh Metadata, Scan Disk, Optimise buttons in series view UI
+- README MVR checklist updated
+- Updated scraper_test to be more helpful with output.
+- New working providers (total of 5 working providers!):
+    - AsuraComic (Asura Scans)
+    - Comix
+    - MangaBall
+- New not-working providers:
+    - AllManga
+    - MangaDex
+
 ## 2026-03-06
 
-- Moved scraper/browser engine from chromiumoxide to eoka, because its simpler and bypasses cloudflare easier.
+- Moved scraper/browser engine from chromiumoxide to eoka, because its simpler and bypasses cloudflare.
 - Implemented tcbsans (because brother loves his one piece)
 - scraper_test actually matches on the title now.
--
+- Implemented Cancelling Tasks
+- Working Queue system with chapter download queues.
 
 ## 2026-03-03
 

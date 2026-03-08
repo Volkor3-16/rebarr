@@ -1,0 +1,56 @@
+name: AsuraComic
+base_url: https://asuracomic.net
+rate_limit:
+  requests_per_minute: 30
+
+search:
+  steps:
+    - open: "/series?page=1&name={query}"
+    - foreach:
+        selector: "a[href^='series/']"
+        extract:
+          title:
+            selector: "div > span.block.font-bold"
+            content: text
+          url:
+            selector: ""
+            content: attr
+            attr_name: href
+            prefix: "{base_url}/"
+          cover:
+            selector: "img"
+            content: attr
+            attr_name: src
+
+chapters:
+  steps:
+    - open: "{manga_url}"
+    - foreach:
+        selector: "div[class*='group'] > a"
+        extract:
+          number_raw:
+            selector: ""
+            content: attr
+            attr_name: href
+            regex: "/chapter/(\\d+)"
+          title:
+            selector: "h3:first-of-type > span:first-child"
+            content: text
+          url:
+            selector: ""
+            content: attr
+            attr_name: href
+            prefix: "{base_url}/series/"
+          scanlator_group:
+            static_value: "Asura Scans"
+
+pages:
+  steps:
+    - open: "{chapter_url}"
+    - foreach:
+        selector: "div.center > img"
+        extract:
+          url:
+            selector: ""
+            content: attr
+            attr_name: src

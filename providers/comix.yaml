@@ -1,0 +1,96 @@
+name: Comix
+base_url: https://comix.to
+rate_limit:
+  requests_per_minute: 30
+
+search:
+  steps:
+    - open: "/browser?keyword={query}"
+    - foreach:
+        selector: ".item"
+        extract:
+          title:
+            selector: ".detail a.title"
+            content: text
+          url:
+            selector: ".detail a.title"
+            content: attr
+            attr_name: href
+            prefix: "{base_url}"
+          cover:
+            selector: ".poster img"
+            content: attr
+            attr_name: src
+chapters:
+  steps:
+    - open: "{manga_url}"
+    - extract_js:
+        var: _injected
+        script: |
+          (async function() {
+            var hash = (window.location.href.match(/\/title\/([^/-]+)/) || [])[1];
+            if (!hash) return 'no-hash';
+            var all = [];
+            for (var page = 1; ; page++) {
+              var r = await fetch('/api/v2/manga/' + hash + '/chapters?limit=100&page=' + page + '&order[number]=asc');
+              var data = await r.json();
+              var items = (data.result && data.result.items) || [];
+              if (!items.length) break;
+              all = all.concat(items);
+              var last = (data.result.pagination && data.result.pagination.last_page) || 1;
+              if (page >= last) break;
+            }
+            // Deduplicate by chapter number, keeping most recent upload.
+            var byNumber = {};
+            all.forEach(function(ch) {
+              var n = ch.number;
+              if (!byNumber[n] || (ch.created_at || 0) > (byNumber[n].created_at || 0)) byNumber[n] = ch;
+            });
+            var deduped = Object.values(byNumber).sort(function(a, b) { return a.number - b.number; });
+            var base = window.location.href.split('?')[0].replace(/\/$/, '');
+            var c = document.createElement('div');
+            c.id = 'rebarr-chapters';
+            deduped.forEach(function(ch) {
+              var a = document.createElement('a');
+              a.className = 'rebarr-chapter';
+              a.setAttribute('data-number', ch.number);
+              a.href = base + '/' + ch.chapter_id + '-chapter-' + ch.number;
+              c.appendChild(a);
+            });
+            document.body.appendChild(c);
+            return 'ok:' + deduped.length;
+          })()
+    - foreach:
+        selector: "#rebarr-chapters .rebarr-chapter"
+        extract:
+          number_raw:
+            selector: ""
+            content: attr
+            attr_name: data-number
+          url:
+            selector: ""
+            content: attr
+            attr_name: href
+
+# We do some fuckery here, scrape the dom for all scripts, and return a list of all the webp images (likely chapters)
+pages:
+  steps:
+    - open: "{chapter_url}"
+    - extract_js:
+        var: pages_json
+        script: |
+          (function () {
+            var scripts = document.querySelectorAll("script");
+            var urls = [];
+
+            for (var i = 0; i < scripts.length; i++) {
+              var txt = scripts[i].textContent;
+              if (!txt) continue;
+
+              var matches = txt.match(/https?:\/\/[^"]+\.webp/g);
+              if (matches) urls = urls.concat(matches);
+            }
+
+            return JSON.stringify([...new Set(urls)]);
+          })();
+    - return: "{pages_json}"

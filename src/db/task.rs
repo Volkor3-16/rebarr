@@ -13,6 +13,8 @@ pub enum TaskType {
     RefreshAniList,
     CheckNewChapter,
     DownloadChapter,
+    ScanDisk,
+    OptimiseChapter,
     Backup,
 }
 
@@ -75,6 +77,8 @@ fn task_type_str(t: &TaskType) -> &'static str {
         TaskType::RefreshAniList => "RefreshAniList",
         TaskType::CheckNewChapter => "CheckNewChapter",
         TaskType::DownloadChapter => "DownloadChapter",
+        TaskType::ScanDisk => "ScanDisk",
+        TaskType::OptimiseChapter => "OptimiseChapter",
         TaskType::Backup => "Backup",
     }
 }
@@ -92,6 +96,8 @@ fn task_from_row(row: TaskRow) -> Result<Task, sqlx::Error> {
         "RefreshAniList" => TaskType::RefreshAniList,
         "CheckNewChapter" => TaskType::CheckNewChapter,
         "DownloadChapter" => TaskType::DownloadChapter,
+        "ScanDisk" => TaskType::ScanDisk,
+        "OptimiseChapter" => TaskType::OptimiseChapter,
         "Backup" => TaskType::Backup,
         other => {
             return Err(sqlx::Error::Decode(
@@ -253,8 +259,34 @@ pub async fn fail(pool: &SqlitePool, task_id: Uuid, error: &str) -> Result<(), s
     Ok(())
 }
 
+/// On server startup, reset any tasks left stuck in `Running` state back to `Pending`
+/// so they are retried. Returns the number of tasks reset.
+pub async fn reset_running_tasks(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
+    let now = Utc::now();
+    let result = sqlx::query(
+        "UPDATE Task SET status = 'Pending', run_after = ?, updated_at = ? WHERE status = 'Running'",
+    )
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+/// Cancel a Pending or Running task. Has no effect on Completed/Failed/Cancelled tasks.
+pub async fn cancel(pool: &SqlitePool, task_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE Task SET status = 'Cancelled', updated_at = ? WHERE uuid = ? AND status IN ('Pending', 'Running')",
+    )
+    .bind(Utc::now())
+    .bind(task_id.to_string())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
-// Recent tasks for the API / logs page
+// Recent tasks for the API / queue page
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize)]
@@ -289,13 +321,31 @@ struct RecentTaskRow {
     updated_at: DateTime<Utc>,
 }
 
+/// Check whether a Pending or Running task of the given type already exists for a manga.
+pub async fn is_pending_for_manga(
+    pool: &SqlitePool,
+    manga_id: Uuid,
+    task_type: TaskType,
+) -> Result<bool, sqlx::Error> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM Task WHERE manga_id = ? AND task_type = ? AND status IN ('Pending', 'Running')",
+    )
+    .bind(manga_id.to_string())
+    .bind(task_type_str(&task_type))
+    .fetch_one(pool)
+    .await?;
+    Ok(count > 0)
+}
+
 /// Fetch recent tasks ordered by created_at DESC. Optionally filter by manga_id.
 /// Includes manga title via LEFT JOIN for display purposes.
+/// Pass `limit <= 0` to return all tasks (no limit).
 pub async fn get_recent(
     pool: &SqlitePool,
     manga_id: Option<Uuid>,
     limit: i64,
 ) -> Result<Vec<RecentTask>, sqlx::Error> {
+    let effective_limit = if limit <= 0 { i64::MAX } else { limit };
     let manga_id_str = manga_id.map(|v| v.to_string());
     sqlx::query_as::<_, RecentTaskRow>(
         "SELECT t.uuid, t.task_type, t.status, t.manga_id, t.chapter_id,
@@ -310,7 +360,7 @@ pub async fn get_recent(
     )
     .bind(&manga_id_str)
     .bind(&manga_id_str)
-    .bind(limit)
+    .bind(effective_limit)
     .fetch_all(pool)
     .await
     .map(|rows| {

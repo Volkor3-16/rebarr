@@ -25,6 +25,7 @@ pub struct Manga {
     pub chapter_count: Option<u32>, // anilist doesn't support chapter counts in any sane way, we need to build this from providers @ scrape time.
     pub metadata_source: MangaSource, // The source of the metadata, not where we download it from.
     pub thumbnail_url: Option<String>, // Cached cover image URL from metadata source.
+    pub monitored: bool, // If true, new chapters are automatically downloaded.
     pub created_at: DateTime<Utc>,  // When the manga was first added to the library
     pub metadata_updated_at: DateTime<Utc>, // When the manga last metadata refresh
 }
@@ -192,6 +193,7 @@ impl From<Media> for Manga {
             chapter_count,
             metadata_source: MangaSource::AniList,
             thumbnail_url,
+            monitored: true,
             created_at: Utc::now(),
             metadata_updated_at: Utc::now(),
         }
@@ -210,6 +212,7 @@ pub struct Chapter {
     pub scanlator_group: Option<String>, // The name of the scanlator group, if provided by the provider.
     pub download_status: DownloadStatus, // Current download state.
     pub downloaded_at: Option<DateTime<Utc>>, // When the chapter was downloaded.
+    pub created_at: DateTime<Utc>,            // When rebarr first saw this chapter.
 }
 
 /// Tracks whether a chapter has been downloaded.

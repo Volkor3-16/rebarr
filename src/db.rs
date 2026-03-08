@@ -2,9 +2,11 @@ use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
 use std::str::FromStr;
 
 pub mod chapter;
+pub mod chapter_url;
 pub mod library;
 pub mod manga;
 pub mod provider;
+pub mod settings;
 pub mod task;
 
 /// Initialise the database pool.

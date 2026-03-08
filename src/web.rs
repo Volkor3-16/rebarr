@@ -30,6 +30,11 @@ pub fn settings_page() -> RawHtml<&'static str> {
     RawHtml(FRONTEND_HTML)
 }
 
+#[get("/queue")]
+pub fn queue_page() -> RawHtml<&'static str> {
+    RawHtml(FRONTEND_HTML)
+}
+
 #[get("/logs")]
 pub fn logs_page() -> RawHtml<&'static str> {
     RawHtml(FRONTEND_HTML)
@@ -46,6 +51,7 @@ pub fn routes() -> Vec<rocket::Route> {
         series_page,
         search_page,
         settings_page,
+        queue_page,
         logs_page
     ]
 }
@@ -105,7 +111,7 @@ const FRONTEND_HTML: &str = r#"<!DOCTYPE html>
   <a onclick="navigate('/library')" data-path="/library">Libraries</a>
   <a onclick="navigate('/search')" data-path="/search">Search</a>
   <a onclick="navigate('/settings')" data-path="/settings">Settings</a>
-  <a onclick="navigate('/logs')" data-path="/logs">Logs</a>
+  <a onclick="navigate('/queue')" data-path="/queue">Queue</a>
 </nav>
 <div id="app"><p>Loading...</p></div>
 
@@ -175,7 +181,8 @@ function dispatch(path) {
     [/^\/series\/([^/]+)$/, viewSeries],
     [/^\/search$/, viewSearch],
     [/^\/settings$/, viewSettings],
-    [/^\/logs$/, viewLogs],
+    [/^\/queue$/, viewQueue],
+    [/^\/logs$/, viewQueue],
   ];
   for (const [pat, fn] of routes) {
     const m = path.match(pat);
@@ -330,7 +337,9 @@ async function viewSeries(id) {
     const aniLink = m.anilist_id ? `<a href="https://anilist.co/manga/${m.anilist_id}" target="_blank">[AniList]</a>` : '';
     document.title = `${meta.title ?? 'Manga'} — REBARR`;
 
+    const monitoredChecked = m.monitored !== false ? 'checked' : '';
     render(`${thumb}<h2>${escape(meta.title)} ${aniLink}</h2>
+      <label style="font-size:0.9em"><input type="checkbox" id="monitored-cb" ${monitoredChecked} onchange="toggleMonitored('${m.id}', this.checked)"> Monitored <small>(auto-download new chapters)</small></label>
       <pre>Romaji   : ${escape(meta.title_roman)}
 Original : ${escape(meta.title_og)}
 Years    : ${escape(year)}
@@ -341,19 +350,26 @@ Folder   : ${escape(m.relative_path)}</pre>
       <p><b>Tags:</b><br>${tags || 'None'}</p>
       <h3>Chapters</h3>
       <button onclick='doScan("${m.id}")'>Scan for chapters</button>
+      &nbsp;<button onclick='doScanDisk("${m.id}")'>Scan Disk</button>
       &nbsp;<button onclick='loadChapters("${m.id}")'>Refresh</button>
+      &nbsp;<button onclick='doRefreshMetadata("${m.id}")'>Refresh Metadata</button>
+      &nbsp;<button onclick='doDownloadAllMissing("${m.id}")'>Download All Missing</button>
+      &nbsp;<button onclick='doDownloadSelected("${m.id}")'>Download Selected</button>
       <span id="scan-status"></span>
       <div id="tasks-banner"></div>
       <div id="chapters-list"><p>Loading...</p></div>
+      <h3>Providers</h3>
+      <div id="providers-list"><p>Loading...</p></div>
       <br><p><a onclick="navigate('/library')" style="cursor:pointer;color:#06c">[Back to Libraries]</a></p>`);
 
     loadChapters(m.id);
+    loadProviders(m.id);
 
     // Poll for active tasks every 3s
     let prevHadActive = false;
     const pollTasks = async () => {
       try {
-        const tasks = await api('GET', `/api/tasks?manga_id=${m.id}&limit=10`);
+        const tasks = await api('GET', `/api/tasks?manga_id=${m.id}&limit=20`);
         const active = tasks.filter(t => t.status === 'Running' || t.status === 'Pending');
         const banner = document.getElementById('tasks-banner');
         if (!banner) return;
@@ -386,20 +402,37 @@ async function loadChapters(mangaId) {
     }
     const rows = chapters.map(ch => {
       const numFloat = ch.number_sort;
-      const title = ch.title ? escape(ch.title) : `Chapter ${escape(ch.number_raw)}`;
+      let label = `Chapter ${ch.number_sort}`;
+      if (ch.title) label += ` - ${escape(ch.title)}`;
+      if (ch.scanlator_group) label += ` [${escape(ch.scanlator_group)}]`;
       const vol = ch.volume ? `Vol.${escape(ch.volume)} ` : '';
-      const group = ch.scanlator_group ? `<small>[${escape(ch.scanlator_group)}]</small>` : '';
       const status = ch.download_status;
-      const dlBtn = (status === 'Missing' || status === 'Failed')
+      const canDl = status === 'Missing' || status === 'Failed';
+      const dlBtn = canDl
         ? `<button class="btn-sm" onclick='doDownload("${mangaId}", ${numFloat})'>Download</button>`
         : '';
+      const markBtn = canDl
+        ? `&nbsp;<button class="btn-sm" onclick='doMarkDownloaded("${mangaId}", ${numFloat})'>Mark Done</button>`
+        : '';
+      const optBtn = status === 'Downloaded'
+        ? `<button class="btn-sm" onclick='doOptimise("${mangaId}", ${numFloat})'>Optimise</button>`
+        : '';
+      const cb = canDl
+        ? `<input type="checkbox" class="ch-checkbox" data-num="${numFloat}" data-status="${escape(status)}">`
+        : '';
+      const foundTitle = ch.created_at ? new Date(ch.created_at).toLocaleString() : '';
+      const foundCell = ch.found_ago
+        ? `<span title="${escape(foundTitle)}">${escape(ch.found_ago)} ago</span>`
+        : '<span title="">—</span>';
       return `<tr>
-        <td>${vol}${title} ${group}</td>
+        <td>${cb}</td>
+        <td>${vol}${label}</td>
         <td>${statusBadge(status)}</td>
-        <td>${dlBtn}</td>
+        <td><small>${foundCell}</small></td>
+        <td>${dlBtn}${markBtn}${optBtn}</td>
       </tr>`;
     }).join('');
-    el.innerHTML = `<table><tr><th>Chapter</th><th>Status</th><th></th></tr>${rows}</table>`;
+    el.innerHTML = `<table><tr><th><input type="checkbox" title="Select all" onchange="toggleSelectAll(this.checked)"></th><th>Chapter</th><th>Status</th><th>Found</th><th></th></tr>${rows}</table>`;
   } catch(e) {
     el.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
   }
@@ -416,6 +449,46 @@ async function doScan(mangaId) {
   }
 }
 
+async function doScanDisk(mangaId) {
+  const statusEl = document.getElementById('scan-status');
+  if (statusEl) statusEl.textContent = ' Queueing disk scan...';
+  try {
+    await api('POST', `/api/manga/${mangaId}/scan-disk`);
+    if (statusEl) statusEl.textContent = ' Disk scan queued!';
+  } catch(e) {
+    if (statusEl) statusEl.textContent = ` Error: ${escape(e.message)}`;
+  }
+}
+
+async function doRefreshMetadata(mangaId) {
+  const statusEl = document.getElementById('scan-status');
+  if (statusEl) statusEl.textContent = ' Queueing metadata refresh...';
+  try {
+    await api('POST', `/api/manga/${mangaId}/refresh`);
+    if (statusEl) statusEl.textContent = ' Metadata refresh queued!';
+  } catch(e) {
+    if (statusEl) statusEl.textContent = ` Error: ${escape(e.message)}`;
+  }
+}
+
+async function doMarkDownloaded(mangaId, chapterNum) {
+  try {
+    await api('POST', `/api/manga/${mangaId}/chapters/${chapterNum}/mark-downloaded`);
+    loadChapters(mangaId);
+  } catch(e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function doOptimise(mangaId, chapterNum) {
+  try {
+    await api('POST', `/api/manga/${mangaId}/chapters/${chapterNum}/optimise`);
+    alert('Optimise task queued.');
+  } catch(e) {
+    alert('Error: ' + e.message);
+  }
+}
+
 async function doDownload(mangaId, chapterNum) {
   try {
     await api('POST', `/api/manga/${mangaId}/chapters/${chapterNum}/download`);
@@ -425,16 +498,119 @@ async function doDownload(mangaId, chapterNum) {
   }
 }
 
+async function toggleMonitored(mangaId, checked) {
+  try {
+    await api('PATCH', `/api/manga/${mangaId}`, { monitored: checked });
+  } catch(e) {
+    alert('Error updating monitored: ' + e.message);
+  }
+}
+
+function toggleSelectAll(checked) {
+  document.querySelectorAll('.ch-checkbox').forEach(cb => cb.checked = checked);
+}
+
+async function doDownloadSelected(mangaId) {
+  const checked = Array.from(document.querySelectorAll('.ch-checkbox:checked'));
+  if (checked.length === 0) { alert('Select at least one chapter.'); return; }
+  let count = 0;
+  for (const cb of checked) {
+    try { await api('POST', `/api/manga/${mangaId}/chapters/${cb.dataset.num}/download`); count++; } catch(_) {}
+  }
+  if (count > 0) loadChapters(mangaId);
+}
+
+async function doDownloadAllMissing(mangaId) {
+  const all = Array.from(document.querySelectorAll('.ch-checkbox'));
+  if (all.length === 0) { alert('No missing chapters to download.'); return; }
+  for (const cb of all) {
+    try { await api('POST', `/api/manga/${mangaId}/chapters/${cb.dataset.num}/download`); } catch(_) {}
+  }
+  loadChapters(mangaId);
+}
+
+// ---------------------------------------------------------------------------
+// Providers — per-manga provider scoring panel
+// ---------------------------------------------------------------------------
+async function loadProviders(mangaId) {
+  const el = document.getElementById('providers-list');
+  if (!el) return;
+  try {
+    const providers = await api('GET', `/api/manga/${mangaId}/providers`);
+    if (providers.length === 0) {
+      el.innerHTML = '<p><small>No providers found yet. Scan this manga to discover providers.</small></p>';
+      return;
+    }
+    const rows = providers.map(p => {
+      const autoScore = p.auto_score.toFixed(3);
+      const effScore = p.effective_score.toFixed(3);
+      const isOverride = p.score_override !== null && p.score_override !== undefined;
+      const modeLabel = isOverride
+        ? `<span style="color:#c70">Override: ${p.score_override.toFixed(1)}</span>`
+        : '<span style="color:#393">Auto</span>';
+      const synced = p.last_synced_at ? new Date(p.last_synced_at).toLocaleString() : 'Never';
+      const overrideInput = `<input type="number" id="ov-${mangaId}-${escape(p.provider_name)}" value="${isOverride ? p.score_override : ''}" placeholder="e.g. 200" style="width:80px;padding:0.2rem">`;
+      const setBtn = `<button class="btn-sm" onclick='setProviderOverride("${mangaId}", "${escape(p.provider_name)}")'>Set</button>`;
+      const resetBtn = isOverride
+        ? `&nbsp;<button class="btn-sm" onclick='clearProviderOverride("${mangaId}", "${escape(p.provider_name)}")'>Reset to Auto</button>`
+        : '';
+      return `<tr>
+        <td><b>${escape(p.provider_name)}</b></td>
+        <td>${modeLabel}</td>
+        <td><b>${effScore}</b> <small>(auto: ${autoScore})</small></td>
+        <td>${overrideInput} ${setBtn}${resetBtn}</td>
+        <td><small>${escape(synced)}</small></td>
+      </tr>`;
+    }).join('');
+    el.innerHTML = `<table>
+      <tr><th>Provider</th><th>Mode</th><th>Effective Score</th><th>Override</th><th>Last Synced</th></tr>
+      ${rows}
+    </table>
+    <small>Higher score = tried first. Override replaces the auto-computed score for this series only.</small>`;
+  } catch(e) {
+    el.innerHTML = `<p class="error">Error loading providers: ${escape(e.message)}</p>`;
+  }
+}
+
+async function setProviderOverride(mangaId, providerName) {
+  const input = document.getElementById(`ov-${mangaId}-${providerName}`);
+  const val = input ? parseFloat(input.value) : NaN;
+  if (isNaN(val)) { alert('Enter a valid number for the score override.'); return; }
+  try {
+    await api('PATCH', `/api/manga/${mangaId}/providers/${encodeURIComponent(providerName)}`, { score_override: val });
+    loadProviders(mangaId);
+  } catch(e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function clearProviderOverride(mangaId, providerName) {
+  try {
+    await api('PATCH', `/api/manga/${mangaId}/providers/${encodeURIComponent(providerName)}`, { score_override: null });
+    loadProviders(mangaId);
+  } catch(e) {
+    alert('Error: ' + e.message);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Search — AniList search + add manga
 // ---------------------------------------------------------------------------
 async function viewSearch() {
   const preselectedLibId = new URLSearchParams(window.location.search).get('library_id');
-  render(`<h2>Search Manga</h2>
-    <input type="text" id="sq" placeholder="Search for manga..." onkeydown="if(event.key==='Enter')doSearch()">
-    <button onclick="doSearch()">Search</button>
-    <div id="results"></div>`);
   window._preselectedLibId = preselectedLibId || null;
+  render(`<h2>Add Manga</h2>
+    <div style="margin-bottom:0.8rem">
+      <button id="tab-search" onclick="searchTab()" style="font-weight:bold;text-decoration:underline">AniList Search</button>
+      &nbsp;|&nbsp;
+      <button id="tab-manual" onclick="manualTab()">Manual Entry</button>
+    </div>
+    <div id="search-pane">
+      <input type="text" id="sq" placeholder="Search AniList for manga..." onkeydown="if(event.key==='Enter')doSearch()">
+      <button onclick="doSearch()">Search</button>
+      <div id="results"></div>
+    </div>
+    <div id="manual-pane" style="display:none"></div>`);
 }
 
 async function doSearch() {
@@ -508,24 +684,145 @@ async function doAddManga(anilistId) {
   }
 }
 
+function searchTab() {
+  document.getElementById('tab-search').style.fontWeight = 'bold';
+  document.getElementById('tab-search').style.textDecoration = 'underline';
+  document.getElementById('tab-manual').style.fontWeight = '';
+  document.getElementById('tab-manual').style.textDecoration = '';
+  document.getElementById('search-pane').style.display = '';
+  document.getElementById('manual-pane').style.display = 'none';
+}
+
+async function manualTab() {
+  document.getElementById('tab-manual').style.fontWeight = 'bold';
+  document.getElementById('tab-manual').style.textDecoration = 'underline';
+  document.getElementById('tab-search').style.fontWeight = '';
+  document.getElementById('tab-search').style.textDecoration = '';
+  document.getElementById('search-pane').style.display = 'none';
+  const pane = document.getElementById('manual-pane');
+  pane.style.display = '';
+  // Load libraries for the selector
+  let libOptions = '<option value="">— select library —</option>';
+  try {
+    const libs = await api('GET', '/api/libraries');
+    libOptions += libs.map(lib => {
+      const sel = window._preselectedLibId === lib.uuid ? 'selected' : '';
+      return `<option value="${lib.uuid}" ${sel}>${escape(lib.root_path)}</option>`;
+    }).join('');
+  } catch(e) {
+    libOptions = '<option value="">Error loading libraries</option>';
+  }
+  pane.innerHTML = `
+    <h3>Manual Entry</h3>
+    <p><small>For series not on AniList. All fields except Title are optional.</small></p>
+    <table style="width:100%">
+      <tr><td style="width:160px;vertical-align:top;padding-top:0.4rem"><b>Title *</b></td>
+          <td><input type="text" id="me-title" placeholder="English title" oninput="meAutoPath()"></td></tr>
+      <tr><td style="vertical-align:top;padding-top:0.4rem">Native Title</td>
+          <td><input type="text" id="me-title-og" placeholder="e.g. 呪術廻戦"></td></tr>
+      <tr><td style="vertical-align:top;padding-top:0.4rem">Romanised Title</td>
+          <td><input type="text" id="me-title-roman" placeholder="e.g. Jujutsu Kaisen"></td></tr>
+      <tr><td style="vertical-align:top;padding-top:0.4rem">Synopsis</td>
+          <td><textarea id="me-synopsis" rows="4" style="width:100%;box-sizing:border-box;padding:0.3rem;font-family:monospace" placeholder="Series description..."></textarea></td></tr>
+      <tr><td style="vertical-align:top;padding-top:0.4rem">Status</td>
+          <td><select id="me-status" style="width:auto">
+            <option value="Unknown">Unknown</option>
+            <option value="Ongoing">Ongoing</option>
+            <option value="Completed">Completed</option>
+            <option value="Hiatus">Hiatus</option>
+            <option value="Cancelled">Cancelled</option>
+            <option value="NotYetReleased">Not Yet Released</option>
+          </select></td></tr>
+      <tr><td style="vertical-align:top;padding-top:0.4rem">Start Year</td>
+          <td><input type="number" id="me-start-year" placeholder="e.g. 2019" style="width:120px"></td></tr>
+      <tr><td style="vertical-align:top;padding-top:0.4rem">End Year</td>
+          <td><input type="number" id="me-end-year" placeholder="e.g. 2024 (blank if ongoing)" style="width:120px"></td></tr>
+      <tr><td style="vertical-align:top;padding-top:0.4rem">Tags</td>
+          <td><input type="text" id="me-tags" placeholder="Comma-separated: Action, Fantasy, Isekai">
+              <small>Tags will be comma-split and trimmed.</small></td></tr>
+      <tr><td style="vertical-align:top;padding-top:0.4rem">Cover URL</td>
+          <td><input type="text" id="me-cover" placeholder="https://... (optional, will be downloaded)"></td></tr>
+      <tr><td style="vertical-align:top;padding-top:0.4rem"><b>Library *</b></td>
+          <td><select id="me-lib">${libOptions}</select></td></tr>
+      <tr><td style="vertical-align:top;padding-top:0.4rem"><b>Folder Name *</b></td>
+          <td><input type="text" id="me-path" placeholder="Series folder within library root" oninput="this.dataset.edited='1'"></td></tr>
+    </table>
+    <br>
+    <button onclick="doAddManual()">+ Add to Library</button>
+    <div id="me-status-msg"></div>`;
+}
+
+function meAutoPath() {
+  const pathEl = document.getElementById('me-path');
+  if (!pathEl || pathEl.dataset.edited) return;
+  pathEl.value = toPathSafe(document.getElementById('me-title').value);
+}
+
+async function doAddManual() {
+  const statusEl = document.getElementById('me-status-msg');
+  const title = document.getElementById('me-title').value.trim();
+  const lib = document.getElementById('me-lib').value;
+  const path = document.getElementById('me-path').value.trim();
+  if (!title) { statusEl.innerHTML = '<p class="error">Title is required.</p>'; return; }
+  if (!lib) { statusEl.innerHTML = '<p class="error">Please select a library.</p>'; return; }
+  if (!path) { statusEl.innerHTML = '<p class="error">Folder name is required.</p>'; return; }
+
+  const startYearRaw = document.getElementById('me-start-year').value.trim();
+  const endYearRaw   = document.getElementById('me-end-year').value.trim();
+  const tagsRaw      = document.getElementById('me-tags').value.trim();
+  const coverUrl     = document.getElementById('me-cover').value.trim();
+
+  const body = {
+    library_id: lib,
+    relative_path: path,
+    title,
+    title_og:    document.getElementById('me-title-og').value.trim() || null,
+    title_roman: document.getElementById('me-title-roman').value.trim() || null,
+    synopsis:    document.getElementById('me-synopsis').value.trim() || null,
+    publishing_status: document.getElementById('me-status').value,
+    tags: tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : [],
+    start_year: startYearRaw ? parseInt(startYearRaw, 10) : null,
+    end_year:   endYearRaw   ? parseInt(endYearRaw, 10)   : null,
+    cover_url:  coverUrl || null,
+  };
+
+  statusEl.innerHTML = '<p>Adding...</p>';
+  try {
+    const manga = await api('POST', '/api/manga/manual', body);
+    navigate(`/series/${manga.id}`);
+  } catch(e) {
+    statusEl.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
+  }
+}
+
 // ---------------------------------------------------------------------------
-// Settings — providers + links
+// Settings — scan schedule, providers + links
 // ---------------------------------------------------------------------------
 async function viewSettings() {
   render('<p>Loading...</p>');
   try {
-    const providers = await api('GET', '/api/providers');
+    const [providers, settings] = await Promise.all([
+      api('GET', '/api/providers'),
+      api('GET', '/api/settings'),
+    ]);
     const pRows = providers.length === 0
-      ? '<tr><td colspan="3">No providers loaded. Add YAML files to the providers/ directory.</td></tr>'
+      ? '<tr><td colspan="2">No providers loaded. Add YAML files to the providers/ directory.</td></tr>'
       : providers.map(p => `<tr>
           <td>${escape(p.name)}</td>
-          <td>${p.score}</td>
           <td>${p.needs_browser ? 'Yes (browser)' : 'No'}</td>
         </tr>`).join('');
     render(`<h2>Settings</h2>
+      <h3>Scheduler</h3>
+      <p>Rebarr periodically checks for new chapters on all monitored series.</p>
+      <label>Scan interval (hours):<br>
+        <input type="number" id="scan-interval" min="1" max="168" value="${escape(settings.scan_interval_hours)}" style="width:80px">
+        &nbsp;<button onclick="saveSettings()">Save</button>
+      </label>
+      <div id="settings-status"></div>
+      <hr>
       <h3>Providers</h3>
       <p><small>Providers are loaded from YAML files. Restart to pick up changes.</small></p>
-      <table><tr><th>Name</th><th>Score</th><th>Browser?</th></tr>${pRows}</table>
+      <table><tr><th>Name</th><th>Browser?</th></tr>${pRows}</table>
       <br>
       <h3>Libraries</h3>
       <p>Manage libraries (add, edit paths, delete) on the <a onclick="navigate('/library')" style="cursor:pointer;color:#06c">Libraries page</a>.</p>`);
@@ -534,41 +831,105 @@ async function viewSettings() {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Logs — recent task history with live polling
-// ---------------------------------------------------------------------------
-async function viewLogs() {
-  render('<h2>Task Log</h2><div id="logs-list"><p>Loading...</p></div>');
-  await refreshLogs();
-  _pollHandle = setInterval(refreshLogs, 3000);
+async function saveSettings() {
+  const hours = parseInt(document.getElementById('scan-interval').value, 10);
+  const statusEl = document.getElementById('settings-status');
+  if (!hours || hours < 1 || hours > 168) {
+    statusEl.innerHTML = '<p class="error">Interval must be 1–168 hours.</p>';
+    return;
+  }
+  try {
+    await api('PUT', '/api/settings', { scan_interval_hours: hours });
+    statusEl.innerHTML = '<p style="color:#393">Saved!</p>';
+  } catch(e) {
+    statusEl.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
+  }
 }
 
-async function refreshLogs() {
-  const el = document.getElementById('logs-list');
-  if (!el) return;
+// ---------------------------------------------------------------------------
+// Queue — task history + active queue with live polling
+// ---------------------------------------------------------------------------
+async function viewQueue() {
+  render('<h2>Queue</h2><div id="queue-controls"><p>Loading...</p></div><div id="queue-list"></div>');
+  await refreshQueue();
+  _pollHandle = setInterval(refreshQueue, 3000);
+}
+
+async function refreshQueue() {
+  const listEl = document.getElementById('queue-list');
+  const ctrlEl = document.getElementById('queue-controls');
+  if (!listEl || !ctrlEl) return;
   try {
-    const tasks = await api('GET', '/api/tasks?limit=100');
+    const [tasks, settings] = await Promise.all([
+      api('GET', '/api/tasks'),
+      api('GET', '/api/settings'),
+    ]);
+    const paused = settings.queue_paused;
+    const pauseLabel = paused ? '▶ Resume Queue' : '⏸ Pause Queue';
+    const pauseStyle = paused ? 'color:#c70;font-weight:bold' : '';
+    ctrlEl.innerHTML = `
+      <button onclick="toggleQueuePause(${paused})" style="${pauseStyle}">${pauseLabel}</button>
+      &nbsp;<button class="btn-sm btn-danger" onclick="cancelSelected()">Cancel Selected</button>
+      ${paused ? '<span style="color:#c70;margin-left:0.8rem"><b>Queue paused — no new tasks will run.</b></span>' : ''}`;
     if (tasks.length === 0) {
-      el.innerHTML = '<p>No tasks yet.</p>';
+      listEl.innerHTML = '<p>No tasks yet.</p>';
       return;
     }
     const rows = tasks.map(t => {
       const ts = new Date(t.created_at).toLocaleString();
-      const manga = t.manga_title ? escape(t.manga_title) : '<small>—</small>';
+      const manga = t.manga_title ? `<a onclick='navigate("/series/${t.manga_id}")' style="cursor:pointer;color:#06c">${escape(t.manga_title)}</a>` : '<small>—</small>';
       const err = t.last_error ? `<br><small class="error">${escape(t.last_error)}</small>` : '';
+      const canCancel = t.status === 'Pending' || t.status === 'Running';
+      const cb = canCancel ? `<input type="checkbox" class="task-cb" data-id="${t.id}">` : '';
+      const cancelBtn = canCancel
+        ? `<button class="btn-sm btn-danger" onclick='cancelTask("${t.id}")'>Cancel</button>`
+        : '';
       return `<tr>
+        <td>${cb}</td>
         <td><small>${escape(ts)}</small></td>
         <td>${escape(t.task_type)}</td>
         <td>${manga}</td>
         <td>${taskBadge(t.status)}${err}</td>
+        <td>${cancelBtn}</td>
       </tr>`;
     }).join('');
-    el.innerHTML = `<table>
-      <tr><th>Time</th><th>Type</th><th>Manga</th><th>Status</th></tr>
+    listEl.innerHTML = `<table>
+      <tr><th><input type="checkbox" title="Select all cancelable" onchange="toggleSelectAllTasks(this.checked)"></th><th>Time</th><th>Type</th><th>Manga</th><th>Status</th><th></th></tr>
       ${rows}
     </table>`;
   } catch(e) {
-    if (el) el.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
+    if (listEl) listEl.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
+  }
+}
+
+async function toggleQueuePause(currentlyPaused) {
+  try {
+    await api('PUT', '/api/settings', { queue_paused: !currentlyPaused });
+    refreshQueue();
+  } catch(e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+function toggleSelectAllTasks(checked) {
+  document.querySelectorAll('.task-cb').forEach(cb => cb.checked = checked);
+}
+
+async function cancelSelected() {
+  const checked = Array.from(document.querySelectorAll('.task-cb:checked'));
+  if (checked.length === 0) { alert('Select at least one task to cancel.'); return; }
+  for (const cb of checked) {
+    try { await api('POST', `/api/tasks/${cb.dataset.id}/cancel`); } catch(_) {}
+  }
+  refreshQueue();
+}
+
+async function cancelTask(taskId) {
+  try {
+    await api('POST', `/api/tasks/${taskId}/cancel`);
+    refreshQueue();
+  } catch(e) {
+    alert('Cancel failed: ' + e.message);
   }
 }
 

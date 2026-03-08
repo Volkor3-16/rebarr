@@ -60,6 +60,9 @@ pub struct ScraperCtx {
     /// When true, dump page HTML to `./scraper_dump_N.html` after every `open` step.
     /// Useful for debugging provider YAML issues.
     pub dump_html: bool,
+    /// When true, print step-level diagnostics to stderr (selector match counts,
+    /// field extraction stats, variable values, etc.). Always enabled in scraper_test.
+    pub verbose: bool,
     /// Base URL of a running FlareSolverr instance (e.g. `http://localhost:8191`).
     /// When set, Cloudflare challenge pages are bypassed by calling FlareSolverr
     /// and injecting the resulting cookies before reloading.
@@ -72,6 +75,7 @@ impl ScraperCtx {
             http,
             browser,
             dump_html: false,
+            verbose: false,
             flaresolverr_url: None,
         }
     }
@@ -90,10 +94,6 @@ impl ScraperCtx {
 pub trait Provider: Send + Sync {
     /// Human-readable provider name (e.g. "MangaFire").
     fn name(&self) -> &str;
-
-    /// Preference score 0–100. Higher = preferred when multiple providers
-    /// have the same chapter. Used by the merge/download logic.
-    fn score(&self) -> u8;
 
     /// Returns true if this provider requires JavaScript rendering.
     /// Always true for YAML-driven providers (all actions use the headless browser).
@@ -181,11 +181,9 @@ impl ProviderRegistry {
         Ok(Self { providers })
     }
 
-    /// All providers sorted by descending score (highest quality first).
-    pub fn by_score(&self) -> Vec<&Arc<dyn Provider>> {
-        let mut v: Vec<_> = self.providers.iter().collect();
-        v.sort_by(|a, b| b.score().cmp(&a.score()));
-        v
+    /// All loaded providers in load order.
+    pub fn all(&self) -> Vec<&Arc<dyn Provider>> {
+        self.providers.iter().collect()
     }
 
     /// Providers that require a headless browser, used to decide whether to

@@ -1,30 +1,33 @@
-name: WeebCentral
-base_url: https://weebcentral.com
+name: All Manga
+base_url: https://allmanga.to
 rate_limit:
   requests_per_minute: 30
 
 search:
   steps:
-    - open: "/search/data?author=&text={query}&sort=Best%20Match&order=Descending&official=Any&anime=Any&adult=Any&display_mode=Full%20Display"
+    - open: "/search-manga?cty=ALL&query={query}"
     - foreach:
-        selector: "article > section > a"
+        selector: ".card.card-manga-item"
         extract:
           title:
-            selector: "div:not([class]):last-child"
+            selector: ".card-header a"
             content: text
           url:
-            selector: ""
+            selector: ".card-header a"
             content: attr
             attr_name: href
             prefix: "{base_url}"
           cover:
-            selector: "source, img"
+            selector: ".img-container img"
             content: attr
             attr_name: src
 
+# Broken - api is kinda fucked and uses graphql, and cloudflare blocks direct access.
+# https://github.com/keiyoushi/extensions-source/tree/main/src/en/allanime/src/eu/kanade/tachiyomi/extension/en/allanime
+
 chapters:
   steps:
-    - open: "{manga_url|strip_last_segment}/full-chapter-list"
+    - open: "{manga_url}"
     - foreach:
         selector: "div[x-data] > a"
         extract:

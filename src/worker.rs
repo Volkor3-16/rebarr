@@ -5,10 +5,14 @@ use std::time::{Duration, Instant};
 use sqlx::SqlitePool;
 use tokio::task::JoinHandle;
 
+use crate::covers;
 use crate::db::task::{Task, TaskType};
-use crate::db::{chapter as db_chapter, library as db_library, manga as db_manga, task as db_task};
+use crate::db::{chapter as db_chapter, library as db_library, manga as db_manga, provider as db_provider, settings as db_settings, task as db_task};
 use crate::downloader;
 use crate::merge;
+use crate::metadata::anilist::ALClient;
+use crate::optimizer;
+use crate::scanner;
 use crate::scraper::{ProviderRegistry, ScraperCtx};
 
 // ---------------------------------------------------------------------------
@@ -17,10 +21,27 @@ use crate::scraper::{ProviderRegistry, ScraperCtx};
 
 /// Spawn the background worker as a detached tokio task.
 /// The worker loops indefinitely, polling for pending tasks every 5 seconds.
+/// Also spawns a separate scheduler task that enqueues periodic chapter checks.
 pub fn start(pool: SqlitePool, registry: Arc<ProviderRegistry>, ctx: ScraperCtx) -> JoinHandle<()> {
+    // Spawn the periodic scheduler as a separate task
+    let scheduler_pool = pool.clone();
+    tokio::spawn(async move {
+        run_scheduler(scheduler_pool).await;
+    });
+
     tokio::spawn(async move {
         let mut rate_limiter = RateLimiter::new(&registry);
         loop {
+            // Honour the global queue-pause setting
+            let paused = db_settings::get(&pool, "queue_paused", "false")
+                .await
+                .map(|v| v == "true")
+                .unwrap_or(false);
+            if paused {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                continue;
+            }
+
             match db_task::claim_next(&pool).await {
                 Ok(Some(task)) => {
                     log::info!(
@@ -62,6 +83,63 @@ pub fn start(pool: SqlitePool, registry: Arc<ProviderRegistry>, ctx: ScraperCtx)
 }
 
 // ---------------------------------------------------------------------------
+// Periodic scheduler
+// ---------------------------------------------------------------------------
+
+/// Runs the periodic "check for new chapters" scheduler.
+/// Reads scan_interval_hours from Settings at the start of each cycle and
+/// enqueues CheckNewChapter for all monitored manga that don't already have
+/// one pending or running.
+async fn run_scheduler(pool: SqlitePool) {
+    loop {
+        // Read interval from settings (re-read each cycle so config changes take effect)
+        let hours = db_settings::get(&pool, "scan_interval_hours", "6")
+            .await
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(6);
+
+        tokio::time::sleep(Duration::from_secs(hours * 3600)).await;
+
+        match db_manga::get_all_monitored(&pool).await {
+            Ok(manga_list) => {
+                log::info!(
+                    "[scheduler] Running periodic scan for {} monitored series.",
+                    manga_list.len()
+                );
+                for manga in manga_list {
+                    match db_task::is_pending_for_manga(&pool, manga.id, TaskType::CheckNewChapter).await {
+                        Ok(false) => {
+                            if let Err(e) = db_task::enqueue(
+                                &pool,
+                                TaskType::CheckNewChapter,
+                                Some(manga.id),
+                                None,
+                                10,
+                            )
+                            .await
+                            {
+                                log::error!(
+                                    "[scheduler] Failed to enqueue CheckNewChapter for '{}': {e}",
+                                    manga.metadata.title
+                                );
+                            }
+                        }
+                        Ok(true) => {} // already queued — skip
+                        Err(e) => {
+                            log::error!("[scheduler] Error checking pending tasks: {e}");
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("[scheduler] Failed to fetch monitored manga: {e}");
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Dispatch
 // ---------------------------------------------------------------------------
 
@@ -89,6 +167,12 @@ async fn dispatch(
                 result.providers_found,
                 result.new_chapters
             );
+
+            // Re-score providers now that the chapter URL cache is up to date
+            if let Err(e) = db_provider::score_providers(pool, manga_id).await {
+                log::warn!("[worker] Failed to score providers for manga {manga_id}: {e}");
+            }
+
             Ok(())
         }
 
@@ -117,8 +201,67 @@ async fn dispatch(
                 .map_err(|e| e.to_string())
         }
 
+        TaskType::RefreshAniList => {
+            let manga_id = task.manga_id.ok_or("RefreshAniList task missing manga_id")?;
+            let manga = db_manga::get_by_id(pool, manga_id)
+                .await
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("manga {manga_id} not found"))?;
+
+            let Some(anilist_id) = manga.anilist_id else {
+                log::info!("[worker] Manga '{}' has no AniList ID — skipping refresh.", manga.metadata.title);
+                return Ok(());
+            };
+
+            let al = ALClient::new();
+            let mut fresh = al
+                .grab_manga(anilist_id as i32)
+                .await
+                .map_err(|e| format!("AniList fetch failed: {e}"))?;
+
+            // Preserve internal identity fields from the stored record
+            fresh.id = manga.id;
+            fresh.library_id = manga.library_id;
+            fresh.relative_path = manga.relative_path.clone();
+            fresh.downloaded_count = manga.downloaded_count;
+            fresh.chapter_count = manga.chapter_count;
+            fresh.monitored = manga.monitored;
+            fresh.created_at = manga.created_at;
+            fresh.metadata_updated_at = chrono::Utc::now();
+
+            // Re-download cover if the URL changed
+            if let Some(url) = fresh.thumbnail_url.take() {
+                let library = db_library::get_by_id(pool, manga.library_id)
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| format!("library {} not found", manga.library_id))?;
+                let series_dir = library.root_path.join(&manga.relative_path);
+                fresh.thumbnail_url =
+                    covers::download_cover(&ctx.http, &url, manga.id, &series_dir)
+                        .await
+                        .or(Some(url));
+            }
+
+            db_manga::update_metadata(pool, &fresh)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            log::info!("[worker] Refreshed AniList metadata for '{}'.", fresh.metadata.title);
+            Ok(())
+        }
+
+        TaskType::ScanDisk => {
+            let manga_id = task.manga_id.ok_or("ScanDisk task missing manga_id")?;
+            scanner::scan_existing_chapters(pool, manga_id).await
+        }
+
+        TaskType::OptimiseChapter => {
+            let chapter_id = task.chapter_id.ok_or("OptimiseChapter task missing chapter_id")?;
+            optimizer::optimise_chapter(pool, chapter_id).await
+        }
+
         // Not yet implemented task types — log and succeed silently
-        TaskType::RefreshAniList | TaskType::Backup => {
+        TaskType::Backup => {
             log::info!(
                 "[worker] Task type {:?} not yet implemented, skipping.",
                 task.task_type
@@ -145,7 +288,7 @@ struct RateLimiter {
 impl RateLimiter {
     fn new(registry: &ProviderRegistry) -> Self {
         let mut intervals = HashMap::new();
-        for provider in registry.by_score() {
+        for provider in registry.all() {
             // Minimum interval = 60_000ms / rpm  (floor at 100ms)
             let rpm = provider.rate_limit_rpm();
             let millis = if rpm > 0 {
@@ -190,7 +333,7 @@ async fn throttle_for_task(
             for entry in entries {
                 // Only throttle if this provider is actually loaded
                 if registry
-                    .by_score()
+                    .all()
                     .iter()
                     .any(|p| p.name() == entry.provider_name)
                 {
@@ -208,7 +351,7 @@ async fn throttle_for_task(
             {
                 for entry in entries {
                     if registry
-                        .by_score()
+                        .all()
                         .iter()
                         .any(|p| p.name() == entry.provider_name)
                     {

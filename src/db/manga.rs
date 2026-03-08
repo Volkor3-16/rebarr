@@ -31,6 +31,7 @@ struct MangaRow {
     downloaded_count: Option<i64>,
     metadata_source: String,
     thumbnail_url: Option<String>,
+    monitored: i64,
     created_at: DateTime<Utc>,
     metadata_updated_at: DateTime<Utc>,
 }
@@ -103,6 +104,7 @@ fn manga_from_parts(row: MangaRow, tags: Vec<String>) -> Result<Manga, sqlx::Err
         chapter_count: row.chapter_count.map(|v| v as u32),
         metadata_source,
         thumbnail_url: row.thumbnail_url,
+        monitored: row.monitored != 0,
         created_at: row.created_at,
         metadata_updated_at: row.metadata_updated_at,
         metadata: MangaMetadata {
@@ -159,12 +161,12 @@ pub async fn insert(pool: &SqlitePool, manga: &Manga) -> Result<(), sqlx::Error>
             uuid, library_id, anilist_id, mal_id, relative_path,
             title, title_og, title_roman, synopsis, publishing_status,
             start_year, end_year, chapter_count, downloaded_count,
-            metadata_source, thumbnail_url, created_at, metadata_updated_at
+            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at
         ) VALUES (
             ?, ?, ?, ?, ?,
             ?, ?, ?, ?, ?,
             ?, ?, ?, ?,
-            ?, ?, ?, ?
+            ?, ?, ?, ?, ?
         )"#,
     )
     .bind(&id)
@@ -183,6 +185,7 @@ pub async fn insert(pool: &SqlitePool, manga: &Manga) -> Result<(), sqlx::Error>
     .bind(downloaded_count)
     .bind(metadata_source)
     .bind(manga.thumbnail_url.as_deref())
+    .bind(manga.monitored as i64)
     .bind(manga.created_at)
     .bind(manga.metadata_updated_at)
     .execute(&mut *tx)
@@ -208,7 +211,7 @@ pub async fn get_by_id(pool: &SqlitePool, id: Uuid) -> Result<Option<Manga>, sql
             uuid, library_id, anilist_id, mal_id, relative_path,
             title, title_og, title_roman, synopsis, publishing_status,
             start_year, end_year, chapter_count, downloaded_count,
-            metadata_source, thumbnail_url, created_at, metadata_updated_at
+            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at
         FROM Manga WHERE uuid = ?"#,
     )
     .bind(&id_str)
@@ -237,7 +240,7 @@ pub async fn get_all_for_library(
             uuid, library_id, anilist_id, mal_id, relative_path,
             title, title_og, title_roman, synopsis, publishing_status,
             start_year, end_year, chapter_count, downloaded_count,
-            metadata_source, thumbnail_url, created_at, metadata_updated_at
+            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at
         FROM Manga WHERE library_id = ? ORDER BY title ASC"#,
     )
     .bind(&lib_str)
@@ -260,4 +263,86 @@ pub async fn delete(pool: &SqlitePool, id: Uuid) -> Result<(), sqlx::Error> {
         .execute(pool)
         .await?;
     Ok(())
+}
+
+/// Update the monitored flag for a manga.
+pub async fn set_monitored(pool: &SqlitePool, id: Uuid, monitored: bool) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE Manga SET monitored = ? WHERE uuid = ?")
+        .bind(monitored as i64)
+        .bind(id.to_string())
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Update the mutable metadata fields for an existing manga record.
+/// Tags are replaced atomically (delete old, insert new).
+/// Does NOT touch library_id, relative_path, chapter_count, downloaded_count, or created_at.
+pub async fn update_metadata(pool: &SqlitePool, manga: &Manga) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+
+    let id = manga.id.to_string();
+    let publishing_status = publishing_status_str(&manga.metadata.publishing_status);
+    let metadata_source = metadata_source_str(&manga.metadata_source);
+
+    sqlx::query(
+        r#"UPDATE Manga SET
+            title = ?, title_og = ?, title_roman = ?, synopsis = ?,
+            publishing_status = ?, start_year = ?, end_year = ?,
+            metadata_source = ?, thumbnail_url = ?,
+            anilist_id = ?, mal_id = ?,
+            metadata_updated_at = ?
+         WHERE uuid = ?"#,
+    )
+    .bind(&manga.metadata.title)
+    .bind(&manga.metadata.title_og)
+    .bind(&manga.metadata.title_roman)
+    .bind(&manga.metadata.synopsis)
+    .bind(publishing_status)
+    .bind(manga.metadata.start_year)
+    .bind(manga.metadata.end_year)
+    .bind(metadata_source)
+    .bind(manga.thumbnail_url.as_deref())
+    .bind(manga.anilist_id.map(|v| v as i64))
+    .bind(manga.mal_id.map(|v| v as i64))
+    .bind(manga.metadata_updated_at)
+    .bind(&id)
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query("DELETE FROM MangaTag WHERE manga_id = ?")
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
+
+    for tag in &manga.metadata.tags {
+        sqlx::query("INSERT OR IGNORE INTO MangaTag (manga_id, tag) VALUES (?, ?)")
+            .bind(&id)
+            .bind(tag)
+            .execute(&mut *tx)
+            .await?;
+    }
+
+    tx.commit().await
+}
+
+/// Fetch all monitored manga across all libraries, each with their tags.
+pub async fn get_all_monitored(pool: &SqlitePool) -> Result<Vec<Manga>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, MangaRow>(
+        r#"SELECT
+            uuid, library_id, anilist_id, mal_id, relative_path,
+            title, title_og, title_roman, synopsis, publishing_status,
+            start_year, end_year, chapter_count, downloaded_count,
+            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at
+        FROM Manga WHERE monitored = 1 ORDER BY title ASC"#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let tags = fetch_tags(pool, &row.uuid).await?;
+        out.push(manga_from_parts(row, tags)?);
+    }
+    Ok(out)
 }

@@ -3,12 +3,15 @@ use std::sync::Arc;
 use dotenvy::dotenv;
 
 mod api;
+mod comicinfo;
 mod covers;
 mod db;
 mod downloader;
 mod manga;
 mod merge;
 mod metadata;
+mod optimizer;
+mod scanner;
 mod scraper;
 mod web;
 mod worker;
@@ -24,15 +27,15 @@ async fn main() -> Result<(), rocket::Error> {
     dotenv().ok();
     env_logger::init();
 
-    // TODO: Move this to save in respective series directory (so komga can use it)
-    // root_path/library/Series
-    //    poster.ext
-    tokio::fs::create_dir_all("./thumbnails")
-        .await
-        .expect("Failed to create thumbnails directory");
-
     // Setup DB and API Client
     let pool = db::init("sqlite:rebarr.db").await.expect("DB init failed");
+
+    // Reset any tasks that were stuck Running when the server last stopped
+    match db::task::reset_running_tasks(&pool).await {
+        Ok(0) => {}
+        Ok(n) => log::warn!("Reset {n} stuck Running task(s) to Pending."),
+        Err(e) => log::error!("Failed to reset running tasks: {e}"),
+    }
     let al_client = ALClient::new();
     let http_client = reqwest::Client::new();
 
@@ -69,7 +72,6 @@ async fn main() -> Result<(), rocket::Error> {
         .manage(Arc::clone(&registry))
         .mount("/", web::routes())
         .mount("/", api::routes())
-        .mount("/thumbnails", rocket::fs::FileServer::from("./thumbnails"))
         .launch()
         .await?;
 
