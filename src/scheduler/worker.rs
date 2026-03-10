@@ -1,3 +1,6 @@
+// This file handles:
+// - All potential tasks that can be loaded into the queue
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -5,19 +8,18 @@ use std::time::{Duration, Instant};
 use sqlx::SqlitePool;
 use tokio::task::JoinHandle;
 
-use crate::covers;
+use crate::library::scanner::scan_existing_chapters;
+use crate::manga::covers;
 use crate::db::task::{Task, TaskType};
-use crate::db::{chapter as db_chapter, library as db_library, manga as db_manga, provider as db_provider, settings as db_settings, task as db_task};
-use crate::downloader;
-use crate::merge;
-use crate::metadata::anilist::ALClient;
-use crate::optimizer;
-use crate::scanner;
+use crate::db::{chapter as db_chapter, library as db_library, manga as db_manga, settings as db_settings, task as db_task};
+use crate::scraper::downloader;
+use crate::manga::merge;
+use crate::http::anilist::ALClient;
 use crate::scraper::{ProviderRegistry, ScraperCtx};
+use crate::scheduler::optimiser;
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
+// Workers
+// This file handles all the queue and tasks.
 
 /// Spawn the background worker as a detached tokio task.
 /// The worker loops indefinitely, polling for pending tasks every 5 seconds.
@@ -82,10 +84,6 @@ pub fn start(pool: SqlitePool, registry: Arc<ProviderRegistry>, ctx: ScraperCtx)
     })
 }
 
-// ---------------------------------------------------------------------------
-// Periodic scheduler
-// ---------------------------------------------------------------------------
-
 /// Runs the periodic "check for new chapters" scheduler.
 /// Reads scan_interval_hours from Settings at the start of each cycle and
 /// enqueues CheckNewChapter for all monitored manga that don't already have
@@ -139,10 +137,7 @@ async fn run_scheduler(pool: SqlitePool) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Dispatch
-// ---------------------------------------------------------------------------
-
+/// This is where each task in the queue is processed.
 async fn dispatch(
     pool: &SqlitePool,
     registry: &ProviderRegistry,
@@ -167,11 +162,6 @@ async fn dispatch(
                 result.providers_found,
                 result.new_chapters
             );
-
-            // Re-score providers now that the chapter URL cache is up to date
-            if let Err(e) = db_provider::score_providers(pool, manga_id).await {
-                log::warn!("[worker] Failed to score providers for manga {manga_id}: {e}");
-            }
 
             Ok(())
         }
@@ -252,12 +242,12 @@ async fn dispatch(
 
         TaskType::ScanDisk => {
             let manga_id = task.manga_id.ok_or("ScanDisk task missing manga_id")?;
-            scanner::scan_existing_chapters(pool, manga_id).await
+            scan_existing_chapters(pool, manga_id).await
         }
 
         TaskType::OptimiseChapter => {
             let chapter_id = task.chapter_id.ok_or("OptimiseChapter task missing chapter_id")?;
-            optimizer::optimise_chapter(pool, chapter_id).await
+            optimiser::optimise_chapter(pool, chapter_id).await
         }
 
         // Not yet implemented task types — log and succeed silently

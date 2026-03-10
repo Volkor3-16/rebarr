@@ -2,6 +2,16 @@
 
 This a informal changelog so i can keep track of what im doing.
 
+## 2026-03-10
+
+- Chapters list now have dropdowns on each chapter, showing all available providers for a chapter
+    - Users can now 'pin' a variant chapter to be the default, download checks that first.
+- Scoring is re-written to use tiers.
+- Split chapter handling
+    - Chapters no longer use floats, but `chapter_base` and `chapter_variant` (and `is_extra`).
+- Renamed scraper_test to cli, added future ideas of a entirely CLI version of the scraper/downloader.
+- Refactored the whole thing, moved stuff into their proper place.
+
 ## 2026-03-08
 
 - MVR completion pass

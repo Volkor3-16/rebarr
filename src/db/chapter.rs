@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
-use crate::manga::{Chapter, DownloadStatus};
+use crate::manga::manga::{Chapter, DownloadStatus};
 use crate::scraper::ProviderChapterInfo;
 
 // ---------------------------------------------------------------------------
@@ -15,9 +15,13 @@ struct ChapterRow {
     manga_id: String,
     number_raw: String,
     number_sort: f64,
+    chapter_base: f64,
+    chapter_variant: i64,
+    is_extra: i64, // SQLite bool as 0/1
     title: Option<String>,
     volume: Option<i64>,
     scanlator_group: Option<String>,
+    preferred_provider: Option<String>,
     download_status: String,
     downloaded_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
@@ -52,9 +56,13 @@ fn chapter_from_row(row: ChapterRow) -> Result<Chapter, sqlx::Error> {
         manga_id,
         number_raw: row.number_raw,
         number_sort: row.number_sort as f32,
+        chapter_base: row.chapter_base as f32,
+        chapter_variant: row.chapter_variant.clamp(0, 255) as u8,
+        is_extra: row.is_extra != 0,
         title: row.title,
         volume: row.volume.map(|v| v as u32),
         scanlator_group: row.scanlator_group,
+        preferred_provider: row.preferred_provider,
         download_status,
         downloaded_at: row.downloaded_at,
         created_at: row.created_at,
@@ -68,17 +76,22 @@ fn chapter_from_row(row: ChapterRow) -> Result<Chapter, sqlx::Error> {
 /// Insert a new chapter record. Does not overwrite an existing row.
 pub async fn insert(pool: &SqlitePool, chapter: &Chapter) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO Chapter (uuid, manga_id, number_raw, number_sort, title, volume,
-                              scanlator_group, download_status, downloaded_at, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO Chapter (uuid, manga_id, number_raw, number_sort, chapter_base, chapter_variant,
+                              is_extra, title, volume, scanlator_group, preferred_provider,
+                              download_status, downloaded_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(chapter.id.to_string())
     .bind(chapter.manga_id.to_string())
     .bind(&chapter.number_raw)
     .bind(chapter.number_sort as f64)
+    .bind(chapter.chapter_base as f64)
+    .bind(chapter.chapter_variant as i64)
+    .bind(chapter.is_extra as i64)
     .bind(&chapter.title)
     .bind(chapter.volume.map(|v| v as i64))
     .bind(&chapter.scanlator_group)
+    .bind(&chapter.preferred_provider)
     .bind(download_status_str(&chapter.download_status))
     .bind(chapter.downloaded_at)
     .bind(chapter.created_at)
@@ -91,7 +104,7 @@ pub async fn insert(pool: &SqlitePool, chapter: &Chapter) -> Result<(), sqlx::Er
 /// - New chapters are inserted with status `Missing`.
 /// - Existing chapters are NOT updated — preserving `Downloaded` status.
 /// - Chapter page URLs are cached in `ProviderChapterUrl` for all infos that have a URL.
-/// Returns the UUIDs of newly inserted chapters (empty if all already existed).
+///   Returns the UUIDs of newly inserted chapters (empty if all already existed).
 pub async fn upsert_from_scrape(
     pool: &SqlitePool,
     manga_id: Uuid,
@@ -105,14 +118,17 @@ pub async fn upsert_from_scrape(
         let new_id = Uuid::new_v4();
         let result = sqlx::query(
             "INSERT OR IGNORE INTO Chapter
-                (uuid, manga_id, number_raw, number_sort, title, volume, scanlator_group,
-                 download_status, downloaded_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'Missing', NULL)",
+                (uuid, manga_id, number_raw, number_sort, chapter_base, chapter_variant, is_extra,
+                 title, volume, scanlator_group, download_status, downloaded_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Missing', NULL)",
         )
         .bind(new_id.to_string())
         .bind(&manga_id_str)
         .bind(&info.raw_number)
         .bind(info.number as f64)
+        .bind(info.chapter_base as f64)
+        .bind(info.chapter_variant as i64)
+        .bind(info.is_extra as i64)
         .bind(&info.title)
         .bind(info.volume.map(|v| v as i64))
         .bind(&info.scanlator_group)
@@ -123,9 +139,12 @@ pub async fn upsert_from_scrape(
             new_ids.push(new_id);
         }
 
-        // Cache the chapter page URL regardless of whether the chapter row is new
+        // Cache the chapter page URL (and scanlator group) regardless of whether the chapter row is new
         if let Some(url) = &info.url {
-            let _ = super::chapter_url::upsert(pool, manga_id, provider_name, info.number, url).await;
+            let _ = super::chapter_url::upsert(
+                pool, manga_id, provider_name, info.number, url,
+                info.scanlator_group.as_deref(),
+            ).await;
         }
     }
 
@@ -138,8 +157,8 @@ pub async fn get_all_for_manga(
     manga_id: Uuid,
 ) -> Result<Vec<Chapter>, sqlx::Error> {
     let rows = sqlx::query_as::<_, ChapterRow>(
-        "SELECT uuid, manga_id, number_raw, number_sort, title, volume,
-                scanlator_group, download_status, downloaded_at, created_at
+        "SELECT uuid, manga_id, number_raw, number_sort, chapter_base, chapter_variant, is_extra,
+                title, volume, scanlator_group, preferred_provider, download_status, downloaded_at, created_at
          FROM Chapter
          WHERE manga_id = ?
          ORDER BY number_sort DESC",
@@ -159,8 +178,8 @@ pub async fn get_by_number(
 ) -> Result<Option<Chapter>, sqlx::Error> {
     // Use ABS(number_sort - ?) < 0.01 to handle float imprecision
     let row = sqlx::query_as::<_, ChapterRow>(
-        "SELECT uuid, manga_id, number_raw, number_sort, title, volume,
-                scanlator_group, download_status, downloaded_at, created_at
+        "SELECT uuid, manga_id, number_raw, number_sort, chapter_base, chapter_variant, is_extra,
+                title, volume, scanlator_group, preferred_provider, download_status, downloaded_at, created_at
          FROM Chapter
          WHERE manga_id = ? AND ABS(number_sort - ?) < 0.01
          LIMIT 1",
@@ -176,8 +195,8 @@ pub async fn get_by_number(
 /// Get a chapter by its UUID.
 pub async fn get_by_id(pool: &SqlitePool, id: Uuid) -> Result<Option<Chapter>, sqlx::Error> {
     let row = sqlx::query_as::<_, ChapterRow>(
-        "SELECT uuid, manga_id, number_raw, number_sort, title, volume,
-                scanlator_group, download_status, downloaded_at, created_at
+        "SELECT uuid, manga_id, number_raw, number_sort, chapter_base, chapter_variant, is_extra,
+                title, volume, scanlator_group, preferred_provider, download_status, downloaded_at, created_at
          FROM Chapter WHERE uuid = ?",
     )
     .bind(id.to_string())
@@ -197,6 +216,21 @@ pub async fn set_status(
     sqlx::query("UPDATE Chapter SET download_status = ?, downloaded_at = ? WHERE uuid = ?")
         .bind(download_status_str(&status))
         .bind(downloaded_at)
+        .bind(chapter_id.to_string())
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Set or clear the preferred download provider for a chapter.
+/// Pass `None` to reset to auto-selection by tier.
+pub async fn set_preferred_provider(
+    pool: &SqlitePool,
+    chapter_id: Uuid,
+    provider: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE Chapter SET preferred_provider = ? WHERE uuid = ?")
+        .bind(provider)
         .bind(chapter_id.to_string())
         .execute(pool)
         .await?;

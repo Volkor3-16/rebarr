@@ -45,3 +45,9 @@ impl BrowserPool {
             .cloned()
     }
 }
+
+impl Default for BrowserPool {
+    fn default() -> Self {
+        Self::new()
+    }
+}

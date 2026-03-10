@@ -46,7 +46,7 @@ chapters:
             attr_name: stroke
             value_map:
               "#d8b4fe": "Official"
-              "#4C4D54": "Unknown Scanlator"
+              "#4C4D54": ""
 
 pages:
   steps:

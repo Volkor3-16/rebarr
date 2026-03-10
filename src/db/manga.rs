@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
-use crate::manga::{Manga, MangaMetadata, MangaSource, PublishingStatus};
+use crate::manga::manga::{Manga, MangaMetadata, MangaSource, PublishingStatus};
 
 // ---------------------------------------------------------------------------
 // Row types

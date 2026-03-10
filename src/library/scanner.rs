@@ -2,13 +2,13 @@ use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::db::{chapter as db_chapter, library as db_library, manga as db_manga};
-use crate::manga::{Chapter, DownloadStatus};
+use crate::manga::manga::{Chapter, DownloadStatus};
 
 /// Scan the manga's directory on disk for existing CBZ files and mark the
 /// corresponding chapter records as Downloaded.
 ///
 /// Filenames must match the convention written by the downloader:
-///   `Chapter {number_raw}.cbz`
+///   `Chapter {number}.cbz`
 ///
 /// Chapters that exist in the DB are updated to Downloaded. Chapters that
 /// don't exist yet are inserted as Downloaded (useful for pre-existing files).
@@ -76,14 +76,22 @@ pub async fn scan_existing_chapters(pool: &SqlitePool, manga_id: Uuid) -> Result
             }
             Ok(None) => {
                 // Insert a minimal chapter record marked as Downloaded
+                let chapter_base = number_sort.floor();
+                let frac = (number_sort - chapter_base).abs();
+                let chapter_variant = (frac * 10.0).round() as u8;
+                let is_extra = frac >= 0.5 - f32::EPSILON;
                 let chapter = Chapter {
                     id: Uuid::new_v4(),
                     manga_id,
                     number_raw: num_str.to_owned(),
                     number_sort,
+                    chapter_base,
+                    chapter_variant,
+                    is_extra,
                     title: None,
                     volume: None,
                     scanlator_group: None,
+                    preferred_provider: None,
                     download_status: DownloadStatus::Downloaded,
                     downloaded_at,
                     created_at: downloaded_at.unwrap_or_else(chrono::Utc::now),

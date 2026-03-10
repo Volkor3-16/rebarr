@@ -1,9 +1,6 @@
 use rocket::{get, response::content::RawHtml, routes};
 
-// ---------------------------------------------------------------------------
-// GET / -- serve the single-page frontend
-// All data is loaded via fetch() calls to the /api/... REST endpoints.
-// ---------------------------------------------------------------------------
+// This file handles serving the frontend, and contains all the html frontend.
 
 #[get("/")]
 pub fn index() -> RawHtml<&'static str> {
@@ -402,7 +399,21 @@ async function loadChapters(mangaId) {
     }
     const rows = chapters.map(ch => {
       const numFloat = ch.number_sort;
-      let label = `Chapter ${ch.number_sort}`;
+      const base = ch.chapter_base;
+      const variant = ch.chapter_variant;
+      const isExtra = ch.is_extra;
+      // Build a human-friendly chapter label
+      let chNum;
+      if (variant === 0) {
+        chNum = `Chapter ${base % 1 === 0 ? base.toFixed(0) : base}`;
+      } else if (isExtra) {
+        chNum = `Chapter ${base % 1 === 0 ? base.toFixed(0) : base} Extra`;
+      } else {
+        // split part: 1→a, 2→b, ...
+        const partLetter = String.fromCharCode(96 + variant);
+        chNum = `Chapter ${base % 1 === 0 ? base.toFixed(0) : base} Part ${partLetter.toUpperCase()}`;
+      }
+      let label = chNum;
       if (ch.title) label += ` - ${escape(ch.title)}`;
       if (ch.scanlator_group) label += ` [${escape(ch.scanlator_group)}]`;
       const vol = ch.volume ? `Vol.${escape(ch.volume)} ` : '';
@@ -424,9 +435,29 @@ async function loadChapters(mangaId) {
       const foundCell = ch.found_ago
         ? `<span title="${escape(foundTitle)}">${escape(ch.found_ago)} ago</span>`
         : '<span title="">—</span>';
+      // Indent split/extra variants slightly
+      const indent = variant !== 0 ? ' style="padding-left:1.5rem;font-size:0.92em"' : '';
+      // Per-chapter provider dropdown
+      let provDetails = '';
+      if (ch.providers && ch.providers.length > 0) {
+        const pRows = ch.providers.map(p => {
+          const tierLabel = {1:'T1:Official',2:'T2:Trusted',3:'T3:Unknown',4:'T4:NoGroup'}[p.tier] || 'T?';
+          const tierColor = {1:'#393',2:'#06c',3:'#c70',4:'#888'}[p.tier] || '#888';
+          const tierBadge = `<span style="font-size:0.7em;padding:1px 3px;border-radius:3px;background:${tierColor};color:#fff">${tierLabel}</span>`;
+          const grp = p.scanlator_group ? ` <small style="color:#666">(${escape(p.scanlator_group)})</small>` : '';
+          const link = `<a href="${escape(p.chapter_url)}" target="_blank" rel="noopener" style="font-size:0.85em">[read]</a>`;
+          const pinned = p.is_preferred ? ' <span style="color:#393;font-size:0.8em">★ Pinned</span>' : '';
+          const pinBtn = !p.is_preferred
+            ? `<button class="btn-sm" onclick='setPreferredProvider("${mangaId}",${numFloat},"${p.provider_name.replace(/"/g,'\\"')}") '>Pin</button>`
+            : `<button class="btn-sm" onclick='setPreferredProvider("${mangaId}",${numFloat},null)'>Unpin</button>`;
+          return `<div style="margin-bottom:0.15rem">${tierBadge} <b>${escape(p.provider_name)}</b>${grp} ${link}${pinned} ${pinBtn}</div>`;
+        }).join('');
+        const label2 = `${ch.providers.length} provider${ch.providers.length===1?'':'s'}${ch.preferred_provider?' (pinned: '+escape(ch.preferred_provider)+')':''}`;
+        provDetails = `<details style="margin-top:0.25rem"><summary style="cursor:pointer;font-size:0.78em;color:#06c">${label2}</summary><div style="padding:0.2rem 0 0.1rem 0.5rem">${pRows}</div></details>`;
+      }
       return `<tr>
         <td>${cb}</td>
-        <td>${vol}${label}</td>
+        <td${indent}>${vol}${label}${provDetails}</td>
         <td>${statusBadge(status)}</td>
         <td><small>${foundCell}</small></td>
         <td>${dlBtn}${markBtn}${optBtn}</td>
@@ -530,7 +561,7 @@ async function doDownloadAllMissing(mangaId) {
 }
 
 // ---------------------------------------------------------------------------
-// Providers — per-manga provider scoring panel
+// Providers — per-manga provider panel (search status + links)
 // ---------------------------------------------------------------------------
 async function loadProviders(mangaId) {
   const el = document.getElementById('providers-list');
@@ -542,52 +573,38 @@ async function loadProviders(mangaId) {
       return;
     }
     const rows = providers.map(p => {
-      const autoScore = p.auto_score.toFixed(3);
-      const effScore = p.effective_score.toFixed(3);
-      const isOverride = p.score_override !== null && p.score_override !== undefined;
-      const modeLabel = isOverride
-        ? `<span style="color:#c70">Override: ${p.score_override.toFixed(1)}</span>`
-        : '<span style="color:#393">Auto</span>';
+      if (!p.found) {
+        const searched = p.search_attempted_at ? new Date(p.search_attempted_at).toLocaleString() : 'never';
+        return `<tr style="opacity:0.5">
+          <td><b>${escape(p.provider_name)}</b></td>
+          <td><span style="color:#a55">Not found</span></td>
+          <td></td>
+          <td><small>searched: ${escape(searched)}</small></td>
+        </tr>`;
+      }
       const synced = p.last_synced_at ? new Date(p.last_synced_at).toLocaleString() : 'Never';
-      const overrideInput = `<input type="number" id="ov-${mangaId}-${escape(p.provider_name)}" value="${isOverride ? p.score_override : ''}" placeholder="e.g. 200" style="width:80px;padding:0.2rem">`;
-      const setBtn = `<button class="btn-sm" onclick='setProviderOverride("${mangaId}", "${escape(p.provider_name)}")'>Set</button>`;
-      const resetBtn = isOverride
-        ? `&nbsp;<button class="btn-sm" onclick='clearProviderOverride("${mangaId}", "${escape(p.provider_name)}")'>Reset to Auto</button>`
-        : '';
+      const link = p.provider_url ? `<a href="${escape(p.provider_url)}" target="_blank" rel="noopener">[open]</a>` : '—';
       return `<tr>
         <td><b>${escape(p.provider_name)}</b></td>
-        <td>${modeLabel}</td>
-        <td><b>${effScore}</b> <small>(auto: ${autoScore})</small></td>
-        <td>${overrideInput} ${setBtn}${resetBtn}</td>
+        <td><span style="color:#393">Found</span></td>
+        <td>${link}</td>
         <td><small>${escape(synced)}</small></td>
       </tr>`;
     }).join('');
     el.innerHTML = `<table>
-      <tr><th>Provider</th><th>Mode</th><th>Effective Score</th><th>Override</th><th>Last Synced</th></tr>
+      <tr><th>Provider</th><th>Status</th><th>Link</th><th>Last Synced</th></tr>
       ${rows}
     </table>
-    <small>Higher score = tried first. Override replaces the auto-computed score for this series only.</small>`;
+    <small>Per-chapter provider availability and tier info is shown in the chapter list above. Manage trusted groups in Settings.</small>`;
   } catch(e) {
     el.innerHTML = `<p class="error">Error loading providers: ${escape(e.message)}</p>`;
   }
 }
 
-async function setProviderOverride(mangaId, providerName) {
-  const input = document.getElementById(`ov-${mangaId}-${providerName}`);
-  const val = input ? parseFloat(input.value) : NaN;
-  if (isNaN(val)) { alert('Enter a valid number for the score override.'); return; }
+async function setPreferredProvider(mangaId, chapterNum, providerName) {
   try {
-    await api('PATCH', `/api/manga/${mangaId}/providers/${encodeURIComponent(providerName)}`, { score_override: val });
-    loadProviders(mangaId);
-  } catch(e) {
-    alert('Error: ' + e.message);
-  }
-}
-
-async function clearProviderOverride(mangaId, providerName) {
-  try {
-    await api('PATCH', `/api/manga/${mangaId}/providers/${encodeURIComponent(providerName)}`, { score_override: null });
-    loadProviders(mangaId);
+    await api('PATCH', `/api/manga/${mangaId}/chapters/${chapterNum}/preferred-provider`, { provider_name: providerName });
+    loadChapters(mangaId);
   } catch(e) {
     alert('Error: ' + e.message);
   }
@@ -823,11 +840,62 @@ async function viewSettings() {
       <h3>Providers</h3>
       <p><small>Providers are loaded from YAML files. Restart to pick up changes.</small></p>
       <table><tr><th>Name</th><th>Browser?</th></tr>${pRows}</table>
+      <hr>
+      <h3>Trusted Scanlation Groups</h3>
+      <p><small>Groups listed here are Tier 2 (trusted). Chapters from these groups score higher than unknown groups (Tier 3), but lower than official releases (Tier 1, auto-detected via "Official" in the name). Re-scan a series after changing this list to update scores.</small></p>
+      <div id="trusted-groups-list"><p>Loading...</p></div>
+      <div style="margin-top:0.5rem">
+        <input type="text" id="new-trusted-group" placeholder="Group name (exact)" style="width:220px;padding:0.3rem">
+        &nbsp;<button onclick="addTrustedGroup()">Add</button>
+      </div>
+      <div id="trusted-groups-status"></div>
       <br>
       <h3>Libraries</h3>
       <p>Manage libraries (add, edit paths, delete) on the <a onclick="navigate('/library')" style="cursor:pointer;color:#06c">Libraries page</a>.</p>`);
+    loadTrustedGroups();
   } catch(e) {
     render(`<p class="error">Error: ${escape(e.message)}</p>`);
+  }
+}
+
+async function loadTrustedGroups() {
+  const el = document.getElementById('trusted-groups-list');
+  if (!el) return;
+  try {
+    const groups = await api('GET', '/api/trusted-groups');
+    if (groups.length === 0) {
+      el.innerHTML = '<p><small>No trusted groups yet.</small></p>';
+      return;
+    }
+    el.innerHTML = '<ul style="margin:0.3rem 0">' + groups.map(g =>
+      `<li>${escape(g)} <button class="btn-sm" onclick='removeTrustedGroup("${escape(g)}")'>Remove</button></li>`
+    ).join('') + '</ul>';
+  } catch(e) {
+    el.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
+  }
+}
+
+async function addTrustedGroup() {
+  const input = document.getElementById('new-trusted-group');
+  const status = document.getElementById('trusted-groups-status');
+  const name = input ? input.value.trim() : '';
+  if (!name) { status.innerHTML = '<p class="error">Enter a group name.</p>'; return; }
+  try {
+    await api('POST', '/api/trusted-groups', { name });
+    input.value = '';
+    status.innerHTML = '<p style="color:#393">Added!</p>';
+    loadTrustedGroups();
+  } catch(e) {
+    status.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
+  }
+}
+
+async function removeTrustedGroup(name) {
+  try {
+    await api('DELETE', `/api/trusted-groups/${encodeURIComponent(name)}`);
+    loadTrustedGroups();
+  } catch(e) {
+    alert('Error: ' + e.message);
   }
 }
 

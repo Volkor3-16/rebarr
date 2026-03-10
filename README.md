@@ -9,33 +9,44 @@ The plan is to use AniList as the metadata source, and to automatically* match m
 
 ## Bugs / Dev TODO
 
-- [ ] Providers list under chapter list should provide more info
-    - Providers that couldn't find anything
-    - Provider score breakdowns
-    - Direct provider links/metadata to help with matching
-- [ ] Better scoring
-    - We shouldn't really care which provider it's uploaded to. No 'provider wide scores'
-    - We should change it to work on tiers. Tiers are the strict order, we never select a lower source if a better one exists.
-        - Tier 1: Official Publisher
-        - Tier 2: Known scanlator group (from a 'trusted' community list or something, idk)
-        - Tier 3: Unknown scnalator group (for ones that have a group name but we don't know, or just bad naming from a provider)
-        - Tier 4: No Group / unlabelled
-    - Additionally, the metadata should be ranked too, as to help scoring within a tier. Really here for a tiebreaker.
-        - Score presence of:
-            - title
-            - scanlator group name
-            - upload date
-            - chapter number (2 v s 2.1 and 2.2)
-            - Volume number
-        - Combined into a normalised score
-            - Then added to the tier scoring.
-- [ ] Partial/Split Chapters handling
-    - [ ] Split chapter numbers (currently number_sort) into `chapter_base` and `chapter_variant`
-        - Somehow handle 2.5 'extras' variant differently from split chapters
-        - [ ] Group variants under a chapter_base
-        - [ ] Assign a score bonus to full chapters, than a partial/split chapter collection.
-        - [ ] Normalise other naming schemes (2a -> 2.1)
+- [ ] Chapters aren't being sorted correctly.
+    - Chapter 1 of Jujutsu Kaisen, 4 providers. "Official, TCB Scans, and 2 no groups".
+    - Instead of the official release being selected (following the Tier rankings), the default selection is the TCB Scans release, a T3 version.
+- [ ] /some/ chapters with parts (2.1, 2.2) aren't being grouped as a chapter 2. They just show 3 (chapter 2, chapter 2.1, chapter 2.2)
 
+### Refactor
+
+Claude and I made a mess of the structure. I think I should fix it up.
+
+```
+src/
+    main.rs             # Entrypoint for rocket server
+    api/                # Everything that the rocket server needs
+        api.rs          # API endpoints
+        frontend.rs     # Frontend 'html' (leaving until i can be fucked making a better one)
+    cli/
+        cli.rs          # CLI Codebase (previously scraper_test)
+    config/
+        mod.rs          # Handles config and envvars, rocket.toml stuffs.
+    db/                 # All database stuff, type conversions, and whatever else.
+    downloader/         # Download Manager logic
+    http/               # Module for HTTP Api (Anilist / future metadata / any native http calls)
+        anilist.rs      # Anilist implementation
+        myanimelist.rs  # Example future metadata provider
+    library/            # Disk & Local I/O (or s3)
+        scanner.rs      # Handles scanning existing manga in a library
+        importer.rs     # Handles importing manga into a library
+    manga/              # All the core manga stuff
+        comicinfo.rs    # Handles creation of ComicInfo.xml
+        covers.rs       # Handles downloading and creation of cover photos
+        merge.rs        # Handles merging provider chapter lists into what we view
+        scanner.rs      # 
+    provider/           # Provider handling (embedded chromium stuffs)
+        provider.rs     # 
+    scheduler/          # Queue / Worker system
+        queue.rs
+        worker.rs
+```
 
 ## Features
 ### Minimum Viable Release
@@ -92,7 +103,6 @@ The plan is to use AniList as the metadata source, and to automatically* match m
     - [x] Chapter URLs cached after first scan (downloads skip re-scraping the chapter list)
     - [x] Cancel Pending/Running tasks from the Queue page
 - [ ] Content Matching system
-    - 
 - [ ] New Database/new user wizard
     1. Ask to create a library directory (or skip if already set in env)
     2. Ask user to select enabled/disabled providers
@@ -102,6 +112,15 @@ The plan is to use AniList as the metadata source, and to automatically* match m
         - Match and import into DB.
         - Moves, renames, matches files to chapters - exactly like sonarr bulk import
         - Do this for each manga series, let user match and verify if it doesn't match automatically.
+- [ ] More scraper data
+    - [ ] Date (to use for scoring)
+    - [ ] Language (to use for filtering only specified language)
+- [ ] Local 'Provider'
+    - Scans existing FS for manga in the library directory, but not added (from previous installs)
+    - Allows the user to import them (adds into db, adds chapters, reads local info and ads to db.)
+    - Ranks them, so allows for upgrades to go through normally.
+- [ ] Allow users to select which providers to use per series, as an override. Just incase the user prefers one provider of any automated ranking.
+    - This leaves a warning or something, since it means all provider management is done manually by the user
 
 ### Maximum Viable Release (in order of importance)
 
@@ -117,6 +136,11 @@ This is in addition to the above.
 - [ ] A nice looking webui
     - [ ] Basic Auth
     - [ ] oauth/oidc/whatever fancy system (would link with komga emulation)
+    - [ ] egui frontend, bundled and compiled into wasm, along with a native desktop app.
+        - [ ] Chapter reader
+            - is there a cbz viewer for egui? (nope lol)
+            - gonna have to make one ourselves
+        - steal all the hard work i did for mash/yams
 - [ ] Import workflows
     - [ ] Losslessly convert pages to webp/whatever (uses https://lib.rs/crates/compress_comics)
     - [ ] Detect watermarks (and remove them?)
@@ -133,6 +157,16 @@ This is in addition to the above.
         - Download failures
         - Other problems
 - [ ] Metrics (because i love grafana graphs)
+- [ ] Suggestion system
+    - Saves suggestions from anilist for each series in library
+    - Count occurances over the entire library
+    - Deduplicate against series already in library
+    - Show them all, in order of how often they show up.
+    - Maybe some fancy stuff later, use tags or whatever?
+    - AI slop suggestions?
+    - something else?
+- [ ] Anti-scraping prevention
+    - 'random' useragent (pick a random one from the `n` most common UA's)
 
 ## Installation
 

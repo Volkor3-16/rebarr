@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
-use crate::manga::{Library, MangaType};
+use crate::manga::manga::{Library, MangaType};
 
 #[derive(sqlx::FromRow)]
 struct LibraryRow {

@@ -629,19 +629,60 @@ fn records_to_search_results(records: Vec<HashMap<String, String>>) -> Vec<Provi
         .collect()
 }
 
+/// Parse a raw chapter number string into (number_sort, chapter_base, chapter_variant, is_extra).
+///
+/// Handles:
+/// - Plain numbers: "12" → (12.0, 12.0, 0, false)
+/// - Decimal splits: "12.1" → (12.1, 12.0, 1, false)
+/// - Decimal extras: "12.5" → (12.5, 12.0, 5, true)  [decimal >= 0.5 = bonus extra]
+/// - Letter suffixes: "12a" → (12.1, 12.0, 1, false), "12b" → (12.2, 12.0, 2, false)
+/// - Prefixed: "Ch. 12.5" → takes last whitespace token before applying rules
+/// - Fallback: returns (0.0, 0.0, 0, false) instead of silently losing chapters
+fn parse_chapter_number(raw: &str) -> (f32, f32, u8, bool) {
+    // Take the last whitespace-separated token (strips "Ch.", "Chapter", "Vol.X Ch.Y" prefixes)
+    let token = raw.split_whitespace().last().unwrap_or(raw).trim();
+
+    // Try direct f32 parse first ("12", "12.5", "12.1")
+    if let Ok(n) = token.parse::<f32>() {
+        let base = n.floor();
+        let frac = (n - base).abs();
+        let variant = (frac * 10.0).round() as u8;
+        let is_extra = frac >= 0.5 - f32::EPSILON;
+        return (n, base, variant, is_extra);
+    }
+
+    // Try letter suffix pattern: digits followed by a single lowercase letter ("12a", "12b")
+    if let Some(letter_pos) = token.rfind(|c: char| c.is_ascii_alphabetic()) {
+        let (num_part, letter_part) = token.split_at(letter_pos);
+        if let Ok(base) = num_part.parse::<f32>() {
+            if let Some(letter) = letter_part.chars().next() {
+                if letter.is_ascii_alphabetic() {
+                    // a=1, b=2, c=3, ...
+                    let variant = (letter.to_ascii_lowercase() as u8) - b'a' + 1;
+                    let number = base + (variant as f32) / 10.0;
+                    return (number, base, variant, false);
+                }
+            }
+        }
+    }
+
+    // Fallback: could not parse — return 0 so the chapter still appears (not silently dropped)
+    (0.0, 0.0, 0, false)
+}
+
 fn records_to_chapters(records: Vec<HashMap<String, String>>) -> Vec<ProviderChapterInfo> {
     let mut chapters: Vec<ProviderChapterInfo> = records
         .into_iter()
         .filter_map(|mut r| {
             let raw_number = r.remove("number_raw")?;
-            let number = raw_number
-                .split_whitespace()
-                .last()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0.0);
+            let (number, chapter_base, chapter_variant, is_extra) =
+                parse_chapter_number(&raw_number);
             Some(ProviderChapterInfo {
                 raw_number,
                 number,
+                chapter_base,
+                chapter_variant,
+                is_extra,
                 title: r.remove("title").filter(|s| !s.is_empty()),
                 url: r.remove("url").filter(|s| !s.is_empty()),
                 volume: r.remove("volume").and_then(|s| s.parse().ok()),

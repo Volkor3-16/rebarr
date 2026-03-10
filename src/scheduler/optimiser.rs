@@ -1,3 +1,9 @@
+// This file handles:
+// 1. Unpacking a CBZ File
+// 2. Checking if the images inside are not WebP
+// 3. Re-encoding them into lossess WebP
+// 4. Repacking the CBZ File.
+
 use std::io::{Cursor, Read, Write};
 use std::path::Path;
 

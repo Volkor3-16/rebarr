@@ -2,6 +2,7 @@ pub mod browser;
 pub mod def;
 pub mod engine;
 pub mod error;
+pub mod downloader;
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -27,8 +28,11 @@ pub struct ProviderSearchResult {
 /// Info about a single chapter as returned by a provider's chapter list.
 #[derive(Debug, Clone)]
 pub struct ProviderChapterInfo {
-    pub raw_number: String, // Raw value as scraped (e.g. "12.5")
-    pub number: f32,        // Parsed chapter number for ordering
+    pub raw_number: String,    // Raw value as scraped (e.g. "12.5", "12a")
+    pub number: f32,           // Parsed chapter number for ordering (e.g. 12.5, 12.1)
+    pub chapter_base: f32,     // Integer part of the chapter number (e.g. 12.0)
+    pub chapter_variant: u8,   // Sub-part index: 0=full, 1-4=split parts, 5+=extra
+    pub is_extra: bool,        // True if this is a bonus/extra chapter (decimal >= 0.5)
     pub title: Option<String>,
     pub url: Option<String>,
     pub volume: Option<u32>,

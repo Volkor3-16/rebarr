@@ -1,13 +1,15 @@
-use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
 use std::str::FromStr;
+use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
 
-pub mod chapter;
-pub mod chapter_url;
-pub mod library;
-pub mod manga;
-pub mod provider;
-pub mod settings;
-pub mod task;
+pub(crate) mod chapter_url;
+pub(crate) mod chapter;
+pub(crate) mod library;
+pub(crate) mod manga;
+pub(crate) mod provider;
+pub(crate) mod settings;
+pub(crate) mod task;
+
+
 
 /// Initialise the database pool.
 ///

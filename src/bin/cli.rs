@@ -1,7 +1,7 @@
-/// Manual integration test for a single provider.
+/// Rebarr, in CLI form!
 ///
 /// Usage:
-///   cargo run --bin scraper_test -- [OPTIONS] "manga title"
+///   cargo run --bin cli -- [OPTIONS] "manga title"
 ///
 /// Options:
 ///   -p, --provider <name>      Provider to test (default: highest-scored)
@@ -9,10 +9,10 @@
 ///   -H, --dump-html            Dump page HTML to ./scraper_dump_N.html after each open step
 ///
 /// Examples:
-///   cargo run --bin scraper_test -- "berserk"
-///   cargo run --bin scraper_test -- -p MangaFire "berserk"
-///   cargo run --bin scraper_test -- -p WeebCentral -d "berserk"
-///   cargo run --bin scraper_test -- -H "berserk"
+///   cargo run --bin cli -- "berserk"
+///   cargo run --bin cli -- -p MangaFire "berserk"
+///   cargo run --bin cli -- -p WeebCentral -d "berserk"
+///   cargo run --bin cli -- -H "berserk"
 ///
 /// What it does:
 ///   1. Loads providers from ./providers/ (or REBARR_PROVIDERS_DIR)
@@ -20,6 +20,9 @@
 ///   3. Takes the first result, lists all chapters
 ///   4. Fetches pages for the first chapter
 ///   5. (With -d) Downloads all pages to ./test_dl/ch_<number>/
+/// 
+/// TODO: Make this a more generalised production-level cli tool for scraping/downloading.
+/// TODO: We should also leave the default testing stuff here, so we can use this for cli-automated downloads, and developer testing of providers.
 use std::process;
 
 use rebarr::scraper::{ProviderRegistry, ScraperCtx, browser::BrowserPool};
@@ -27,14 +30,13 @@ use strsim::jaro_winkler;
 
 #[tokio::main]
 async fn main() {
+    // Allow extra debug with RUST_LOG=debug envvar
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .parse_default_env()
         .init();
 
-    // -------------------------------------------------------------------------
-    // Arg parsing
-    // -------------------------------------------------------------------------
+    // Handle args
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut provider_name: Option<String> = None;
     let mut download = false;
@@ -69,15 +71,14 @@ async fn main() {
         i += 1;
     }
 
+    // If theres no args or anything, tell the idiot how to use the cli.
     let query = query.unwrap_or_else(|| {
         eprintln!("Usage: scraper_test [-p <provider>] [-d] [-H] <query>");
         eprintln!("Example: cargo run --bin scraper_test -- -p MangaFire \"berserk\"");
         process::exit(1);
     });
 
-    // -------------------------------------------------------------------------
-    // Build context
-    // -------------------------------------------------------------------------
+    // Setup http client.
     let http = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
         .build()
@@ -86,9 +87,8 @@ async fn main() {
     ctx.dump_html = dump_html;
     ctx.verbose = true;
 
-    // -------------------------------------------------------------------------
-    // Load providers
-    // -------------------------------------------------------------------------
+
+    // Load providers from disk
     log::info!("Loading providers...");
     let registry = ProviderRegistry::load().await.unwrap_or_else(|e| {
         eprintln!("Failed to load providers: {e}");
@@ -109,7 +109,7 @@ async fn main() {
     }
     println!();
 
-    // Select provider
+    // Match called provider from 
     let provider = if let Some(ref name) = provider_name {
         all.into_iter()
             .find(|p| p.name().eq_ignore_ascii_case(name))
@@ -126,9 +126,7 @@ async fn main() {
 
     println!("Using provider: {}\n", provider.name());
 
-    // -------------------------------------------------------------------------
-    // Search
-    // -------------------------------------------------------------------------
+    // Search for the user-entered query
     log::info!("Searching {:?} for {query:?}...", provider.name());
     let results = provider.search(&ctx, &query).await.unwrap_or_else(|e| {
         eprintln!("Search failed: {e}");
@@ -141,6 +139,7 @@ async fn main() {
     }
 
     // Score and sort results by similarity to query
+    // Use some fancy jaro winkler similarity scoring (thanks William E. Winkler)
     let query_lower = query.to_lowercase();
     let mut scored: Vec<(usize, f64)> = results
         .iter()
@@ -185,9 +184,9 @@ async fn main() {
     };
     println!();
 
-    // -------------------------------------------------------------------------
-    // Chapters
-    // -------------------------------------------------------------------------
+    // Now that we've done the search, lets grab the chapter list!
+    // TODO: We should have an option to let users select which chapters they want to download. same matching algo as above for chapter names?
+    //       use chapter matching from rebarr stock? (would that need db stuffs?)
     log::info!("Fetching chapter list...");
     let chapters = provider
         .chapters(&ctx, &manga.url)
@@ -208,9 +207,7 @@ async fn main() {
         println!("  ... and {} more", chapters.len() - 10);
     }
 
-    // -------------------------------------------------------------------------
-    // Pages for first chapter
-    // -------------------------------------------------------------------------
+    // By default we only test the first chapter in the chapter list.
     let ch1 = &chapters[0];
     let chapter_url = ch1.url.as_ref().unwrap_or_else(|| {
         eprintln!("Chapter {} has no URL", ch1.number);
@@ -238,9 +235,7 @@ async fn main() {
         process::exit(1);
     }
 
-    // -------------------------------------------------------------------------
-    // Download (only with -d)
-    // -------------------------------------------------------------------------
+    // Download pages/images of the selected chapter (the first chapter found)
     if !download {
         println!("\n(Pass -d to also download the pages to ./test_dl/)");
         return;

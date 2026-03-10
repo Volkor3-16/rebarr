@@ -1,6 +1,8 @@
 use anilist_moe::{AniListClient, AniListError};
 use log::debug;
 
+use crate::manga::manga::Manga;
+
 /// Service for interacting with anilist API
 pub struct ALClient {
     api_client: AniListClient,
@@ -41,13 +43,13 @@ impl ALClient {
     pub async fn search_manga_as_manga(
         &self,
         title: &str,
-    ) -> Result<Vec<crate::manga::Manga>, AniListError> {
+    ) -> Result<Vec<Manga>, AniListError> {
         let page = self.search_manga(title).await?;
         Ok(page.data.into_iter().map(|media| media.into()).collect())
     }
 
     /// Grabs the metadata for a specific AniList ID and converts to internal Manga struct
-    pub async fn grab_manga(&self, id: i32) -> Result<crate::manga::Manga, AniListError> {
+    pub async fn grab_manga(&self, id: i32) -> Result<Manga, AniListError> {
         let response = self.api_client.manga().get_anime_by_id(id).await?;
         debug!(
             "Found manga '{:?}' with ID '{:?}'",
@@ -58,7 +60,7 @@ impl ALClient {
     }
 
     /// Grabs popular manga for new instance onboarding
-    pub async fn popular_manga(&self) -> Result<Vec<crate::manga::Manga>, AniListError> {
+    pub async fn popular_manga(&self) -> Result<Vec<Manga>, AniListError> {
         let page = self
             .api_client
             .manga()

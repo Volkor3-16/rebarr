@@ -22,8 +22,7 @@ A self-hosted manga library manager, similar to Sonarr but for manga. Designed f
 ## Providers
 
 - Multiple providers are supported.
-- Each provider has an internal score or preference.
-- Downloads attempt providers in order of score; if unavailable, fallback to the next provider.
+- Each (enabled) provider is searched and checked for valid chapters
 - Handles provider failures and DMCA takedowns gracefully.
 
 ## Scraping & Merge Flow

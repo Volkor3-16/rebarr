@@ -3,24 +3,21 @@ use std::sync::Arc;
 use dotenvy::dotenv;
 
 mod api;
-mod comicinfo;
-mod covers;
 mod db;
-mod downloader;
 mod manga;
-mod merge;
-mod metadata;
-mod optimizer;
-mod scanner;
+mod http;
 mod scraper;
-mod web;
-mod worker;
+mod scheduler;
+mod library;
 
-use crate::metadata::anilist::ALClient;
+use crate::api::{api_routes, frontend_routes};
+use crate::http::anilist::ALClient;
+use crate::scheduler::worker;
 use crate::scraper::{
     browser::BrowserPool,
     {ProviderRegistry, ScraperCtx},
 };
+
 
 #[rocket::main]
 async fn main() -> Result<(), rocket::Error> {
@@ -70,8 +67,8 @@ async fn main() -> Result<(), rocket::Error> {
         .manage(http_client)
         .manage(scraper_ctx)
         .manage(Arc::clone(&registry))
-        .mount("/", web::routes())
-        .mount("/", api::routes())
+        .mount("/", frontend_routes())
+        .mount("/", api_routes())
         .launch()
         .await?;
 
