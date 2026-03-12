@@ -9,44 +9,17 @@ The plan is to use AniList as the metadata source, and to automatically* match m
 
 ## Bugs / Dev TODO
 
-- [ ] Chapters aren't being sorted correctly.
-    - Chapter 1 of Jujutsu Kaisen, 4 providers. "Official, TCB Scans, and 2 no groups".
-    - Instead of the official release being selected (following the Tier rankings), the default selection is the TCB Scans release, a T3 version.
-- [ ] /some/ chapters with parts (2.1, 2.2) aren't being grouped as a chapter 2. They just show 3 (chapter 2, chapter 2.1, chapter 2.2)
-
-### Refactor
-
-Claude and I made a mess of the structure. I think I should fix it up.
-
-```
-src/
-    main.rs             # Entrypoint for rocket server
-    api/                # Everything that the rocket server needs
-        api.rs          # API endpoints
-        frontend.rs     # Frontend 'html' (leaving until i can be fucked making a better one)
-    cli/
-        cli.rs          # CLI Codebase (previously scraper_test)
-    config/
-        mod.rs          # Handles config and envvars, rocket.toml stuffs.
-    db/                 # All database stuff, type conversions, and whatever else.
-    downloader/         # Download Manager logic
-    http/               # Module for HTTP Api (Anilist / future metadata / any native http calls)
-        anilist.rs      # Anilist implementation
-        myanimelist.rs  # Example future metadata provider
-    library/            # Disk & Local I/O (or s3)
-        scanner.rs      # Handles scanning existing manga in a library
-        importer.rs     # Handles importing manga into a library
-    manga/              # All the core manga stuff
-        comicinfo.rs    # Handles creation of ComicInfo.xml
-        covers.rs       # Handles downloading and creation of cover photos
-        merge.rs        # Handles merging provider chapter lists into what we view
-        scanner.rs      # 
-    provider/           # Provider handling (embedded chromium stuffs)
-        provider.rs     # 
-    scheduler/          # Queue / Worker system
-        queue.rs
-        worker.rs
-```
+- [ ] Chapters aren't being merged correctly
+    - Example Jujustu Kaisen Chapter 24. 4 providers (WeebCentral, TCB Scans, Comix, and MangaBall), but MangaBall also provides 24.1, 24.2, 24.3, the split chapters don't show under chapter 24, but have a weird intent, and sit above chapter 24.
+    - If this were the automated system, it would download the original chapter 24, and then the 3 parts.
+- [ ] Language support
+    - Add 'language' to the db
+    - Add scraping languages from provider that support it (MangaBall, MangaDex)
+- [ ] Date support
+    - Add 'date added' to the db
+    - Scrape the date from providers that support it (most of them)
+- [ ] Consolidate DB entries, clean them up, why are we still populating `number_raw` and `number_sort`?
+    - or even half the other tables that we've slowly added on as time goes on.
 
 ## Features
 ### Minimum Viable Release

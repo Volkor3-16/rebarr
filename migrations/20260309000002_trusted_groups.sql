@@ -106,6 +106,7 @@ INSERT OR IGNORE INTO TrustedGroup (name) VALUES
 ('Speedcat Scans'),
 ('Spring Palette'),
 ('Tanooki'),
+('TCB Scans'),
 ('TeruTeru Scans'),
 ('The Guild'),
 ('The Nonames Scans'),

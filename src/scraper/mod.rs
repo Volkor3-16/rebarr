@@ -140,6 +140,7 @@ pub trait Provider: Send + Sync {
 
 /// Holds all loaded providers. Stored as Rocket managed state.
 pub struct ProviderRegistry {
+    /// All loaded providers
     providers: Vec<Arc<dyn Provider>>,
 }
 
