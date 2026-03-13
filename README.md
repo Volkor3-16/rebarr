@@ -9,21 +9,14 @@ The plan is to use AniList as the metadata source, and to automatically* match m
 
 ## Bugs / Dev TODO
 
-Yes, confirmed. The unique index is (manga_id, chapter_base, chapter_variant, language, provider_name) — scanlator_group is NOT part of it. So when Comix returns chapter 271 twice (MangaPlus + TCB Scans), both have provider_name = "Comix" and the same chapter number, so the second upsert overwrites the first. Last write wins for scanlator_group.
+- [ ] Partial chapters aren't being merged in the frontend.
+    - Need to handle partial chapters when they're the only available.
+        - How do we tell the system to automatically download both? (when only available)
+        - How do we have them show as a dropdown/variant
+        - How do we ignore 0.5 / extras chapters from being included?
+- [ ] Rename the dropdown on providers from `n Providers` to `n Available/Found/Sources/Chapters`
+    - need to do this since we allow duplicate chapters from one provider.
 
-The deeper issue: update_canonical already has sophisticated trusted_groups logic to pick the best chapter from multiple entries — but it can only choose between different providers, not different scanlators within the same provider.
-
-There are two ways to fix this properly:
-
-Option A — Add scanlator_group to the unique constraint (schema migration)
-Each (manga_id, chapter_base, chapter_variant, language, provider_name, scanlator_group) gets its own row. Comix would produce 2 rows for chapter 271 (one per scanlator), and update_canonical's trusted_groups logic would pick between them correctly. This is the architecturally clean solution.
-
-Option B — Deduplicate in the Comix YAML JS before writing to DOM
-After fetching all chapters, group by number and keep only the "best" one per number (e.g. official first, then by votes). Simpler, but throws away the fallback information.
-
-Option A is cleaner — the trusted_groups system was literally built for this case. The migration would be small: drop + recreate the unique index with scanlator_group added (treating NULL as a distinct value, or using COALESCE(scanlator_group, '')).
-
-Which direction do you want to go?
 
 ## Features
 ### Minimum Viable Release
@@ -79,7 +72,7 @@ Which direction do you want to go?
     - [x] Stuck "Running" tasks reset to Pending on startup
     - [x] Chapter URLs cached after first scan (downloads skip re-scraping the chapter list)
     - [x] Cancel Pending/Running tasks from the Queue page
-- [ ] Content Matching system
+- [x] Content Matching system
 - [ ] New Database/new user wizard
     1. Ask to create a library directory (or skip if already set in env)
     2. Ask user to select enabled/disabled providers
@@ -89,9 +82,9 @@ Which direction do you want to go?
         - Match and import into DB.
         - Moves, renames, matches files to chapters - exactly like sonarr bulk import
         - Do this for each manga series, let user match and verify if it doesn't match automatically.
-- [ ] More scraper data
-    - [ ] Date (to use for scoring)
-    - [ ] Language (to use for filtering only specified language)
+- [x] More scraper data
+    - [x] Date (to use for scoring)
+    - [x] Language (to use for filtering only specified language)
 - [ ] Local 'Provider'
     - Scans existing FS for manga in the library directory, but not added (from previous installs)
     - Allows the user to import them (adds into db, adds chapters, reads local info and ads to db.)
