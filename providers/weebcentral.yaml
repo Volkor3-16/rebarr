@@ -47,6 +47,14 @@ chapters:
             value_map:
               "#d8b4fe": "Official"
               "#4C4D54": ""
+          language:
+            static_value: "en"
+          date:
+            # Grab the ISO‑8601 timestamp from the <time> element.
+            selector: "time"
+            content: attr
+            attr_name: datetime
+            date_format: "%Y-%m-%dT%H:%M:%S.%fZ"
 
 pages:
   steps:

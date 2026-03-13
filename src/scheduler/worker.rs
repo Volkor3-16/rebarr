@@ -217,7 +217,7 @@ async fn dispatch(
             fresh.chapter_count = manga.chapter_count;
             fresh.monitored = manga.monitored;
             fresh.created_at = manga.created_at;
-            fresh.metadata_updated_at = chrono::Utc::now();
+            fresh.metadata_updated_at = chrono::Utc::now().timestamp();
 
             // Re-download cover if the URL changed
             if let Some(url) = fresh.thumbnail_url.take() {

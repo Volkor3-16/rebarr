@@ -6,10 +6,10 @@ use chrono::Utc;
 use thiserror::Error;
 use tokio::sync::Semaphore;
 
-use crate::db::{chapter as db_chapter, chapter_url as db_chapter_url, provider as db_provider};
+use crate::db::{chapter as db_chapter, provider as db_provider, settings as db_settings};
 use crate::manga::comicinfo;
 use crate::manga::manga::{Chapter, DownloadStatus, Manga};
-use crate::manga::scoring::compute_tier;
+use crate::manga::scoring::{ChapterFilter, rank_entries};
 use crate::scraper::{ProviderRegistry, ScraperCtx};
 
 // ---------------------------------------------------------------------------
@@ -37,10 +37,9 @@ pub enum DownloadError {
 // ---------------------------------------------------------------------------
 
 /// Download a chapter from the best available provider:
-/// 1. If the chapter has a preferred_provider, use that provider exclusively.
-/// 2. Otherwise look up all cached provider URLs for this chapter, rank by scanlation tier,
-///    and try each in order (Tier 1 = Official first, Tier 4 = No group last).
-/// 3. For each provider: scrape page URLs, download images, write CBZ.
+/// 1. Load all Chapters rows for this chapter number (all providers).
+/// 2. Rank by language filter + scanlation tier.
+/// 3. For each provider: use cached chapter_url (re-scrape if missing), get pages, write CBZ.
 /// 4. If all providers fail, mark as Failed and return Err.
 pub async fn download_chapter(
     pool: &sqlx::SqlitePool,
@@ -52,58 +51,59 @@ pub async fn download_chapter(
 ) -> Result<(), DownloadError> {
     db_chapter::set_status(pool, chapter.id, DownloadStatus::Downloading, None).await?;
 
-    // Load trusted groups for tier computation
     let trusted_groups = db_provider::get_trusted_groups(pool).await?;
 
-    // Get all providers that have a cached URL for this chapter
-    let mut entries = db_chapter_url::get_for_chapter(pool, manga.id, chapter.number_sort).await?;
+    // Get all Chapters rows for this chapter number (all providers = all alternatives)
+    let all_entries =
+        db_chapter::get_all_for_chapter(pool, manga.id, chapter.chapter_base, chapter.chapter_variant)
+            .await?;
 
-    if entries.is_empty() {
+    if all_entries.is_empty() {
         db_chapter::set_status(pool, chapter.id, DownloadStatus::Failed, None).await?;
         return Err(DownloadError::NoProviders);
     }
 
-    // If chapter has a preferred provider, restrict to just that one
-    if let Some(ref preferred) = chapter.preferred_provider {
-        let filtered: Vec<_> = entries.iter().filter(|e| &e.provider_name == preferred).cloned().collect();
-        if !filtered.is_empty() {
-            entries = filtered;
-        } else {
-            log::warn!(
-                "[dl] Preferred provider '{}' has no cached URL for chapter {}; falling back to all providers.",
-                preferred, chapter.number_raw
-            );
-        }
-    }
+    // Rank: language filter → tier sort
+    let lang_raw = db_settings::get(pool, "preferred_language", "").await?;
+    let entries = rank_entries(
+        all_entries,
+        &ChapterFilter {
+            language: if lang_raw.is_empty() { None } else { Some(lang_raw) },
+        },
+        &trusted_groups,
+    );
 
-    // Sort by tier (ascending: tier 1 = Official first, tier 4 = No group last)
-    entries.sort_by_key(|e| compute_tier(e.scanlator_group.as_deref(), &trusted_groups));
-
-    // Build provider lookup map
     let provider_map: std::collections::HashMap<&str, &Arc<dyn crate::scraper::Provider>> =
         registry.all().into_iter().map(|p| (p.name(), p)).collect();
 
     let mut last_err = String::new();
 
     for entry in &entries {
-        let Some(provider) = provider_map.get(entry.provider_name.as_str()) else {
-            log::warn!("[dl] Provider '{}' is in DB but not loaded.", entry.provider_name);
+        let provider_name = match &entry.provider_name {
+            Some(n) => n.as_str(),
+            None => {
+                // Manually added file — skip
+                continue;
+            }
+        };
+
+        let Some(provider) = provider_map.get(provider_name) else {
+            log::warn!("[dl] Provider '{provider_name}' is in DB but not loaded.");
             continue;
         };
 
         log::info!(
-            "[dl] Trying {} (tier {}) for chapter {} of '{}'…",
+            "[dl] Trying {} for chapter {} of '{}'…",
             provider.name(),
-            compute_tier(entry.scanlator_group.as_deref(), &trusted_groups),
-            chapter.number_raw,
+            chapter.number_sort(),
             manga.metadata.title
         );
 
-        let chapter_url = match ensure_chapter_url(pool, ctx, provider, manga.id, entry, chapter).await {
+        let chapter_url = match ensure_chapter_url(pool, ctx, provider, manga.id, entry).await {
             Some(url) => url,
             None => {
-                log::warn!("[dl] Chapter {} not found on {}.", chapter.number_raw, provider.name());
-                last_err = format!("chapter {} not found on {}", chapter.number_raw, provider.name());
+                log::warn!("[dl] Chapter {} not found on {}.", chapter.number_sort(), provider.name());
+                last_err = format!("chapter {} not found on {}", chapter.number_sort(), provider.name());
                 continue;
             }
         };
@@ -118,14 +118,18 @@ pub async fn download_chapter(
         };
 
         if pages.is_empty() {
-            log::warn!("[dl] {} returned 0 pages for chapter {}.", provider.name(), chapter.number_raw);
+            log::warn!(
+                "[dl] {} returned 0 pages for chapter {}.",
+                provider.name(),
+                chapter.number_sort()
+            );
             last_err = format!("0 pages returned by {}", provider.name());
             continue;
         }
 
         match download_pages(ctx, &pages).await {
             Ok(image_data) => {
-                let mut cbz_name = format!("Chapter {}", chapter.number_sort);
+                let mut cbz_name = format!("Chapter {}", chapter.number_sort());
                 if let Some(ref t) = chapter.title {
                     cbz_name.push_str(&format!(" - {t}"));
                 }
@@ -134,7 +138,13 @@ pub async fn download_chapter(
                 }
                 let cbz_name: String = cbz_name
                     .chars()
-                    .map(|c| if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { '_' } else { c })
+                    .map(|c| {
+                        if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                            '_'
+                        } else {
+                            c
+                        }
+                    })
                     .collect();
                 let cbz_path = lib_root
                     .join(&manga.relative_path)
@@ -146,12 +156,20 @@ pub async fn download_chapter(
                     continue;
                 }
 
-                db_chapter::set_status(pool, chapter.id, DownloadStatus::Downloaded, Some(Utc::now())).await?;
+                db_chapter::set_status(
+                    pool,
+                    chapter.id,
+                    DownloadStatus::Downloaded,
+                    Some(Utc::now()),
+                )
+                .await?;
                 db_chapter::update_manga_counts(pool, manga.id).await?;
 
                 log::info!(
                     "[dl] Chapter {} of '{}' saved to {}",
-                    chapter.number_raw, manga.metadata.title, cbz_path.display()
+                    chapter.number_sort(),
+                    manga.metadata.title,
+                    cbz_path.display()
                 );
                 return Ok(());
             }
@@ -171,41 +189,53 @@ pub async fn download_chapter(
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Use the cached chapter URL from the entry; fall back to re-scraping if the URL is missing.
+/// Use the cached chapter_url from the entry; fall back to re-scraping if missing.
 async fn ensure_chapter_url(
     pool: &sqlx::SqlitePool,
     ctx: &ScraperCtx,
     provider: &Arc<dyn crate::scraper::Provider>,
     manga_id: uuid::Uuid,
-    entry: &db_chapter_url::ChapterProviderEntry,
-    chapter: &Chapter,
+    entry: &Chapter,
 ) -> Option<String> {
-    if !entry.chapter_url.is_empty() {
-        log::debug!("[dl] Using cached URL for chapter {} from {}.", chapter.number_raw, provider.name());
-        return Some(entry.chapter_url.clone());
-    }
-
-    // No URL in cache — re-scrape the full chapter list for this provider
-    let manga_url = entry.manga_provider_url.as_deref()?;
-    log::debug!("[dl] Cache miss for chapter {} on {}; re-scraping.", chapter.number_raw, provider.name());
-    let infos = provider.chapters(ctx, manga_url).await.ok()?;
-
-    for info in &infos {
-        if let Some(url) = &info.url {
-            let _ = db_chapter_url::upsert(
-                pool, manga_id, provider.name(), info.number, url,
-                info.scanlator_group.as_deref(),
-            ).await;
+    if let Some(ref url) = entry.chapter_url {
+        if !url.is_empty() {
+            log::debug!(
+                "[dl] Using cached URL for chapter {} from {}.",
+                entry.number_sort(),
+                provider.name()
+            );
+            return Some(url.clone());
         }
     }
 
+    // No URL — re-scrape the full chapter list for this provider
+    let manga_provider =
+        crate::db::provider::get_for_manga_provider(pool, manga_id, provider.name())
+            .await
+            .ok()??;
+    let manga_url = manga_provider.provider_url.as_deref()?;
+
+    log::debug!(
+        "[dl] Cache miss for chapter {} on {}; re-scraping.",
+        entry.number_sort(),
+        provider.name()
+    );
+
+    let infos = provider.chapters(ctx, manga_url).await.ok()?;
+
+    // Write the re-scraped data back to Chapters
+    let _ = db_chapter::upsert_from_scrape(pool, manga_id, provider.name(), &infos).await;
+
     infos
         .into_iter()
-        .find(|info| (info.number - chapter.number_sort).abs() < 0.01)
+        .find(|info| {
+            (info.chapter_base as i32 == entry.chapter_base)
+                && (info.chapter_variant as i32 == entry.chapter_variant)
+        })
         .and_then(|info| info.url)
 }
 
-/// Download all page images concurrently (max 4 parallel). Returns Vec<(index, bytes)> sorted by index.
+/// Download all page images concurrently (max 4 parallel). Returns Vec<(index, bytes)> sorted.
 async fn download_pages(
     ctx: &ScraperCtx,
     pages: &[crate::scraper::PageUrl],

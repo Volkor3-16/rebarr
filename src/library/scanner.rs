@@ -28,8 +28,10 @@ pub async fn scan_existing_chapters(pool: &SqlitePool, manga_id: Uuid) -> Result
     let entries = match std::fs::read_dir(&series_dir) {
         Ok(e) => e,
         Err(e) => {
-            // Directory may not exist yet — not an error
-            log::info!("[scanner] Series directory does not exist for '{}': {e}", manga.metadata.title);
+            log::info!(
+                "[scanner] Series directory does not exist for '{}': {e}",
+                manga.metadata.title
+            );
             return Ok(());
         }
     };
@@ -41,12 +43,21 @@ pub async fn scan_existing_chapters(pool: &SqlitePool, manga_id: Uuid) -> Result
         if !name.ends_with(".cbz") {
             continue;
         }
-        // Strip prefix "Chapter " and suffix ".cbz"
-        let Some(rest) = name.strip_prefix("Chapter ") else { continue };
-        let Some(num_str) = rest.strip_suffix(".cbz") else { continue };
-        let Ok(number_sort) = num_str.parse::<f32>() else { continue };
+        let Some(rest) = name.strip_prefix("Chapter ") else {
+            continue;
+        };
+        let Some(num_str) = rest.strip_suffix(".cbz") else {
+            continue;
+        };
+        let Ok(number_sort) = num_str.parse::<f32>() else {
+            continue;
+        };
 
-        // Get mtime for downloaded_at
+        // Derive chapter_base and chapter_variant from the float
+        let chapter_base = number_sort.floor() as i32;
+        let frac = (number_sort - number_sort.floor()).abs();
+        let chapter_variant = (frac * 10.0).round() as i32;
+
         let downloaded_at = entry
             .metadata()
             .ok()
@@ -59,8 +70,9 @@ pub async fn scan_existing_chapters(pool: &SqlitePool, manga_id: Uuid) -> Result
                 chrono::DateTime::from_timestamp(secs as i64, 0)
             });
 
-        // Check if chapter exists in DB
-        match db_chapter::get_by_number(pool, manga_id, number_sort).await {
+        match db_chapter::get_canonical_by_number(pool, manga_id, chapter_base, chapter_variant)
+            .await
+        {
             Ok(Some(ch)) => {
                 if ch.download_status != DownloadStatus::Downloaded {
                     db_chapter::set_status(
@@ -75,26 +87,21 @@ pub async fn scan_existing_chapters(pool: &SqlitePool, manga_id: Uuid) -> Result
                 }
             }
             Ok(None) => {
-                // Insert a minimal chapter record marked as Downloaded
-                let chapter_base = number_sort.floor();
-                let frac = (number_sort - chapter_base).abs();
-                let chapter_variant = (frac * 10.0).round() as u8;
-                let is_extra = frac >= 0.5 - f32::EPSILON;
+                // No canonical entry — insert a minimal row marked as Downloaded (provider_name = NULL)
                 let chapter = Chapter {
                     id: Uuid::new_v4(),
                     manga_id,
-                    number_raw: num_str.to_owned(),
-                    number_sort,
                     chapter_base,
                     chapter_variant,
-                    is_extra,
                     title: None,
-                    volume: None,
+                    language: "EN".to_owned(),
                     scanlator_group: None,
-                    preferred_provider: None,
+                    provider_name: None,
+                    chapter_url: None,
                     download_status: DownloadStatus::Downloaded,
+                    released_at: None,
                     downloaded_at,
-                    created_at: downloaded_at.unwrap_or_else(chrono::Utc::now),
+                    scraped_at: None,
                 };
                 db_chapter::insert(pool, &chapter)
                     .await
@@ -107,8 +114,8 @@ pub async fn scan_existing_chapters(pool: &SqlitePool, manga_id: Uuid) -> Result
         }
     }
 
-    // Update chapter_count and downloaded_count
-    db_chapter::update_manga_counts(pool, manga_id)
+    // Recompute canonical chapters (disk-scanned files win with no trusted groups needed)
+    db_chapter::update_canonical(pool, manga_id, &[], "")
         .await
         .map_err(|e| e.to_string())?;
 

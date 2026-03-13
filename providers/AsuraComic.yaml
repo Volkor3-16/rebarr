@@ -43,6 +43,12 @@ chapters:
             prefix: "{base_url}/series/"
           scanlator_group:
             static_value: "Asura Scans"
+          language:
+            static_value: "en"
+          date:
+            selector: "h3.text-xs"
+            content: text
+            date_format: "%B %d %Y"
 
 pages:
   steps:

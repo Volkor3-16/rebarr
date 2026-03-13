@@ -37,6 +37,11 @@ pub struct ProviderChapterInfo {
     pub url: Option<String>,
     pub volume: Option<u32>,
     pub scanlator_group: Option<String>,
+    /// BCP 47 language code scraped from the provider (e.g. "en", "ja"). None = assume "en".
+    pub language: Option<String>,
+    /// Publication date scraped from the provider as a Unix timestamp. None if not provided
+    /// or if the YAML field's `date_format` did not match the scraped value.
+    pub date_released: Option<i64>,
 }
 
 /// A single page image inside a chapter.

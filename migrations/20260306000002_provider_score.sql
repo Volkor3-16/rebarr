@@ -1,1 +1,0 @@
-ALTER TABLE MangaProvider ADD COLUMN provider_score REAL NOT NULL DEFAULT 0;

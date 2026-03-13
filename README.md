@@ -9,17 +9,21 @@ The plan is to use AniList as the metadata source, and to automatically* match m
 
 ## Bugs / Dev TODO
 
-- [ ] Chapters aren't being merged correctly
-    - Example Jujustu Kaisen Chapter 24. 4 providers (WeebCentral, TCB Scans, Comix, and MangaBall), but MangaBall also provides 24.1, 24.2, 24.3, the split chapters don't show under chapter 24, but have a weird intent, and sit above chapter 24.
-    - If this were the automated system, it would download the original chapter 24, and then the 3 parts.
-- [ ] Language support
-    - Add 'language' to the db
-    - Add scraping languages from provider that support it (MangaBall, MangaDex)
-- [ ] Date support
-    - Add 'date added' to the db
-    - Scrape the date from providers that support it (most of them)
-- [ ] Consolidate DB entries, clean them up, why are we still populating `number_raw` and `number_sort`?
-    - or even half the other tables that we've slowly added on as time goes on.
+Yes, confirmed. The unique index is (manga_id, chapter_base, chapter_variant, language, provider_name) — scanlator_group is NOT part of it. So when Comix returns chapter 271 twice (MangaPlus + TCB Scans), both have provider_name = "Comix" and the same chapter number, so the second upsert overwrites the first. Last write wins for scanlator_group.
+
+The deeper issue: update_canonical already has sophisticated trusted_groups logic to pick the best chapter from multiple entries — but it can only choose between different providers, not different scanlators within the same provider.
+
+There are two ways to fix this properly:
+
+Option A — Add scanlator_group to the unique constraint (schema migration)
+Each (manga_id, chapter_base, chapter_variant, language, provider_name, scanlator_group) gets its own row. Comix would produce 2 rows for chapter 271 (one per scanlator), and update_canonical's trusted_groups logic would pick between them correctly. This is the architecturally clean solution.
+
+Option B — Deduplicate in the Comix YAML JS before writing to DOM
+After fetching all chapters, group by number and keep only the "best" one per number (e.g. official first, then by votes). Simpler, but throws away the fallback information.
+
+Option A is cleaner — the trusted_groups system was literally built for this case. The migration would be small: drop + recreate the unique index with scanlator_group added (treating NULL as a distinct value, or using COALESCE(scanlator_group, '')).
+
+Which direction do you want to go?
 
 ## Features
 ### Minimum Viable Release

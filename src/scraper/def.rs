@@ -208,6 +208,13 @@ pub struct FieldDef {
     /// and this literal string is returned directly. Useful for provider-level
     /// constants like scanlator group names.
     pub static_value: Option<String>,
+
+    /// strftime format string to parse this field as a date, converting the
+    /// extracted string to a Unix timestamp (stored as a decimal string).
+    /// Special value `"relative"` handles English relative dates
+    /// ("3 days ago", "yesterday", "just now").
+    /// When absent, the value is passed through as-is.
+    pub date_format: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]

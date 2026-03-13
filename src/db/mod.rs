@@ -1,7 +1,6 @@
 use std::str::FromStr;
 use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
 
-pub(crate) mod chapter_url;
 pub(crate) mod chapter;
 pub(crate) mod library;
 pub(crate) mod manga;

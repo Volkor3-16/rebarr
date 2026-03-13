@@ -5,12 +5,13 @@
 - Build Chapter List - Builds a list of all chapters from each provider (if its got it)
 - Update Chapter List - Searches through all chapters from each provider, adding new chapters (done in scoring order)
     - This doesn't re-search for chapters, it just takes the series url and checks for new chapter. If it fails, try later but continue.
-- ScoreProviders - Scores each provider depending on:
-    - Total number of chapters served (more = betterer)
-    - Recency of chapters (higher chapter # the better)
-    - Fastest chapter release (for a given chapter, which provider did it fastest?)
-    - Highest Resolution / Lowest compression (HARD, requires downloading at least one page per provider)
-        - Could just use filesize/res according to web scraper, but that'd be fucking annoying and hard and silly and gross and hacky and frankly... just a little icky.
+- ScoreProviders - Scores each provider depending on (in order of priority):
+    1. Matching language
+    2. Full chapter > partial/split chapters (1 > 1.1 and 1.2)
+    3. Scanlator
+        - Normal Tiers of Official > Trusted Scanlator > Scanlator > Unknown
+        - Tiebreakers of 'most recent' (for fixed releases?)
+            - Maybe we can have it download a page from each chapter in the tie, and compare for quality (res/compression/size)
 - DownloadChapter - Downloads the chapters pages, builds the cbz.
 - OptimiseChapter - re encodes the chapter's pages into lossless webp.
 

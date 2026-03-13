@@ -2,6 +2,14 @@
 
 This a informal changelog so i can keep track of what im doing.
 
+## 2026-03-13
+
+- Added language and date scraping from providers (if supported)
+- Cleaned up the DB, removing unused old stuffs
+    - This one is huge, I completely deleted the Chapter & ProviderChapterURL table and replaced it with Chapters & CanonicalChapters
+    - Also re-wrote half the db functions since they need to point to the right thing.
+- Frontend changes to fix up chapter grouping (maybe, i haven't checked yet)
+
 ## 2026-03-10
 
 - Chapters list now have dropdowns on each chapter, showing all available providers for a chapter

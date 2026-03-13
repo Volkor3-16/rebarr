@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
+use chrono::{Datelike, NaiveDate, NaiveDateTime, TimeZone, Utc};
+
 static DUMP_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 use scraper::{ElementRef, Html, Selector};
@@ -128,6 +130,17 @@ impl YamlProvider {
         } else {
             raw
         };
+
+        // If this field has a date_format, parse the date and return a Unix timestamp string.
+        if let Some(ref fmt) = field.date_format {
+            return match parse_date(&raw, fmt) {
+                Some(ts) => Ok(ts.to_string()),
+                None => Err(ScraperError::Parse(format!(
+                    "date '{}' did not match format '{fmt}'",
+                    raw
+                ))),
+            };
+        }
 
         if raw.starts_with("http://") || raw.starts_with("https://") {
             return Ok(raw);
@@ -670,6 +683,67 @@ fn parse_chapter_number(raw: &str) -> (f32, f32, u8, bool) {
     (0.0, 0.0, 0, false)
 }
 
+/// Parse a date string using an explicit strftime format, or `"relative"` for English
+/// relative dates ("3 days ago", "yesterday", "just now").
+///
+/// Ordinal suffixes are stripped automatically before parsing so formats like
+/// `%B %d %Y` work on inputs like "December 25th 2023".
+///
+/// Returns a Unix timestamp (seconds since epoch) or `None` if parsing fails.
+fn parse_date(raw: &str, format: &str) -> Option<i64> {
+    // Strip ordinal suffixes: "25th" → "25", "1st" → "1", etc.
+    let stripped = regex::Regex::new(r"(\d+)(st|nd|rd|th)\b")
+        .ok()?
+        .replace_all(raw.trim(), "$1")
+        .into_owned();
+    let s = stripped.trim();
+
+    if format == "relative" {
+        let lower = s.to_lowercase();
+        let now = Utc::now();
+
+        if lower == "just now" || lower == "today" {
+            return Some(now.timestamp());
+        }
+        if lower == "yesterday" {
+            return Some((now - chrono::Duration::days(1)).timestamp());
+        }
+
+        let re = regex::Regex::new(r"(\d+)\s*(minute|hour|day|week|month|year)s?").ok()?;
+        if let Some(caps) = re.captures(&lower) {
+            let n: i64 = caps[1].parse().ok()?;
+            let dt = match &caps[2] {
+                "minute" => now - chrono::Duration::minutes(n),
+                "hour" => now - chrono::Duration::hours(n),
+                "day" => now - chrono::Duration::days(n),
+                "week" => now - chrono::Duration::weeks(n),
+                "month" => now - chrono::Duration::days(n * 30),
+                "year" => now - chrono::Duration::days(n * 365),
+                _ => return None,
+            };
+            return Some(dt.timestamp());
+        }
+        return None;
+    }
+
+    // Try NaiveDateTime first (has time component), then NaiveDate (midnight UTC).
+    if let Ok(dt) = NaiveDateTime::parse_from_str(s, format) {
+        return Some(Utc.from_utc_datetime(&dt).timestamp());
+    }
+    if let Ok(d) = NaiveDate::parse_from_str(s, format) {
+        return Some(Utc.from_utc_datetime(&d.and_hms_opt(0, 0, 0)?).timestamp());
+    }
+
+    // Try with the current year appended for year-less formats like "%B %d".
+    let with_year = format!("{s} {}", Utc::now().year());
+    let format_with_year = format!("{format} %Y");
+    if let Ok(d) = NaiveDate::parse_from_str(&with_year, &format_with_year) {
+        return Some(Utc.from_utc_datetime(&d.and_hms_opt(0, 0, 0)?).timestamp());
+    }
+
+    None
+}
+
 fn records_to_chapters(records: Vec<HashMap<String, String>>) -> Vec<ProviderChapterInfo> {
     let mut chapters: Vec<ProviderChapterInfo> = records
         .into_iter()
@@ -687,6 +761,8 @@ fn records_to_chapters(records: Vec<HashMap<String, String>>) -> Vec<ProviderCha
                 url: r.remove("url").filter(|s| !s.is_empty()),
                 volume: r.remove("volume").and_then(|s| s.parse().ok()),
                 scanlator_group: r.remove("scanlator_group").filter(|s| !s.is_empty()),
+                language: r.remove("language").filter(|s| !s.is_empty()),
+                date_released: r.remove("date").filter(|s| !s.is_empty()).and_then(|s| s.parse::<i64>().ok()),
             })
         })
         .collect();

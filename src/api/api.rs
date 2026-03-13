@@ -8,7 +8,7 @@ use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::{
-    db::{self, task::{RecentTask, TaskType}}, http::anilist::ALClient, manga::{comicinfo, covers, manga::{Chapter, DownloadStatus, Library, Manga, MangaMetadata, MangaSource, MangaType, PublishingStatus}, scoring::compute_tier}, scraper::ProviderRegistry
+    db::{self, task::{RecentTask, TaskType}}, http::anilist::ALClient, manga::{comicinfo, covers, manga::{Chapter, DownloadStatus, Library, Manga, MangaMetadata, MangaSource, MangaType, PublishingStatus}, scoring::compute_tier}, scraper::ProviderRegistry,
 };
 
 
@@ -145,6 +145,8 @@ pub struct AddMangaRequest {
     relative_path: String,
 }
 
+/// API for adding new manga to a library.
+/// This just does some checks, and 
 #[post("/api/manga", data = "<body>")]
 async fn add_manga(
     pool: &State<SqlitePool>,
@@ -174,8 +176,8 @@ async fn add_manga(
     manga.id = Uuid::new_v4();
     manga.library_id = library_id;
     manga.relative_path = PathBuf::from(body.relative_path.trim());
-    manga.created_at = Utc::now();
-    manga.metadata_updated_at = Utc::now();
+    manga.created_at = Utc::now().timestamp();
+    manga.metadata_updated_at = Utc::now().timestamp();
 
     // Download cover into the manga's series folder; fall back to original URL on failure
     if let Some(url) = manga.thumbnail_url.take() {
@@ -185,6 +187,7 @@ async fn add_manga(
             .or(Some(url));
     }
 
+    
     db::manga::insert(pool.inner(), &manga)
         .await
         .map_err(internal)?;
@@ -195,7 +198,7 @@ async fn add_manga(
         log::warn!("[api] Failed to write ComicInfo.xml for '{}': {e}", manga.metadata.title);
     }
 
-    // Auto-trigger a scan so provider URLs and chapters are populated immediately
+    // Auto-trigger a scan task
     db::task::enqueue(pool.inner(), TaskType::ScanLibrary, Some(manga.id), None, 5)
         .await
         .map_err(internal)?;
@@ -266,8 +269,8 @@ async fn add_manga_manual(
         metadata_source: MangaSource::Local,
         thumbnail_url: body.cover_url.clone().filter(|s| !s.is_empty()),
         monitored: true,
-        created_at: Utc::now(),
-        metadata_updated_at: Utc::now(),
+        created_at: Utc::now().timestamp(),
+        metadata_updated_at: Utc::now().timestamp(),
     };
 
     // Download cover if a URL was provided
@@ -409,33 +412,34 @@ struct SetProviderRequest {
     provider_url: String,
 }
 
-#[post("/api/manga/<id>/provider", data = "<body>")]
-async fn set_provider(
-    pool: &State<SqlitePool>,
-    id: &str,
-    body: Json<SetProviderRequest>,
-) -> Result<Status, (Status, Json<ApiError>)> {
-    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
-    db::manga::get_by_id(pool.inner(), manga_id)
-        .await
-        .map_err(internal)?
-        .ok_or_else(|| not_found("manga not found"))?;
+/// I honestly have no idea what this does.
+// #[post("/api/manga/<id>/provider", data = "<body>")]
+// async fn set_provider(
+//     pool: &State<SqlitePool>,
+//     id: &str,
+//     body: Json<SetProviderRequest>,
+// ) -> Result<Status, (Status, Json<ApiError>)> {
+//     let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+//     db::manga::get_by_id(pool.inner(), manga_id)
+//         .await
+//         .map_err(internal)?
+//         .ok_or_else(|| not_found("manga not found"))?;
 
-    db::provider::upsert(
-        pool.inner(),
-        &db::provider::MangaProvider {
-            manga_id,
-            provider_name: body.provider_name.clone(),
-            provider_url: Some(body.provider_url.clone()),
-            last_synced_at: None,
-            search_attempted_at: Some(chrono::Utc::now()),
-        },
-    )
-    .await
-    .map_err(internal)?;
+//     db::provider::upsert(
+//         pool.inner(),
+//         &db::provider::MangaProvider {
+//             manga_id,
+//             provider_name: body.provider_name.clone(),
+//             provider_url: Some(body.provider_url.clone()),
+//             last_synced_at: None,
+//             search_attempted_at: Some(chrono::Utc::now()),
+//         },
+//     )
+//     .await
+//     .map_err(internal)?;
 
-    Ok(Status::Ok)
-}
+//     Ok(Status::Ok)
+// }
 
 // ---------------------------------------------------------------------------
 // GET /api/manga/<id>/providers
@@ -447,10 +451,11 @@ struct MangaProviderResponse {
     /// `None` means this provider was searched but the manga was not found.
     provider_url: Option<String>,
     found: bool,
-    last_synced_at: Option<chrono::DateTime<chrono::Utc>>,
-    search_attempted_at: Option<chrono::DateTime<chrono::Utc>>,
+    last_synced_at: Option<i64>,
+    search_attempted_at: Option<i64>,
 }
 
+/// Returns a list of providers for a given manga series id.
 #[get("/api/manga/<id>/providers")]
 async fn list_manga_providers(
     pool: &State<SqlitePool>,
@@ -482,35 +487,23 @@ async fn list_manga_providers(
 #[derive(Serialize)]
 struct ChapterProviderInfo {
     provider_name: String,
-    chapter_url: String,
+    chapter_url: Option<String>,
     scanlator_group: Option<String>,
     /// Scanlation tier: 1=Official, 2=Trusted, 3=Unknown group, 4=No group.
     tier: u8,
-    /// True when this is the chapter's manually pinned preferred provider.
-    is_preferred: bool,
+    language: String,
+    /// When the provider uploaded this chapter (ISO 8601 string, may be None).
+    released_at: Option<String>,
 }
 
 #[derive(Serialize)]
 struct ChapterListItem {
     #[serde(flatten)]
     chapter: Chapter,
-    /// Human-readable age, e.g. "3days" or "2months". Use as "{found_ago} ago".
-    found_ago: String,
-    /// All providers that have a cached URL for this chapter, sorted by tier (best first).
+    /// Sortable float: chapter_base + chapter_variant * 0.1
+    number_sort: f32,
+    /// All provider rows for this chapter number, sorted by tier (best first).
     providers: Vec<ChapterProviderInfo>,
-}
-
-fn format_found_ago(created_at: chrono::DateTime<chrono::Utc>) -> String {
-    let age = chrono::Utc::now().signed_duration_since(created_at);
-    let secs = age.num_seconds().max(0) as u64;
-    let std_dur = std::time::Duration::from_secs(secs);
-    // Take only the most significant unit from humantime output.
-    humantime::format_duration(std_dur)
-        .to_string()
-        .split_whitespace()
-        .next()
-        .unwrap_or("just now")
-        .to_string()
 }
 
 #[get("/api/manga/<id>/chapters")]
@@ -521,52 +514,57 @@ async fn list_chapters(pool: &State<SqlitePool>, id: &str) -> ApiResult<Vec<Chap
         .map_err(internal)?
         .ok_or_else(|| not_found("manga not found"))?;
 
-    let chapters = db::chapter::get_all_for_manga(pool.inner(), manga_id)
+    // Canonical rows: the scored winner per chapter number
+    let canonical = db::chapter::get_canonical_for_manga(pool.inner(), manga_id)
         .await
         .map_err(internal)?;
 
-    // Load all provider entries for this manga in one query, then group by chapter number.
-    let all_entries = db::chapter_url::get_all_for_manga(pool.inner(), manga_id)
+    // All rows: needed to build the per-chapter provider alternatives list
+    let all_rows = db::chapter::get_all_for_manga(pool.inner(), manga_id)
         .await
         .map_err(internal)?;
+
     let trusted = db::provider::get_trusted_groups(pool.inner())
         .await
         .map_err(internal)?;
 
-    // Key: chapter_number_sort rounded to nearest 0.01 encoded as i64 (avoids float map issues).
-    let mut entry_map: std::collections::HashMap<i64, Vec<db::chapter_url::ChapterProviderEntry>> =
+    // Group all rows by (chapter_base, chapter_variant) for quick lookup
+    let mut alternatives: std::collections::HashMap<(i32, i32), Vec<&Chapter>> =
         std::collections::HashMap::new();
-    for entry in all_entries {
-        let key = (entry.chapter_number_sort * 100.0).round() as i64;
-        entry_map.entry(key).or_default().push(entry);
+    for row in &all_rows {
+        alternatives
+            .entry((row.chapter_base, row.chapter_variant))
+            .or_default()
+            .push(row);
     }
 
-    let items = chapters
+    let items = canonical
         .into_iter()
         .map(|ch| {
-            let found_ago = format_found_ago(ch.created_at);
-            let key = (ch.number_sort * 100.0).round() as i64;
-            let preferred = ch.preferred_provider.clone();
-            let mut providers: Vec<ChapterProviderInfo> = entry_map
+            let number_sort = ch.number_sort();
+            let key = (ch.chapter_base, ch.chapter_variant);
+            let mut providers: Vec<ChapterProviderInfo> = alternatives
                 .get(&key)
-                .map(|entries| {
-                    entries
-                        .iter()
-                        .map(|e| {
-                            let tier = compute_tier(e.scanlator_group.as_deref(), &trusted);
-                            ChapterProviderInfo {
-                                provider_name: e.provider_name.clone(),
-                                chapter_url: e.chapter_url.clone(),
-                                scanlator_group: e.scanlator_group.clone(),
+                .map(|rows| {
+                    rows.iter()
+                        .filter_map(|r| {
+                            let provider_name = r.provider_name.clone()?;
+                            let tier = compute_tier(r.scanlator_group.as_deref(), &trusted);
+                            Some(ChapterProviderInfo {
+                                provider_name,
+                                chapter_url: r.chapter_url.clone(),
+                                scanlator_group: r.scanlator_group.clone(),
                                 tier,
-                                is_preferred: preferred.as_deref() == Some(e.provider_name.as_str()),
-                            }
+                                language: r.language.clone(),
+                                released_at: r.released_at.map(|dt| dt.to_rfc3339()),
+                            })
                         })
                         .collect()
                 })
                 .unwrap_or_default();
             providers.sort_by_key(|p| p.tier);
-            ChapterListItem { chapter: ch, found_ago, providers }
+
+            ChapterListItem { chapter: ch, number_sort, providers }
         })
         .collect();
 
@@ -589,7 +587,8 @@ async fn download_chapter_api(
         .map_err(internal)?
         .ok_or_else(|| not_found("manga not found"))?;
 
-    let chapter = db::chapter::get_by_number(pool.inner(), manga_id, num)
+    let (chapter_base, chapter_variant) = num_to_base_variant(num);
+    let chapter = db::chapter::get_canonical_by_number(pool.inner(), manga_id, chapter_base, chapter_variant)
         .await
         .map_err(internal)?
         .ok_or_else(|| not_found("chapter not found"))?;
@@ -662,7 +661,8 @@ async fn mark_chapter_downloaded(
     num: f32,
 ) -> Result<Status, (Status, Json<ApiError>)> {
     let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
-    let chapter = db::chapter::get_by_number(pool.inner(), manga_id, num)
+    let (chapter_base, chapter_variant) = num_to_base_variant(num);
+    let chapter = db::chapter::get_canonical_by_number(pool.inner(), manga_id, chapter_base, chapter_variant)
         .await
         .map_err(internal)?
         .ok_or_else(|| not_found("chapter not found"))?;
@@ -684,6 +684,17 @@ async fn mark_chapter_downloaded(
 }
 
 // ---------------------------------------------------------------------------
+// Helper: decode f32 chapter number into (chapter_base, chapter_variant)
+// ---------------------------------------------------------------------------
+
+fn num_to_base_variant(num: f32) -> (i32, i32) {
+    let base = num.floor() as i32;
+    let frac = (num - num.floor()).abs();
+    let variant = (frac * 10.0).round() as i32;
+    (base, variant)
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/manga/<id>/chapters/<num>/optimise
 // ---------------------------------------------------------------------------
 
@@ -699,7 +710,8 @@ async fn optimise_chapter_api(
         .map_err(internal)?
         .ok_or_else(|| not_found("manga not found"))?;
 
-    let chapter = db::chapter::get_by_number(pool.inner(), manga_id, num)
+    let (chapter_base, chapter_variant) = num_to_base_variant(num);
+    let chapter = db::chapter::get_canonical_by_number(pool.inner(), manga_id, chapter_base, chapter_variant)
         .await
         .map_err(internal)?
         .ok_or_else(|| not_found("chapter not found"))?;
@@ -805,12 +817,16 @@ async fn cancel_task(
 struct SettingsResponse {
     scan_interval_hours: u64,
     queue_paused: bool,
+    /// BCP 47 language code to prefer when selecting a provider (e.g. "en"). `null` = accept any.
+    preferred_language: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct UpdateSettingsRequest {
     scan_interval_hours: Option<u64>,
     queue_paused: Option<bool>,
+    /// Set to a BCP 47 code (e.g. "en") to filter downloads to that language, or "" to clear.
+    preferred_language: Option<String>,
 }
 
 #[get("/api/settings")]
@@ -824,9 +840,14 @@ async fn get_settings(pool: &State<SqlitePool>) -> ApiResult<SettingsResponse> {
         .await
         .map_err(internal)?
         == "true";
+    let lang_raw = db::settings::get(pool.inner(), "preferred_language", "")
+        .await
+        .map_err(internal)?;
+    let preferred_language = if lang_raw.is_empty() { None } else { Some(lang_raw) };
     Ok(Json(SettingsResponse {
         scan_interval_hours: hours,
         queue_paused,
+        preferred_language,
     }))
 }
 
@@ -845,6 +866,11 @@ async fn update_settings(
     }
     if let Some(paused) = body.queue_paused {
         db::settings::set(pool.inner(), "queue_paused", if paused { "true" } else { "false" })
+            .await
+            .map_err(internal)?;
+    }
+    if let Some(ref lang) = body.preferred_language {
+        db::settings::set(pool.inner(), "preferred_language", lang.trim())
             .await
             .map_err(internal)?;
     }
@@ -875,49 +901,9 @@ async fn serve_cover(
     None
 }
 
-// ---------------------------------------------------------------------------
-// Route list
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// PATCH /api/manga/<id>/chapters/<num>/preferred-provider
-// ---------------------------------------------------------------------------
-
-#[derive(Deserialize)]
-struct SetPreferredProviderRequest {
-    /// Provider name to pin, or `null` to reset to auto-selection by tier.
-    provider_name: Option<String>,
-}
-
-#[patch("/api/manga/<id>/chapters/<num>/preferred-provider", data = "<body>")]
-async fn set_chapter_preferred_provider(
-    pool: &State<SqlitePool>,
-    id: &str,
-    num: f32,
-    body: Json<SetPreferredProviderRequest>,
-) -> Result<Status, (Status, Json<ApiError>)> {
-    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
-    let chapter = db::chapter::get_by_number(pool.inner(), manga_id, num)
-        .await
-        .map_err(internal)?
-        .ok_or_else(|| not_found("chapter not found"))?;
-
-    db::chapter::set_preferred_provider(
-        pool.inner(),
-        chapter.id,
-        body.provider_name.as_deref(),
-    )
-    .await
-    .map_err(internal)?;
-
-    Ok(Status::NoContent)
-}
-
-// ---------------------------------------------------------------------------
 // GET /api/trusted-groups
 // POST /api/trusted-groups
 // DELETE /api/trusted-groups/<name>
-// ---------------------------------------------------------------------------
 
 #[get("/api/trusted-groups")]
 async fn list_trusted_groups(pool: &State<SqlitePool>) -> ApiResult<Vec<String>> {
@@ -958,8 +944,7 @@ async fn remove_trusted_group(
     Ok(Status::Ok)
 }
 
-// ---------------------------------------------------------------------------
-
+/// All the routes be here
 pub fn routes() -> Vec<rocket::Route> {
     routes![
         list_libraries,
@@ -976,11 +961,10 @@ pub fn routes() -> Vec<rocket::Route> {
         patch_manga,
         list_providers,
         scan_manga_api,
-        set_provider,
+        // set_provider,
         list_manga_providers,
         list_chapters,
         download_chapter_api,
-        set_chapter_preferred_provider,
         refresh_manga_api,
         scan_disk_api,
         mark_chapter_downloaded,

@@ -1,10 +1,8 @@
--- Curated list of known/trusted scanlation group names (for Tier 2 scoring).
--- Names are matched case-insensitively at score time.
+
 CREATE TABLE IF NOT EXISTS TrustedGroup (
-    name TEXT PRIMARY KEY  -- exact group name as it appears in scanlator_group
+    name TEXT PRIMARY KEY
 );
 
--- Populate groups
 INSERT OR IGNORE INTO TrustedGroup (name) VALUES
 ('/A/nimango Scans'),
 ('/ak/ Scans'),

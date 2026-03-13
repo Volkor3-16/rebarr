@@ -1,39 +1,18 @@
--- =============================================================================
--- Rebarr Initial Schema
--- =============================================================================
--- NOTE: SQLite does not enforce foreign keys by default.
--- Run `PRAGMA foreign_keys = ON;` per-connection in your pool setup.
+-- Rebarr initial schema
+-- Documentation lives at `docs/DATABASE.md`, look there for guidance.
 
-
--- =============================================================================
--- Library
--- Root directories the scanner manages.
--- library_type maps the MangaType enum (Rust field `r#type`).
--- =============================================================================
 CREATE TABLE Library (
     uuid         TEXT PRIMARY KEY,
     library_type TEXT NOT NULL CHECK (library_type IN ('Comics', 'Manga')),
     root_path    TEXT NOT NULL
 );
 
-
--- =============================================================================
--- Manga
--- One row per series. MangaMetadata fields are flattened here directly;
--- metadata columns can be refreshed independently via targeted UPDATE.
--- =============================================================================
 CREATE TABLE Manga (
     uuid                TEXT PRIMARY KEY,
     library_id          TEXT NOT NULL REFERENCES Library(uuid) ON DELETE CASCADE,
-
-    -- External IDs
     anilist_id          INTEGER,
     mal_id              INTEGER,
-
-    -- Filesystem
     relative_path       TEXT NOT NULL,
-
-    -- Flattened MangaMetadata fields
     title               TEXT NOT NULL,
     title_og            TEXT NOT NULL DEFAULT '',
     title_roman         TEXT NOT NULL DEFAULT '',
@@ -45,101 +24,63 @@ CREATE TABLE Manga (
                             )),
     start_year          INTEGER,
     end_year            INTEGER,
-
-    -- Counts (chapter_count = AniList-reported value, often inaccurate per code comments)
     chapter_count       INTEGER,
     downloaded_count    INTEGER,
-
-    -- Metadata provenance
     metadata_source     TEXT NOT NULL DEFAULT 'Local'
                             CHECK (metadata_source IN ('AniList', 'Local')),
-
-    -- Thumbnail URL cache for web UI
     thumbnail_url       TEXT,
-
-    -- Timestamps (strftime used instead of CURRENT_TIMESTAMP so SQLx/chrono
-    -- can parse the ISO 8601 T/Z format directly)
-    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    metadata_updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    created_at          INTEGER,
+    metadata_updated_at INTEGER,
+    monitored           BOOLEAN NOT NULL DEFAULT 1
 );
+
+CREATE TABLE Chapters (
+    uuid TEXT PRIMARY KEY,
+    manga_id TEXT NOT NULL REFERENCES Manga(uuid) ON DELETE CASCADE,
+    chapter_base INTEGER NOT NULL,
+    chapter_variant INTEGER NOT NULL DEFAULT 0,
+    title TEXT,
+    language TEXT NOT NULL DEFAULT 'EN',
+    scanlator_group TEXT,
+    provider_name TEXT,
+    chapter_url TEXT,
+    download_status TEXT NOT NULL DEFAULT 'Missing'
+                        CHECK (download_status IN ('Missing', 'Downloading', 'Downloaded', 'Failed')),
+    released_at INTEGER,
+    downloaded_at INTEGER,
+    scraped_at INTEGER
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_chapter_unique
+ON Chapters(manga_id, chapter_base, chapter_variant, language, scanlator_group, provider_name);
+
+CREATE INDEX idx_chapter_manga_id ON Chapters(manga_id);
+
+CREATE TABLE CanonicalChapters (
+    manga_id TEXT PRIMARY KEY REFERENCES Manga(uuid) ON DELETE CASCADE,
+    canonical_list TEXT NOT NULL,
+    last_updated INTEGER
+);
+
+
+CREATE TABLE IF NOT EXISTS Settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+INSERT OR IGNORE INTO Settings (key, value) VALUES ('scan_interval_hours', '6');
+INSERT OR IGNORE INTO Settings (key, value) VALUES ('preferred_language', 'en');
+
 
 CREATE INDEX idx_manga_library_id ON Manga(library_id);
 CREATE INDEX idx_manga_anilist_id ON Manga(anilist_id);
-CREATE INDEX idx_manga_mal_id     ON Manga(mal_id);
 
-
--- =============================================================================
--- MangaTag
--- Normalized storage for MangaMetadata.tags: Vec<String>.
--- Composite PK prevents duplicate tags per manga.
--- =============================================================================
-CREATE TABLE MangaTag (
+CREATE TABLE MangaTags (
     manga_id TEXT NOT NULL REFERENCES Manga(uuid) ON DELETE CASCADE,
     tag      TEXT NOT NULL,
     PRIMARY KEY (manga_id, tag)
 );
 
-
--- =============================================================================
--- Chapter
--- Logical chapter records only — provider chapter data (URLs, scrape info)
--- is transient and resolved at runtime, never persisted.
--- =============================================================================
-CREATE TABLE Chapter (
-    uuid            TEXT PRIMARY KEY,
-    manga_id        TEXT NOT NULL REFERENCES Manga(uuid) ON DELETE CASCADE,
-
-    -- Chapter identity
-    number_raw      TEXT NOT NULL,  -- raw string from provider (e.g. "12.5")
-    number_sort     REAL NOT NULL,  -- parsed float for ordering
-    title           TEXT,
-    volume          INTEGER,
-    scanlator_group TEXT,
-
-    -- Download lifecycle
-    download_status TEXT NOT NULL DEFAULT 'Missing'
-                        CHECK (download_status IN ('Missing', 'Downloading', 'Downloaded', 'Failed')),
-    downloaded_at   TEXT            -- set when download_status = 'Downloaded'
-);
-
-CREATE INDEX idx_chapter_manga_id          ON Chapter(manga_id);
-CREATE INDEX idx_chapter_manga_number_sort ON Chapter(manga_id, number_sort);
-
-
--- =============================================================================
--- MangaAlias
--- Alternate titles for a manga from various sources (MangaAlias struct).
--- AliasSource::Site(String) uses alias_source_site for the payload;
--- a CHECK constraint enforces it is set iff alias_source = 'Site'.
--- =============================================================================
-CREATE TABLE MangaAlias (
-    manga_id          TEXT NOT NULL REFERENCES Manga(uuid) ON DELETE CASCADE,
-    alias_source      TEXT NOT NULL CHECK (alias_source IN ('MyAnimeList', 'Site', 'Manual')),
-    alias_source_site TEXT,         -- site name; only when alias_source = 'Site'
-    title             TEXT NOT NULL,
-
-    CHECK (
-        (alias_source = 'Site'  AND alias_source_site IS NOT NULL)
-        OR
-        (alias_source != 'Site' AND alias_source_site IS NULL)
-    ),
-
-    PRIMARY KEY (manga_id, alias_source, alias_source_site, title)
-);
-
-CREATE INDEX idx_manga_alias_manga_id ON MangaAlias(manga_id);
-
-
--- =============================================================================
--- Task
--- Background task queue for the worker system (TaskType enum).
--- Subject FKs are nullable because different tasks target different subjects:
---   ScanLibrary     -> library_id set
---   RefreshAniList  -> manga_id set
---   CheckNewChapter -> manga_id set
---   DownloadChapter -> manga_id + chapter_id set
---   Backup          -> all may be NULL
--- =============================================================================
 CREATE TABLE Task (
     uuid         TEXT PRIMARY KEY,
     task_type    TEXT NOT NULL CHECK (task_type IN (
@@ -152,7 +93,7 @@ CREATE TABLE Task (
     -- Subject references (nullable; see design notes above)
     library_id   TEXT REFERENCES Library(uuid) ON DELETE CASCADE,
     manga_id     TEXT REFERENCES Manga(uuid)   ON DELETE CASCADE,
-    chapter_id   TEXT REFERENCES Chapter(uuid) ON DELETE CASCADE,
+    chapter_id   TEXT REFERENCES Chapters(uuid) ON DELETE CASCADE,
 
     -- Lower number = higher priority (e.g. 0 = critical, 10 = background)
     priority     INTEGER NOT NULL DEFAULT 10,
@@ -166,9 +107,9 @@ CREATE TABLE Task (
     last_error   TEXT,
 
     -- Scheduling (run_after enables delayed retry with backoff)
-    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    run_after    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    created_at   INTEGER,
+    updated_at   INTEGER,
+    run_after    INTEGER
 );
 
 -- Composite index for the worker's polling query:
@@ -176,3 +117,17 @@ CREATE TABLE Task (
 CREATE INDEX idx_task_worker     ON Task(status, priority, run_after);
 CREATE INDEX idx_task_manga_id   ON Task(manga_id);
 CREATE INDEX idx_task_chapter_id ON Task(chapter_id);
+
+
+-- Cache of "this manga lives at this URL on this provider".
+-- Avoids re-searching on every sync cycle.
+CREATE TABLE IF NOT EXISTS MangaProvider (
+    manga_id       TEXT NOT NULL REFERENCES Manga(uuid) ON DELETE CASCADE,
+    enabled        INTEGER NOT NULL,
+    provider_name  TEXT NOT NULL,
+    provider_url   TEXT,
+    last_synced_at INTEGER,
+    search_attempted_at  INTEGER,
+    PRIMARY KEY (manga_id, provider_name)
+);
+CREATE INDEX IF NOT EXISTS idx_manga_provider_manga_id ON MangaProvider(manga_id);

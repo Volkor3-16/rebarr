@@ -21,9 +21,11 @@ search:
             selector: ".poster img"
             content: attr
             attr_name: src
+
 chapters:
   steps:
     - open: "{manga_url}"
+    # grok add yogurt to this step (I have no idea how this works)
     - extract_js:
         var: _injected
         script: |
@@ -40,26 +42,22 @@ chapters:
               var last = (data.result.pagination && data.result.pagination.last_page) || 1;
               if (page >= last) break;
             }
-            // Deduplicate by chapter number, keeping most recent upload.
-            var byNumber = {};
-            all.forEach(function(ch) {
-              var n = ch.number;
-              if (!byNumber[n] || (ch.created_at || 0) > (byNumber[n].created_at || 0)) byNumber[n] = ch;
-            });
-            var deduped = Object.values(byNumber).sort(function(a, b) { return a.number - b.number; });
             var base = window.location.href.split('?')[0].replace(/\/$/, '');
             var c = document.createElement('div');
             c.id = 'rebarr-chapters';
-            deduped.forEach(function(ch) {
+            all.forEach(function(ch) {
               var a = document.createElement('a');
               a.className = 'rebarr-chapter';
               a.setAttribute('data-number', ch.number);
+              a.setAttribute('data-language', ch.language);
+              a.setAttribute('data-date', ch.created_at);
+              a.setAttribute('data-scanlator', ch.scanlation_group ? ch.scanlation_group.name : '');
               a.href = base + '/' + ch.chapter_id + '-chapter-' + ch.number;
               c.appendChild(a);
             });
             document.body.appendChild(c);
-            return 'ok:' + deduped.length;
-          })()
+            return 'ok:' + all.length;
+          })();
     - foreach:
         selector: "#rebarr-chapters .rebarr-chapter"
         extract:
@@ -71,6 +69,19 @@ chapters:
             selector: ""
             content: attr
             attr_name: href
+          language:
+            selector: ""
+            content: attr
+            attr_name: data-language
+          date:
+            selector: ""
+            content: attr
+            attr_name: data-date
+            date_format: "%s"
+          scanlator_group:
+            selector: ""
+            content: attr
+            attr_name: data-scanlator
 
 # We do some fuckery here, scrape the dom for all scripts, and return a list of all the webp images (likely chapters)
 pages:

@@ -1,3 +1,9 @@
+# This might be the worst provider that sorta works.
+# They have so many god damn chapters, awful naming, and impossible metdata.
+# Why does jujutsu kaisen have 3224 chapters????
+# Why are all the uploaders pokemon?
+# I'm personally leaving this disabled.
+
 name: MangaBall
 base_url: https://mangaball.net
 rate_limit:
@@ -48,31 +54,28 @@ chapters:
           .then(function(j) { window._mb_chapters = j.ALL_CHAPTERS || []; })
           .catch(function() { window._mb_chapters = []; });
         })();
-    - sleep: 3000
-    # Filter to English (fallback to first translation), deduplicate by chapter number,
-    # inject synthetic DOM elements, then foreach to collect results.
+    - sleep: 5000
+    # Inject one DOM element per translation (all languages, all scanlators).
+    # Deduplication and language preference are handled downstream, not here.
     - script: |
-        document.body.innerHTML = '<div id="mb-ch-list"></div>';
-        var seen = {};
-        var container = document.getElementById('mb-ch-list');
+        var container = document.createElement('div');
+        container.id = 'mb-ch-list';
+        document.body.appendChild(container);
         (window._mb_chapters || []).forEach(function(ch) {
           var num = String(ch.number_float !== undefined ? ch.number_float : (ch.number || ''));
-          if (!num || seen[num]) return;
-          var translations = ch.translations || [];
-          var tr = null;
-          for (var i = 0; i < translations.length; i++) {
-            if (translations[i].language === 'en') { tr = translations[i]; break; }
-          }
-          if (!tr && translations.length > 0) tr = translations[0];
-          if (!tr) return;
-          seen[num] = true;
-          var url = tr.url || ('{base_url}/chapter-detail/' + tr.id + '/');
-          var div = document.createElement('div');
-          div.className = 'mb-chapter';
-          div.setAttribute('data-number', num);
-          div.setAttribute('data-title', ch.title || '');
-          div.setAttribute('data-url', url);
-          container.appendChild(div);
+          if (!num) return;
+          (ch.translations || []).forEach(function(tr) {
+            var url = tr.url || ('{base_url}/chapter-detail/' + tr.id + '/');
+            var div = document.createElement('div');
+            div.className = 'mb-chapter';
+            div.setAttribute('data-number', num);
+            div.setAttribute('data-title', ch.title || '');
+            div.setAttribute('data-url', url);
+            div.setAttribute('data-language', tr.language || '');
+            div.setAttribute('data-date', tr.date || '');
+            div.setAttribute('data-scanlator', (tr.group && tr.group.name) ? tr.group.name : '');
+            container.appendChild(div);
+          });
         });
     - foreach:
         selector: ".mb-chapter"
@@ -89,6 +92,18 @@ chapters:
             selector: ""
             content: attr
             attr_name: data-url
+          language:
+            selector: ""
+            content: attr
+            attr_name: data-language
+          date:
+            selector: ""
+            content: attr
+            attr_name: data-date
+          scanlator_group:
+            selector: ""
+            content: attr
+            attr_name: data-scanlator
 
 pages:
   steps:

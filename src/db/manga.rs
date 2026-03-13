@@ -1,18 +1,13 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::manga::manga::{Manga, MangaMetadata, MangaSource, PublishingStatus};
 
-// ---------------------------------------------------------------------------
-// Row types
-// ---------------------------------------------------------------------------
-
 /// Flat DB row — matches Manga table columns exactly.
-/// Tags live in MangaTag and are fetched in a separate query.
 #[derive(sqlx::FromRow)]
 struct MangaRow {
     uuid: String,
@@ -31,18 +26,14 @@ struct MangaRow {
     downloaded_count: Option<i64>,
     metadata_source: String,
     thumbnail_url: Option<String>,
-    monitored: i64,
-    created_at: DateTime<Utc>,
-    metadata_updated_at: DateTime<Utc>,
+    created_at: i64,
+    metadata_updated_at: i64,
+    monitored: bool,
 }
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
 
 /// Fetch tags for a single manga.
 async fn fetch_tags(pool: &SqlitePool, manga_id: &str) -> Result<Vec<String>, sqlx::Error> {
-    sqlx::query_scalar::<_, String>("SELECT tag FROM MangaTag WHERE manga_id = ? ORDER BY tag ASC")
+    sqlx::query_scalar::<_, String>("SELECT tag FROM MangaTags WHERE manga_id = ? ORDER BY tag ASC")
         .bind(manga_id)
         .fetch_all(pool)
         .await
@@ -60,7 +51,7 @@ async fn fetch_tags_for_library(
     }
 
     let rows = sqlx::query_as::<_, TagRow>(
-        "SELECT manga_id, tag FROM MangaTag
+        "SELECT manga_id, tag FROM MangaTags
          WHERE manga_id IN (SELECT uuid FROM Manga WHERE library_id = ?)
          ORDER BY manga_id, tag ASC",
     )
@@ -104,7 +95,7 @@ fn manga_from_parts(row: MangaRow, tags: Vec<String>) -> Result<Manga, sqlx::Err
         chapter_count: row.chapter_count.map(|v| v as u32),
         metadata_source,
         thumbnail_url: row.thumbnail_url,
-        monitored: row.monitored != 0,
+        monitored: row.monitored,
         created_at: row.created_at,
         metadata_updated_at: row.metadata_updated_at,
         metadata: MangaMetadata {
@@ -192,7 +183,7 @@ pub async fn insert(pool: &SqlitePool, manga: &Manga) -> Result<(), sqlx::Error>
     .await?;
 
     for tag in &manga.metadata.tags {
-        sqlx::query("INSERT OR IGNORE INTO MangaTag (manga_id, tag) VALUES (?, ?)")
+        sqlx::query("INSERT OR IGNORE INTO MangaTags (manga_id, tag) VALUES (?, ?)")
             .bind(&id)
             .bind(tag)
             .execute(&mut *tx)
@@ -310,13 +301,13 @@ pub async fn update_metadata(pool: &SqlitePool, manga: &Manga) -> Result<(), sql
     .execute(&mut *tx)
     .await?;
 
-    sqlx::query("DELETE FROM MangaTag WHERE manga_id = ?")
+    sqlx::query("DELETE FROM MangaTags WHERE manga_id = ?")
         .bind(&id)
         .execute(&mut *tx)
         .await?;
 
     for tag in &manga.metadata.tags {
-        sqlx::query("INSERT OR IGNORE INTO MangaTag (manga_id, tag) VALUES (?, ?)")
+        sqlx::query("INSERT OR IGNORE INTO MangaTags (manga_id, tag) VALUES (?, ?)")
             .bind(&id)
             .bind(tag)
             .execute(&mut *tx)

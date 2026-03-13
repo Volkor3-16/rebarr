@@ -13,13 +13,11 @@ search:
     - foreach:
         # Selector for the thingo that has the list of search result.
         selector: ".bg-card"
-
         # Extract the values from the search results.
         extract:
           title:
             selector: "a.font-bold"
             content: text
-
           url:
             selector: "a.font-bold"
             content: attr
@@ -53,6 +51,11 @@ chapters:
             prefix: "{base_url}"
           scanlator_group:
             static_value: "TCB Scans"
+          # No lang or date for chapters, rip
+          language:
+            static_value: "en"
+          date:
+            static_value: "0"
 
 # Extracting chapter pages
 pages:

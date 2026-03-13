@@ -34,7 +34,7 @@ pub async fn optimise_chapter(pool: &SqlitePool, chapter_id: Uuid) -> Result<(),
     let cbz_path = library
         .root_path
         .join(&manga.relative_path)
-        .join(format!("Chapter {}.cbz", chapter.number_raw));
+        .join(format!("Chapter {}.cbz", chapter.number_sort()));
 
     if !cbz_path.exists() {
         return Err(format!("CBZ not found: {}", cbz_path.display()));
@@ -48,7 +48,7 @@ pub async fn optimise_chapter(pool: &SqlitePool, chapter_id: Uuid) -> Result<(),
     log::info!(
         "[optimizer] Optimised '{}' Ch.{} → WebP",
         manga.metadata.title,
-        chapter.number_raw
+        chapter.number_sort()
     );
 
     Ok(())

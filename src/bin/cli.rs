@@ -201,7 +201,13 @@ async fn main() {
         let title = ch.title.as_deref().unwrap_or("(no title)");
         let scanlator = ch.scanlator_group.as_deref().unwrap_or("—");
         let url = ch.url.as_deref().unwrap_or("(no url)");
-        println!("  Ch.{} — {} [{}] {}", ch.number, title, scanlator, url);
+        let language = ch.language.as_deref().unwrap_or("no lang");
+        let date_str;
+        let date = match ch.date_released {
+            Some(ts) => { date_str = ts.to_string(); date_str.as_str() }
+            None => "no date",
+        };
+        println!(" [{}] Ch.{} — {} [{}] ({}) {}", language, ch.number, title, scanlator, date, url);
     }
     if chapters.len() > 1000 {
         println!("  ... and {} more", chapters.len() - 10);

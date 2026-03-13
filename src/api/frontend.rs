@@ -397,7 +397,21 @@ async function loadChapters(mangaId) {
       el.innerHTML = '<p>No chapters found. Try scanning.</p>';
       return;
     }
-    const rows = chapters.map(ch => {
+    // Group by chapter_base, then within each group sort by chapter_variant ASC
+    // so parent chapter (variant=0) always renders before its split parts.
+    const groups = {};
+    for (const ch of chapters) {
+      const b = ch.chapter_base;
+      if (!groups[b]) groups[b] = [];
+      groups[b].push(ch);
+    }
+    const sortedBases = Object.keys(groups).map(Number).sort((a, b) => b - a);
+    const orderedChapters = [];
+    for (const b of sortedBases) {
+      groups[b].sort((a, c) => a.chapter_variant - c.chapter_variant);
+      orderedChapters.push(...groups[b]);
+    }
+    const rows = orderedChapters.map(ch => {
       const numFloat = ch.number_sort;
       const base = ch.chapter_base;
       const variant = ch.chapter_variant;
@@ -416,6 +430,9 @@ async function loadChapters(mangaId) {
       let label = chNum;
       if (ch.title) label += ` - ${escape(ch.title)}`;
       if (ch.scanlator_group) label += ` [${escape(ch.scanlator_group)}]`;
+      if (ch.language && ch.language !== 'en') {
+        label += ` <span style="font-size:0.7em;padding:1px 4px;border-radius:3px;background:#555;color:#fff">${escape(ch.language.toUpperCase())}</span>`;
+      }
       const vol = ch.volume ? `Vol.${escape(ch.volume)} ` : '';
       const status = ch.download_status;
       const canDl = status === 'Missing' || status === 'Failed';
@@ -435,6 +452,20 @@ async function loadChapters(mangaId) {
       const foundCell = ch.found_ago
         ? `<span title="${escape(foundTitle)}">${escape(ch.found_ago)} ago</span>`
         : '<span title="">—</span>';
+      // Released date: prefer effective_date_released (best available from chapter or providers)
+      let releasedCell = '—';
+      if (ch.effective_date_released) {
+        const rd = new Date(ch.effective_date_released);
+        const now = new Date();
+        const diffDays = Math.floor((now - rd) / 86400000);
+        if (diffDays < 30) {
+          releasedCell = `<span title="${rd.toLocaleString()}">${diffDays === 0 ? 'today' : diffDays + 'd ago'}</span>`;
+        } else if (diffDays < 365) {
+          releasedCell = `<span title="${rd.toLocaleString()}">${Math.floor(diffDays/30)}mo ago</span>`;
+        } else {
+          releasedCell = `<span title="${rd.toLocaleString()}">${rd.toLocaleDateString(undefined,{year:'numeric',month:'short'})}</span>`;
+        }
+      }
       // Indent split/extra variants slightly
       const indent = variant !== 0 ? ' style="padding-left:1.5rem;font-size:0.92em"' : '';
       // Per-chapter provider dropdown
@@ -445,12 +476,22 @@ async function loadChapters(mangaId) {
           const tierColor = {1:'#393',2:'#06c',3:'#c70',4:'#888'}[p.tier] || '#888';
           const tierBadge = `<span style="font-size:0.7em;padding:1px 3px;border-radius:3px;background:${tierColor};color:#fff">${tierLabel}</span>`;
           const grp = p.scanlator_group ? ` <small style="color:#666">(${escape(p.scanlator_group)})</small>` : '';
+          const langBadge = p.language && p.language !== 'en'
+            ? ` <span style="font-size:0.7em;padding:1px 4px;border-radius:3px;background:#555;color:#fff">${escape(p.language.toUpperCase())}</span>`
+            : '';
+          let pDateStr = '';
+          if (p.date_released) {
+            const pd = new Date(p.date_released);
+            const pdDiff = Math.floor((new Date() - pd) / 86400000);
+            const pdLabel = pdDiff < 1 ? 'today' : pdDiff < 30 ? pdDiff + 'd ago' : pdDiff < 365 ? Math.floor(pdDiff/30) + 'mo ago' : pd.toLocaleDateString(undefined,{year:'numeric',month:'short'});
+            pDateStr = ` <small style="color:#888" title="${pd.toLocaleString()}">${pdLabel}</small>`;
+          }
           const link = `<a href="${escape(p.chapter_url)}" target="_blank" rel="noopener" style="font-size:0.85em">[read]</a>`;
           const pinned = p.is_preferred ? ' <span style="color:#393;font-size:0.8em">★ Pinned</span>' : '';
           const pinBtn = !p.is_preferred
             ? `<button class="btn-sm" onclick='setPreferredProvider("${mangaId}",${numFloat},"${p.provider_name.replace(/"/g,'\\"')}") '>Pin</button>`
             : `<button class="btn-sm" onclick='setPreferredProvider("${mangaId}",${numFloat},null)'>Unpin</button>`;
-          return `<div style="margin-bottom:0.15rem">${tierBadge} <b>${escape(p.provider_name)}</b>${grp} ${link}${pinned} ${pinBtn}</div>`;
+          return `<div style="margin-bottom:0.15rem">${tierBadge} <b>${escape(p.provider_name)}</b>${grp}${langBadge}${pDateStr} ${link}${pinned} ${pinBtn}</div>`;
         }).join('');
         const label2 = `${ch.providers.length} provider${ch.providers.length===1?'':'s'}${ch.preferred_provider?' (pinned: '+escape(ch.preferred_provider)+')':''}`;
         provDetails = `<details style="margin-top:0.25rem"><summary style="cursor:pointer;font-size:0.78em;color:#06c">${label2}</summary><div style="padding:0.2rem 0 0.1rem 0.5rem">${pRows}</div></details>`;
@@ -459,11 +500,12 @@ async function loadChapters(mangaId) {
         <td>${cb}</td>
         <td${indent}>${vol}${label}${provDetails}</td>
         <td>${statusBadge(status)}</td>
+        <td><small>${releasedCell}</small></td>
         <td><small>${foundCell}</small></td>
         <td>${dlBtn}${markBtn}${optBtn}</td>
       </tr>`;
     }).join('');
-    el.innerHTML = `<table><tr><th><input type="checkbox" title="Select all" onchange="toggleSelectAll(this.checked)"></th><th>Chapter</th><th>Status</th><th>Found</th><th></th></tr>${rows}</table>`;
+    el.innerHTML = `<table><tr><th><input type="checkbox" title="Select all" onchange="toggleSelectAll(this.checked)"></th><th>Chapter</th><th>Status</th><th>Released</th><th>Found</th><th></th></tr>${rows}</table>`;
   } catch(e) {
     el.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
   }
@@ -833,8 +875,13 @@ async function viewSettings() {
       <p>Rebarr periodically checks for new chapters on all monitored series.</p>
       <label>Scan interval (hours):<br>
         <input type="number" id="scan-interval" min="1" max="168" value="${escape(settings.scan_interval_hours)}" style="width:80px">
-        &nbsp;<button onclick="saveSettings()">Save</button>
       </label>
+      <br><br>
+      <label>Preferred language (BCP 47, e.g. <code>en</code>):<br>
+        <input type="text" id="preferred-language" value="${escape(settings.preferred_language || '')}" placeholder="Leave blank to accept any language" style="width:220px;padding:0.3rem">
+      </label>
+      <br><br>
+      <button onclick="saveSettings()">Save</button>
       <div id="settings-status"></div>
       <hr>
       <h3>Providers</h3>
@@ -901,13 +948,14 @@ async function removeTrustedGroup(name) {
 
 async function saveSettings() {
   const hours = parseInt(document.getElementById('scan-interval').value, 10);
+  const lang = (document.getElementById('preferred-language').value || '').trim();
   const statusEl = document.getElementById('settings-status');
   if (!hours || hours < 1 || hours > 168) {
     statusEl.innerHTML = '<p class="error">Interval must be 1–168 hours.</p>';
     return;
   }
   try {
-    await api('PUT', '/api/settings', { scan_interval_hours: hours });
+    await api('PUT', '/api/settings', { scan_interval_hours: hours, preferred_language: lang });
     statusEl.innerHTML = '<p style="color:#393">Saved!</p>';
   } catch(e) {
     statusEl.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
