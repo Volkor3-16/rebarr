@@ -91,7 +91,7 @@ pub async fn upsert_from_scrape(
                 (uuid, manga_id, chapter_base, chapter_variant, title, language,
                  scanlator_group, provider_name, chapter_url, download_status, released_at, scraped_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Missing', ?, ?)
-             ON CONFLICT(manga_id, chapter_base, chapter_variant, language, provider_name)
+             ON CONFLICT(manga_id, chapter_base, chapter_variant, language, scanlator_group, provider_name)
              DO UPDATE SET
                  scraped_at       = excluded.scraped_at,
                  chapter_url      = excluded.chapter_url,
