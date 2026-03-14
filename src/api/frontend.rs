@@ -147,6 +147,19 @@ function taskBadge(s) {
   return `<span class="${cls}">${escape(s)}</span>`;
 }
 
+function relDate(str) {
+  if (!str) return '—';
+  const d = new Date(str);
+  if (isNaN(d)) return '—';
+  const now = new Date();
+  const diffDays = Math.floor((now - d) / 86400000);
+  const title = escape(d.toLocaleString());
+  if (diffDays === 0) return `<span title="${title}">today</span>`;
+  if (diffDays < 30) return `<span title="${title}">${diffDays}d ago</span>`;
+  if (diffDays < 365) return `<span title="${title}">${Math.floor(diffDays/30)}mo ago</span>`;
+  return `<span title="${title}">${d.toLocaleDateString(undefined,{year:'numeric',month:'short'})}</span>`;
+}
+
 function toPathSafe(s) {
   return (s || '').replace(/[\/\\:*?"<>|]/g, '').replace(/\s+/g, ' ').trim() || 'manga';
 }
@@ -387,6 +400,151 @@ Folder   : ${escape(m.relative_path)}</pre>
   }
 }
 
+// Renders a provider row for the "N available" dropdown.
+function providerRow(p) {
+  const tierLabel = {1:'T1:Official',2:'T2:Trusted',3:'T3:Unknown',4:'T4:NoGroup'}[p.tier] || 'T?';
+  const tierColor = {1:'#393',2:'#06c',3:'#c70',4:'#888'}[p.tier] || '#888';
+  const tierBadge = `<span style="font-size:0.7em;padding:1px 3px;border-radius:3px;background:${tierColor};color:#fff">${tierLabel}</span>`;
+  const grp = p.scanlator_group ? ` <small style="color:#666">(${escape(p.scanlator_group)})</small>` : '';
+  const langBadge = p.language && p.language.toLowerCase() !== 'en'
+    ? ` <span style="font-size:0.7em;padding:1px 4px;border-radius:3px;background:#555;color:#fff">${escape(p.language.toUpperCase())}</span>`
+    : '';
+  const relSpan = p.released_at ? ` <small style="color:#888">${relDate(p.released_at)}</small>` : '';
+  const link = p.chapter_url ? `<a href="${escape(p.chapter_url)}" target="_blank" rel="noopener" style="font-size:0.85em">[read]</a>` : '';
+  return `<div style="margin-bottom:0.15rem">${tierBadge} <b>${escape(p.provider_name)}</b>${grp}${langBadge}${relSpan} ${link}</div>`;
+}
+
+// Renders a single chapter <tr>.
+// parts: optional array of split-part ChapterListItems to show inside the "N available" dropdown.
+function chapterRow(mangaId, ch, parts) {
+  if (!parts) parts = [];
+  const numFloat = ch.number_sort;
+  const base = ch.chapter_base;
+  const variant = ch.chapter_variant;
+  let chNum;
+  if (variant === 0) {
+    chNum = `Chapter ${base}`;
+  } else if (variant >= 5) {
+    chNum = `Chapter ${base}.${variant}`;
+  } else {
+    chNum = `Chapter ${base} Part ${String.fromCharCode(64 + variant)}`; // A, B, C…
+  }
+  let label = `<b>${chNum}</b>`;
+  if (ch.title) label += ` — ${escape(ch.title)}`;
+  if (ch.scanlator_group) label += ` [${escape(ch.scanlator_group)}]`;
+  if (ch.provider_name) label += ` <small style="color:#888">@ ${escape(ch.provider_name)}</small>`;
+  if (ch.language && ch.language.toLowerCase() !== 'en') {
+    label += ` <span style="font-size:0.7em;padding:1px 4px;border-radius:3px;background:#555;color:#fff">${escape(ch.language.toUpperCase())}</span>`;
+  }
+  const status = ch.download_status;
+  const canDl = status === 'Missing' || status === 'Failed';
+  const dlBtn = canDl
+    ? `<button class="btn-sm" onclick='doDownload("${mangaId}", ${numFloat})'>Download</button>`
+    : '';
+  const markBtn = canDl
+    ? `&nbsp;<button class="btn-sm" onclick='doMarkDownloaded("${mangaId}", ${numFloat})'>Mark Done</button>`
+    : '';
+  const optBtn = status === 'Downloaded'
+    ? `<button class="btn-sm" onclick='doOptimise("${mangaId}", ${numFloat})'>Optimise</button>`
+    : '';
+  const cb = canDl
+    ? `<input type="checkbox" class="ch-checkbox" data-num="${numFloat}">`
+    : '';
+
+  // Build provider dropdown — includes canonical providers + split parts if any
+  const totalCount = (ch.providers ? ch.providers.length : 0) + parts.length;
+  let provDetails = '';
+  if (totalCount > 0) {
+    let pRows = (ch.providers || []).map(providerRow).join('');
+    if (parts.length > 0) {
+      pRows += `<div style="margin-top:0.3rem;padding-top:0.3rem;border-top:1px solid #ddd;font-size:0.8em;color:#666">— Split versions —</div>`;
+      for (const part of parts) {
+        const pLetter = String.fromCharCode(64 + part.chapter_variant);
+        const pNum = part.number_sort;
+        const pStatus = part.download_status;
+        const pCanDl = pStatus === 'Missing' || pStatus === 'Failed';
+        const pGrp = part.scanlator_group ? ` <small style="color:#666">(${escape(part.scanlator_group)})</small>` : '';
+        const pProv = part.provider_name ? ` <small style="color:#888">@ ${escape(part.provider_name)}</small>` : '';
+        const pDlBtn = pCanDl
+          ? `<button class="btn-sm" onclick='doDownload("${mangaId}", ${pNum})'>Download Part ${pLetter}</button>`
+          : '';
+        pRows += `<div style="margin-bottom:0.15rem">Part ${pLetter}${pGrp}${pProv} ${statusBadge(pStatus)} ${pDlBtn}</div>`;
+      }
+    }
+    provDetails = `<details style="margin-top:0.25rem"><summary style="cursor:pointer;font-size:0.78em;color:#06c">${totalCount} available</summary><div style="padding:0.2rem 0 0.1rem 0.5rem">${pRows}</div></details>`;
+  }
+
+  return `<tr>
+    <td>${cb}</td>
+    <td>${label}${provDetails}</td>
+    <td>${statusBadge(status)}</td>
+    <td><small>${relDate(ch.released_at)}</small></td>
+    <td><small>${relDate(ch.scraped_at)}</small></td>
+    <td>${dlBtn}${markBtn}${optBtn}</td>
+  </tr>`;
+}
+
+// Renders a combined <tr> for a group of split parts when no full chapter exists.
+function combinedPartsRow(mangaId, base, parts) {
+  parts = parts.slice().sort((a, c) => a.chapter_variant - c.chapter_variant);
+  const partLetters = parts.map(p => String.fromCharCode(64 + p.chapter_variant)).join('·');
+
+  const statuses = parts.map(p => p.download_status);
+  const groupStatus = statuses.every(s => s === 'Downloaded') ? 'Downloaded'
+    : statuses.some(s => s === 'Downloading') ? 'Downloading'
+    : statuses.some(s => s === 'Failed') ? 'Failed'
+    : 'Missing';
+
+  const missingNums = parts
+    .filter(p => p.download_status === 'Missing' || p.download_status === 'Failed')
+    .map(p => p.number_sort);
+  const dlAllBtn = missingNums.length > 0
+    ? `<button class="btn-sm" onclick='doDownloadParts("${mangaId}",${JSON.stringify(missingNums)})'>Download All Parts</button>`
+    : '';
+
+  // Dates: earliest released_at, latest scraped_at across parts
+  const releasedDates = parts.map(p => p.released_at).filter(Boolean);
+  const scrapedDates  = parts.map(p => p.scraped_at).filter(Boolean);
+  const releasedStr = releasedDates.length > 0 ? releasedDates.reduce((a, b) => a < b ? a : b) : null;
+  const scrapedStr  = scrapedDates.length  > 0 ? scrapedDates.reduce((a, b)  => a > b ? a : b) : null;
+
+  // Provider dropdown — all parts' providers merged
+  const allProviders = parts.flatMap(p => p.providers || []);
+  let provDropdown = '';
+  if (allProviders.length > 0) {
+    const pRows = allProviders.map(providerRow).join('');
+    provDropdown = `<details style="margin-top:0.25rem"><summary style="cursor:pointer;font-size:0.78em;color:#06c">${allProviders.length} available</summary><div style="padding:0.2rem 0 0.1rem 0.5rem">${pRows}</div></details>`;
+  }
+
+  // Per-part detail (expandable)
+  const partDetailRows = parts.map(part => {
+    const pLetter = String.fromCharCode(64 + part.chapter_variant);
+    const pNum = part.number_sort;
+    const pStatus = part.download_status;
+    const pCanDl = pStatus === 'Missing' || pStatus === 'Failed';
+    const pGrp = part.scanlator_group ? ` [${escape(part.scanlator_group)}]` : '';
+    const pProv = part.provider_name ? ` <small style="color:#888">@ ${escape(part.provider_name)}</small>` : '';
+    const pDl   = pCanDl ? `<button class="btn-sm" onclick='doDownload("${mangaId}", ${pNum})'>Download</button>` : '';
+    const pMark = pCanDl ? `&nbsp;<button class="btn-sm" onclick='doMarkDownloaded("${mangaId}", ${pNum})'>Mark Done</button>` : '';
+    return `<div style="margin-bottom:0.2rem">Part ${pLetter}${pGrp}${pProv} ${statusBadge(pStatus)} ${pDl}${pMark}</div>`;
+  }).join('');
+  const partDetail = `<details style="margin-top:0.25rem"><summary style="cursor:pointer;font-size:0.78em;color:#888">Parts detail</summary><div style="padding:0.2rem 0 0.1rem 0.5rem">${partDetailRows}</div></details>`;
+
+  const chapterLabel = `<b>Chapter ${base}</b> <small style="color:#888">(split · Parts ${partLetters})</small>`;
+  const cb = missingNums.length > 0
+    ? `<input type="checkbox" class="ch-checkbox-group" data-nums='${JSON.stringify(missingNums)}' data-manga="${mangaId}">`
+    : '';
+
+  return `<tr>
+    <td>${cb}</td>
+    <td>${chapterLabel}${provDropdown}${partDetail}</td>
+    <td>${statusBadge(groupStatus)}</td>
+    <td><small>${relDate(releasedStr)}</small></td>
+    <td><small>${relDate(scrapedStr)}</small></td>
+    <td>${dlAllBtn}</td>
+  </tr>`;
+}
+
 async function loadChapters(mangaId) {
   const el = document.getElementById('chapters-list');
   if (!el) return;
@@ -397,115 +555,40 @@ async function loadChapters(mangaId) {
       el.innerHTML = '<p>No chapters found. Try scanning.</p>';
       return;
     }
-    // Group by chapter_base, then within each group sort by chapter_variant ASC
-    // so parent chapter (variant=0) always renders before its split parts.
+    // Bucket each chapter into full (variant=0), split parts (1–4), or extras (5+)
     const groups = {};
     for (const ch of chapters) {
       const b = ch.chapter_base;
-      if (!groups[b]) groups[b] = [];
-      groups[b].push(ch);
+      if (!groups[b]) groups[b] = { full: null, parts: [], extras: [] };
+      if (ch.chapter_variant === 0) {
+        groups[b].full = ch;
+      } else if (ch.chapter_variant >= 5) {
+        groups[b].extras.push(ch);
+      } else {
+        groups[b].parts.push(ch);
+      }
     }
     const sortedBases = Object.keys(groups).map(Number).sort((a, b) => b - a);
-    const orderedChapters = [];
+    const rows = [];
     for (const b of sortedBases) {
-      groups[b].sort((a, c) => a.chapter_variant - c.chapter_variant);
-      orderedChapters.push(...groups[b]);
+      const g = groups[b];
+      g.parts.sort((a, c) => a.chapter_variant - c.chapter_variant);
+      g.extras.sort((a, c) => a.chapter_variant - c.chapter_variant);
+
+      if (g.full) {
+        // Full chapter is primary; parts appear inside its "N available" dropdown
+        rows.push(chapterRow(mangaId, g.full, g.parts));
+      } else if (g.parts.length > 0) {
+        // Only split parts exist — single combined row (expandable)
+        rows.push(combinedPartsRow(mangaId, b, g.parts));
+      }
+      // Extras are always standalone
+      for (const extra of g.extras) rows.push(chapterRow(mangaId, extra));
     }
-    const rows = orderedChapters.map(ch => {
-      const numFloat = ch.number_sort;
-      const base = ch.chapter_base;
-      const variant = ch.chapter_variant;
-      const isExtra = ch.is_extra;
-      // Build a human-friendly chapter label
-      let chNum;
-      if (variant === 0) {
-        chNum = `Chapter ${base % 1 === 0 ? base.toFixed(0) : base}`;
-      } else if (isExtra) {
-        chNum = `Chapter ${base % 1 === 0 ? base.toFixed(0) : base} Extra`;
-      } else {
-        // split part: 1→a, 2→b, ...
-        const partLetter = String.fromCharCode(96 + variant);
-        chNum = `Chapter ${base % 1 === 0 ? base.toFixed(0) : base} Part ${partLetter.toUpperCase()}`;
-      }
-      let label = chNum;
-      if (ch.title) label += ` - ${escape(ch.title)}`;
-      if (ch.scanlator_group) label += ` [${escape(ch.scanlator_group)}]`;
-      if (ch.language && ch.language !== 'en') {
-        label += ` <span style="font-size:0.7em;padding:1px 4px;border-radius:3px;background:#555;color:#fff">${escape(ch.language.toUpperCase())}</span>`;
-      }
-      const vol = ch.volume ? `Vol.${escape(ch.volume)} ` : '';
-      const status = ch.download_status;
-      const canDl = status === 'Missing' || status === 'Failed';
-      const dlBtn = canDl
-        ? `<button class="btn-sm" onclick='doDownload("${mangaId}", ${numFloat})'>Download</button>`
-        : '';
-      const markBtn = canDl
-        ? `&nbsp;<button class="btn-sm" onclick='doMarkDownloaded("${mangaId}", ${numFloat})'>Mark Done</button>`
-        : '';
-      const optBtn = status === 'Downloaded'
-        ? `<button class="btn-sm" onclick='doOptimise("${mangaId}", ${numFloat})'>Optimise</button>`
-        : '';
-      const cb = canDl
-        ? `<input type="checkbox" class="ch-checkbox" data-num="${numFloat}" data-status="${escape(status)}">`
-        : '';
-      const foundTitle = ch.created_at ? new Date(ch.created_at).toLocaleString() : '';
-      const foundCell = ch.found_ago
-        ? `<span title="${escape(foundTitle)}">${escape(ch.found_ago)} ago</span>`
-        : '<span title="">—</span>';
-      // Released date: prefer effective_date_released (best available from chapter or providers)
-      let releasedCell = '—';
-      if (ch.effective_date_released) {
-        const rd = new Date(ch.effective_date_released);
-        const now = new Date();
-        const diffDays = Math.floor((now - rd) / 86400000);
-        if (diffDays < 30) {
-          releasedCell = `<span title="${rd.toLocaleString()}">${diffDays === 0 ? 'today' : diffDays + 'd ago'}</span>`;
-        } else if (diffDays < 365) {
-          releasedCell = `<span title="${rd.toLocaleString()}">${Math.floor(diffDays/30)}mo ago</span>`;
-        } else {
-          releasedCell = `<span title="${rd.toLocaleString()}">${rd.toLocaleDateString(undefined,{year:'numeric',month:'short'})}</span>`;
-        }
-      }
-      // Indent split/extra variants slightly
-      const indent = variant !== 0 ? ' style="padding-left:1.5rem;font-size:0.92em"' : '';
-      // Per-chapter provider dropdown
-      let provDetails = '';
-      if (ch.providers && ch.providers.length > 0) {
-        const pRows = ch.providers.map(p => {
-          const tierLabel = {1:'T1:Official',2:'T2:Trusted',3:'T3:Unknown',4:'T4:NoGroup'}[p.tier] || 'T?';
-          const tierColor = {1:'#393',2:'#06c',3:'#c70',4:'#888'}[p.tier] || '#888';
-          const tierBadge = `<span style="font-size:0.7em;padding:1px 3px;border-radius:3px;background:${tierColor};color:#fff">${tierLabel}</span>`;
-          const grp = p.scanlator_group ? ` <small style="color:#666">(${escape(p.scanlator_group)})</small>` : '';
-          const langBadge = p.language && p.language !== 'en'
-            ? ` <span style="font-size:0.7em;padding:1px 4px;border-radius:3px;background:#555;color:#fff">${escape(p.language.toUpperCase())}</span>`
-            : '';
-          let pDateStr = '';
-          if (p.date_released) {
-            const pd = new Date(p.date_released);
-            const pdDiff = Math.floor((new Date() - pd) / 86400000);
-            const pdLabel = pdDiff < 1 ? 'today' : pdDiff < 30 ? pdDiff + 'd ago' : pdDiff < 365 ? Math.floor(pdDiff/30) + 'mo ago' : pd.toLocaleDateString(undefined,{year:'numeric',month:'short'});
-            pDateStr = ` <small style="color:#888" title="${pd.toLocaleString()}">${pdLabel}</small>`;
-          }
-          const link = `<a href="${escape(p.chapter_url)}" target="_blank" rel="noopener" style="font-size:0.85em">[read]</a>`;
-          const pinned = p.is_preferred ? ' <span style="color:#393;font-size:0.8em">★ Pinned</span>' : '';
-          const pinBtn = !p.is_preferred
-            ? `<button class="btn-sm" onclick='setPreferredProvider("${mangaId}",${numFloat},"${p.provider_name.replace(/"/g,'\\"')}") '>Pin</button>`
-            : `<button class="btn-sm" onclick='setPreferredProvider("${mangaId}",${numFloat},null)'>Unpin</button>`;
-          return `<div style="margin-bottom:0.15rem">${tierBadge} <b>${escape(p.provider_name)}</b>${grp}${langBadge}${pDateStr} ${link}${pinned} ${pinBtn}</div>`;
-        }).join('');
-        const label2 = `${ch.providers.length} provider${ch.providers.length===1?'':'s'}${ch.preferred_provider?' (pinned: '+escape(ch.preferred_provider)+')':''}`;
-        provDetails = `<details style="margin-top:0.25rem"><summary style="cursor:pointer;font-size:0.78em;color:#06c">${label2}</summary><div style="padding:0.2rem 0 0.1rem 0.5rem">${pRows}</div></details>`;
-      }
-      return `<tr>
-        <td>${cb}</td>
-        <td${indent}>${vol}${label}${provDetails}</td>
-        <td>${statusBadge(status)}</td>
-        <td><small>${releasedCell}</small></td>
-        <td><small>${foundCell}</small></td>
-        <td>${dlBtn}${markBtn}${optBtn}</td>
-      </tr>`;
-    }).join('');
-    el.innerHTML = `<table><tr><th><input type="checkbox" title="Select all" onchange="toggleSelectAll(this.checked)"></th><th>Chapter</th><th>Status</th><th>Released</th><th>Found</th><th></th></tr>${rows}</table>`;
+    el.innerHTML = `<table>
+      <tr><th><input type="checkbox" title="Select all" onchange="toggleSelectAll(this.checked)"></th><th>Chapter</th><th>Status</th><th>Released</th><th>Scraped</th><th></th></tr>
+      ${rows.join('')}
+    </table>`;
   } catch(e) {
     el.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
   }
@@ -571,6 +654,13 @@ async function doDownload(mangaId, chapterNum) {
   }
 }
 
+async function doDownloadParts(mangaId, nums) {
+  for (const n of nums) {
+    try { await api('POST', `/api/manga/${mangaId}/chapters/${n}/download`); } catch(_) {}
+  }
+  loadChapters(mangaId);
+}
+
 async function toggleMonitored(mangaId, checked) {
   try {
     await api('PATCH', `/api/manga/${mangaId}`, { monitored: checked });
@@ -580,24 +670,38 @@ async function toggleMonitored(mangaId, checked) {
 }
 
 function toggleSelectAll(checked) {
-  document.querySelectorAll('.ch-checkbox').forEach(cb => cb.checked = checked);
+  document.querySelectorAll('.ch-checkbox, .ch-checkbox-group').forEach(cb => cb.checked = checked);
 }
 
 async function doDownloadSelected(mangaId) {
   const checked = Array.from(document.querySelectorAll('.ch-checkbox:checked'));
-  if (checked.length === 0) { alert('Select at least one chapter.'); return; }
+  const groupChecked = Array.from(document.querySelectorAll('.ch-checkbox-group:checked'));
+  if (checked.length === 0 && groupChecked.length === 0) { alert('Select at least one chapter.'); return; }
   let count = 0;
   for (const cb of checked) {
     try { await api('POST', `/api/manga/${mangaId}/chapters/${cb.dataset.num}/download`); count++; } catch(_) {}
+  }
+  for (const cb of groupChecked) {
+    const nums = JSON.parse(cb.dataset.nums);
+    for (const n of nums) {
+      try { await api('POST', `/api/manga/${mangaId}/chapters/${n}/download`); count++; } catch(_) {}
+    }
   }
   if (count > 0) loadChapters(mangaId);
 }
 
 async function doDownloadAllMissing(mangaId) {
-  const all = Array.from(document.querySelectorAll('.ch-checkbox'));
-  if (all.length === 0) { alert('No missing chapters to download.'); return; }
-  for (const cb of all) {
+  const singles = Array.from(document.querySelectorAll('.ch-checkbox'));
+  const groups  = Array.from(document.querySelectorAll('.ch-checkbox-group'));
+  if (singles.length === 0 && groups.length === 0) { alert('No missing chapters to download.'); return; }
+  for (const cb of singles) {
     try { await api('POST', `/api/manga/${mangaId}/chapters/${cb.dataset.num}/download`); } catch(_) {}
+  }
+  for (const cb of groups) {
+    const nums = JSON.parse(cb.dataset.nums);
+    for (const n of nums) {
+      try { await api('POST', `/api/manga/${mangaId}/chapters/${n}/download`); } catch(_) {}
+    }
   }
   loadChapters(mangaId);
 }
@@ -643,14 +747,8 @@ async function loadProviders(mangaId) {
   }
 }
 
-async function setPreferredProvider(mangaId, chapterNum, providerName) {
-  try {
-    await api('PATCH', `/api/manga/${mangaId}/chapters/${chapterNum}/preferred-provider`, { provider_name: providerName });
-    loadChapters(mangaId);
-  } catch(e) {
-    alert('Error: ' + e.message);
-  }
-}
+// setPreferredProvider — not yet implemented (no API endpoint)
+function setPreferredProvider() {}
 
 // ---------------------------------------------------------------------------
 // Search — AniList search + add manga

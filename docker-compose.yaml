@@ -1,0 +1,15 @@
+services:
+  rebarr:
+    image: volkor/rebarr:latest
+    container_name: rebarr
+    ports:
+      - "8008:8000"
+    volumes:
+      - /opt/rebarr:/data
+    environment:
+      DATABASE_URL: sqlite:/data/rebarr.db
+      REBARR_PROVIDERS_DIR: /data/providers
+      RUST_LOG: info
+      ROCKET_ADDRESS: 0.0.0.0
+      ROCKET_PORT: 8000
+    restart: unless-stopped

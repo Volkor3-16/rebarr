@@ -1,0 +1,8 @@
+target/
+.git/
+.env
+*.db
+*.db-shm
+*.db-wal
+thumbnails/
+scraper_dump_*.html

@@ -25,7 +25,9 @@ async fn main() -> Result<(), rocket::Error> {
     env_logger::init();
 
     // Setup DB and API Client
-    let pool = db::init("sqlite:rebarr.db").await.expect("DB init failed");
+    let db_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "sqlite:rebarr.db".to_string());
+    let pool = db::init(&db_url).await.expect("DB init failed");
 
     // Reset any tasks that were stuck Running when the server last stopped
     match db::task::reset_running_tasks(&pool).await {

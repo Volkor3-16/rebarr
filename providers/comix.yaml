@@ -26,6 +26,7 @@ chapters:
   steps:
     - open: "{manga_url}"
     # grok add yogurt to this step (I have no idea how this works)
+    # TODO: we should check the is_official tag first before scraping scanlation_group name, some tags are `Official?` but flagged as is_official...
     - extract_js:
         var: _injected
         script: |

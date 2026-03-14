@@ -9,15 +9,6 @@ The plan is to use AniList as the metadata source, and to automatically* match m
 
 ## Bugs / Dev TODO
 
-- [ ] Partial chapters aren't being merged in the frontend.
-    - Need to handle partial chapters when they're the only available.
-        - How do we tell the system to automatically download both? (when only available)
-        - How do we have them show as a dropdown/variant
-        - How do we ignore 0.5 / extras chapters from being included?
-- [ ] Rename the dropdown on providers from `n Providers` to `n Available/Found/Sources/Chapters`
-    - need to do this since we allow duplicate chapters from one provider.
-
-
 ## Features
 ### Minimum Viable Release
 
@@ -91,6 +82,12 @@ The plan is to use AniList as the metadata source, and to automatically* match m
     - Ranks them, so allows for upgrades to go through normally.
 - [ ] Allow users to select which providers to use per series, as an override. Just incase the user prefers one provider of any automated ranking.
     - This leaves a warning or something, since it means all provider management is done manually by the user
+- [ ] Automatic upgrade path
+    - We should re-download existing chapters if they're a new canonical one. (Upgrade from scan to official)
+- [ ] Docker builds
+    - [x] Dockerfile
+    - [x] Docker compose
+    - [ ] .gitlab-ci.yml
 
 ### Maximum Viable Release (in order of importance)
 
@@ -137,13 +134,17 @@ This is in addition to the above.
     - something else?
 - [ ] Anti-scraping prevention
     - 'random' useragent (pick a random one from the `n` most common UA's)
+- [ ] Tachiyomi/Mihon backup importer (Add libraries)
 
 ## Installation
 
-i got nothing here atm lol
+1. Download the following:
+    - Any wanted providers from `/providers`
+    - `docker-compose.yaml`
+2. Edit the docker-compose.yaml to your liking
+3. `docker compose up -d`
 
-but once it's done, just copy the docker compose and change the stuff to what makes sense for ur setup
-
+If you don't trust the docker image i host, build it yourself nerd
 
 ### Dev Install
 
