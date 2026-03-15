@@ -9,6 +9,7 @@ manga/
 scraper_dump_*
 screenshot.png
 docs/ai/
-.claude/
-.vexp/
+/.claude
+/.vexp
 CLAUDE.md
+
