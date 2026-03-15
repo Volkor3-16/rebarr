@@ -9,61 +9,22 @@ The plan is to use AniList as the metadata source, and to automatically* match m
 
 ## Bugs / Dev TODO
 
+- Make sure threads/workers/queues are being spawned correctly
+    - One queue per provider
+- Make sure rate limts do something
+    - at the moment they all just go super quick, we need to make sure the rate limits are set and enforced properly
+- Duplicate series can be added
+    - We should make sure only one instance for each anilist id/mal_id
+- We can't delete manga / chapters from the frontend.
+- Comix chapters duplicate each time they're scanned.
+- Scan for chapters does a full scan of all providers. This should only be done once when adding, and then once a week/month/n days/however
+    - We should have two buttons:
+    1. Search all providers (does the same as now, searches all providers)
+    2. Scan for new chapters (only searches providers that have a series url) - This is the one that'll run automatically, checking for new chapters and therefore triggering downloads.
+
 ## Features
 ### Minimum Viable Release
 
-- [x] Metadata API
-    - [x] AniList Support
-    - [x] AniList Refresh (re-fetch metadata on demand)
-    - [x] Manual Entry support (fallback)
-- [x] Library Support
-    - [x] Multiple Libraries
-    - [x] Download coverphoto/thumbnail when adding/importing to library
-    - [x] Ability to scan for existing series / chapters (detect existing CBZ files on disk)
-    - [x] Ability to manage existing series / chapters (Mark as Downloaded, Re-download)
-    - [x] Ability to optimise existing chapters (convert to webp)
-    - [x] Generate a standalone `ComicInfo.xml` on add/import (CBZ creation writes a stub, but no standalone import step yet)
-- [x] Downloading Chapters
-    - [x] Basic Provider implementation (CSS/JSON declarative extraction, normal HTTP)
-    - [x] Basic Scraper testing (`src/bin/scraper_test.rs`)
-        - [x] Use and expand on this as we add providers
-            - Ideally this could be spun into a cli version of the downloader.
-    - [x] Queued Downloads
-        - [x] Task/queue system implementation (`src/worker.rs`, `src/db/task.rs`)
-        - [x] Separate queue for each provider (because rate limits are site specific :p)
-        - [x] Doesn't hit rate limits (`rate_limit_rpm` from YAML enforced in worker)
-        - [x] Automatic retry with backoffs on download failure (exponential: 2^attempt minutes, max 3 attempts)
-        - [x] Priority system (Searching > Manual Downloads > Automatic Downloads) (thanks tranga for not doing this and pissing me off enough to start this project)
-    - [x] Advanced Provider implementation
-    - [x] Configurable Workflows for automatically optimising chapters (webp conversion via OptimiseChapter task)
-- [x] REST API
-- [x] a bad looking webui frontend
-    - [x] Create and view libraries
-    - [x] Search for manga
-    - [x] Add Manga from search
-    - [x] View Manga
-    - [x] Download Manga
-    - [x] Change Library Settings
-    - [x] Manually Add Manga
-    - [x] live updating task status and history
-    - [x] Queue page (task history + active queue, cancel tasks)
-    - [x] Bulk/selective chapter download (checkboxes + "Download All Missing")
-    - [x] Monitored toggle per series
-    - [x] Scan interval setting (Settings page)
-- [x] Queue system
-    - [x] Tasks run when needed (auto-scan on manga add)
-    - [x] Monitored series — new chapters auto-downloaded on subsequent scans
-    - [x] Tasks run automatically on a schedule (configurable interval, default 6h)
-        - [x] CheckNewChapter enqueued for all monitored series
-    - [x] Task run automatically on trigger
-        - New series added:
-            - [x] ScanLibrary auto-enqueued on add
-        - BuildChapterList Completed
-            - [x] ScoreProviders scheduled
-    - [x] Stuck "Running" tasks reset to Pending on startup
-    - [x] Chapter URLs cached after first scan (downloads skip re-scraping the chapter list)
-    - [x] Cancel Pending/Running tasks from the Queue page
-- [x] Content Matching system
 - [ ] New Database/new user wizard
     1. Ask to create a library directory (or skip if already set in env)
     2. Ask user to select enabled/disabled providers
@@ -73,15 +34,15 @@ The plan is to use AniList as the metadata source, and to automatically* match m
         - Match and import into DB.
         - Moves, renames, matches files to chapters - exactly like sonarr bulk import
         - Do this for each manga series, let user match and verify if it doesn't match automatically.
-- [x] More scraper data
-    - [x] Date (to use for scoring)
-    - [x] Language (to use for filtering only specified language)
 - [ ] Local 'Provider'
     - Scans existing FS for manga in the library directory, but not added (from previous installs)
     - Allows the user to import them (adds into db, adds chapters, reads local info and ads to db.)
     - Ranks them, so allows for upgrades to go through normally.
 - [ ] Allow users to select which providers to use per series, as an override. Just incase the user prefers one provider of any automated ranking.
     - This leaves a warning or something, since it means all provider management is done manually by the user
+- [ ] Manual Matching
+    - If the system can't find a series url (from a supported provider) but it definitely *does* exist, we should let users paste it in and go from there.
+    - Some sites (comix) have really bad searching algos, so we're out of luck with perfect matching. rip.
 - [ ] Automatic upgrade path
     - We should re-download existing chapters if they're a new canonical one. (Upgrade from scan to official)
 - [ ] Docker builds
@@ -135,6 +96,9 @@ This is in addition to the above.
 - [ ] Anti-scraping prevention
     - 'random' useragent (pick a random one from the `n` most common UA's)
 - [ ] Tachiyomi/Mihon backup importer (Add libraries)
+- [ ] Fallback mode? use single provider as grand source of metadata?
+    - This helps shit like Brainrot Girlfriend, which is only on mangadex?
+    - Easier than manually adding and matching i guess.
 
 ## Installation
 
@@ -159,7 +123,6 @@ for testing a provider, use
 
 ## Thanks
 
-- All the other companies that also don't realise that.
 - My mates claude subscription that i'm borrowing lmfao.
 
 

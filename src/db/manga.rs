@@ -16,8 +16,7 @@ struct MangaRow {
     mal_id: Option<i64>,
     relative_path: String,
     title: String,
-    title_og: String,
-    title_roman: String,
+    other_titles: Option<String>,
     synopsis: Option<String>,
     publishing_status: String,
     start_year: Option<i32>,
@@ -66,6 +65,11 @@ async fn fetch_tags_for_library(
     Ok(map)
 }
 
+/// Parse other_titles JSON string from DB into Option<Vec<String>>
+fn parse_other_titles(json: Option<String>) -> Option<Vec<String>> {
+    json.and_then(|s| serde_json::from_str(&s).ok())
+}
+
 fn manga_from_parts(row: MangaRow, tags: Vec<String>) -> Result<Manga, sqlx::Error> {
     let id = Uuid::parse_str(&row.uuid).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
     let library_id =
@@ -85,6 +89,8 @@ fn manga_from_parts(row: MangaRow, tags: Vec<String>) -> Result<Manga, sqlx::Err
         _ => MangaSource::Local,
     };
 
+    let other_titles = parse_other_titles(row.other_titles);
+
     Ok(Manga {
         id,
         library_id,
@@ -100,8 +106,7 @@ fn manga_from_parts(row: MangaRow, tags: Vec<String>) -> Result<Manga, sqlx::Err
         metadata_updated_at: row.metadata_updated_at,
         metadata: MangaMetadata {
             title: row.title,
-            title_og: row.title_og,
-            title_roman: row.title_roman,
+            other_titles,
             synopsis: row.synopsis,
             publishing_status,
             tags,
@@ -133,6 +138,11 @@ fn metadata_source_str(s: &MangaSource) -> &'static str {
 // Public query functions
 // ---------------------------------------------------------------------------
 
+/// Serialize other_titles to JSON for storage in DB
+fn serialize_other_titles(titles: &Option<Vec<String>>) -> Option<String> {
+    titles.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default())
+}
+
 /// Insert a manga and all its tags in a single transaction.
 pub async fn insert(pool: &SqlitePool, manga: &Manga) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
@@ -146,16 +156,17 @@ pub async fn insert(pool: &SqlitePool, manga: &Manga) -> Result<(), sqlx::Error>
     let mal_id = manga.mal_id.map(|v| v as i64);
     let chapter_count = manga.chapter_count.map(|v| v as i64);
     let downloaded_count = manga.downloaded_count.map(|v| v as i64);
+    let other_titles_json = serialize_other_titles(&manga.metadata.other_titles);
 
     sqlx::query(
         r#"INSERT INTO Manga (
             uuid, library_id, anilist_id, mal_id, relative_path,
-            title, title_og, title_roman, synopsis, publishing_status,
+            title, other_titles, synopsis, publishing_status,
             start_year, end_year, chapter_count, downloaded_count,
             metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at
         ) VALUES (
             ?, ?, ?, ?, ?,
-            ?, ?, ?, ?, ?,
+            ?, ?, ?, ?,
             ?, ?, ?, ?,
             ?, ?, ?, ?, ?
         )"#,
@@ -166,8 +177,7 @@ pub async fn insert(pool: &SqlitePool, manga: &Manga) -> Result<(), sqlx::Error>
     .bind(mal_id)
     .bind(&relative_path)
     .bind(&manga.metadata.title)
-    .bind(&manga.metadata.title_og)
-    .bind(&manga.metadata.title_roman)
+    .bind(&other_titles_json)
     .bind(&manga.metadata.synopsis)
     .bind(publishing_status)
     .bind(manga.metadata.start_year)
@@ -200,7 +210,7 @@ pub async fn get_by_id(pool: &SqlitePool, id: Uuid) -> Result<Option<Manga>, sql
     let row = sqlx::query_as::<_, MangaRow>(
         r#"SELECT
             uuid, library_id, anilist_id, mal_id, relative_path,
-            title, title_og, title_roman, synopsis, publishing_status,
+            title, other_titles, synopsis, publishing_status,
             start_year, end_year, chapter_count, downloaded_count,
             metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at
         FROM Manga WHERE uuid = ?"#,
@@ -229,7 +239,7 @@ pub async fn get_all_for_library(
     let rows = sqlx::query_as::<_, MangaRow>(
         r#"SELECT
             uuid, library_id, anilist_id, mal_id, relative_path,
-            title, title_og, title_roman, synopsis, publishing_status,
+            title, other_titles, synopsis, publishing_status,
             start_year, end_year, chapter_count, downloaded_count,
             metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at
         FROM Manga WHERE library_id = ? ORDER BY title ASC"#,
@@ -275,10 +285,11 @@ pub async fn update_metadata(pool: &SqlitePool, manga: &Manga) -> Result<(), sql
     let id = manga.id.to_string();
     let publishing_status = publishing_status_str(&manga.metadata.publishing_status);
     let metadata_source = metadata_source_str(&manga.metadata_source);
+    let other_titles_json = serialize_other_titles(&manga.metadata.other_titles);
 
     sqlx::query(
         r#"UPDATE Manga SET
-            title = ?, title_og = ?, title_roman = ?, synopsis = ?,
+            title = ?, other_titles = ?, synopsis = ?,
             publishing_status = ?, start_year = ?, end_year = ?,
             metadata_source = ?, thumbnail_url = ?,
             anilist_id = ?, mal_id = ?,
@@ -286,8 +297,7 @@ pub async fn update_metadata(pool: &SqlitePool, manga: &Manga) -> Result<(), sql
          WHERE uuid = ?"#,
     )
     .bind(&manga.metadata.title)
-    .bind(&manga.metadata.title_og)
-    .bind(&manga.metadata.title_roman)
+    .bind(&other_titles_json)
     .bind(&manga.metadata.synopsis)
     .bind(publishing_status)
     .bind(manga.metadata.start_year)
@@ -322,7 +332,7 @@ pub async fn get_all_monitored(pool: &SqlitePool) -> Result<Vec<Manga>, sqlx::Er
     let rows = sqlx::query_as::<_, MangaRow>(
         r#"SELECT
             uuid, library_id, anilist_id, mal_id, relative_path,
-            title, title_og, title_roman, synopsis, publishing_status,
+            title, other_titles, synopsis, publishing_status,
             start_year, end_year, chapter_count, downloaded_count,
             metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at
         FROM Manga WHERE monitored = 1 ORDER BY title ASC"#,

@@ -8,7 +8,7 @@ use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::{
-    db::{self, task::{RecentTask, TaskType}}, http::anilist::ALClient, manga::{comicinfo, covers, manga::{Chapter, DownloadStatus, Library, Manga, MangaMetadata, MangaSource, MangaType, PublishingStatus}, scoring::compute_tier}, scraper::ProviderRegistry,
+    db::{self, task::{RecentTask, TaskType}}, http::anilist::ALClient, manga::{comicinfo, covers, manga::{DownloadStatus, Library, Manga, MangaMetadata, MangaSource, MangaType, PublishingStatus}, scoring::compute_tier}, scraper::ProviderRegistry,
 };
 
 
@@ -215,8 +215,7 @@ pub struct AddMangaManualRequest {
     library_id: String,
     relative_path: String,
     title: String,
-    title_og: Option<String>,
-    title_roman: Option<String>,
+    other_titles: Option<Vec<String>>,
     synopsis: Option<String>,
     publishing_status: Option<PublishingStatus>,
     tags: Option<Vec<String>>,
@@ -248,8 +247,7 @@ async fn add_manga_manual(
 
     let metadata = MangaMetadata {
         title: body.title.trim().to_owned(),
-        title_og: body.title_og.as_deref().unwrap_or("").trim().to_owned(),
-        title_roman: body.title_roman.as_deref().unwrap_or("").trim().to_owned(),
+        other_titles: body.other_titles.clone(),
         synopsis: body.synopsis.as_deref().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()),
         publishing_status: body.publishing_status.clone().unwrap_or(PublishingStatus::Unknown),
         tags: body.tags.clone().unwrap_or_default(),
@@ -484,26 +482,31 @@ async fn list_manga_providers(
 // GET /api/manga/<id>/chapters
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize)]
-struct ChapterProviderInfo {
-    provider_name: String,
-    chapter_url: Option<String>,
-    scanlator_group: Option<String>,
-    /// Scanlation tier: 1=Official, 2=Trusted, 3=Unknown group, 4=No group.
-    tier: u8,
-    language: String,
-    /// When the provider uploaded this chapter (ISO 8601 string, may be None).
-    released_at: Option<String>,
-}
-
+/// Response struct for a single chapter row (all providers included, not just canonical).
 #[derive(Serialize)]
 struct ChapterListItem {
-    #[serde(flatten)]
-    chapter: Chapter,
-    /// Sortable float: chapter_base + chapter_variant * 0.1
-    number_sort: f32,
-    /// All provider rows for this chapter number, sorted by tier (best first).
-    providers: Vec<ChapterProviderInfo>,
+    id: String,
+    manga_id: String,
+    chapter_base: i32,
+    chapter_variant: i32,
+    title: Option<String>,
+    language: String,
+    scanlator_group: Option<String>,
+    provider_name: Option<String>,
+    chapter_url: Option<String>,
+    download_status: String,
+    /// Unix timestamp in seconds
+    released_at: Option<i64>,
+    /// Unix timestamp in seconds
+    downloaded_at: Option<i64>,
+    /// Unix timestamp in seconds
+    scraped_at: Option<i64>,
+    /// True if this chapter is an extra/bonus.
+    is_extra: bool,
+    /// True if this row is the current canonical winner for its (chapter_base, chapter_variant) slot.
+    is_canonical: bool,
+    /// Scanlation tier: 1=Official, 2=Known Scanner, 3=Unknown Scanner, 4=No Group.
+    tier: u8,
 }
 
 #[get("/api/manga/<id>/chapters")]
@@ -514,57 +517,44 @@ async fn list_chapters(pool: &State<SqlitePool>, id: &str) -> ApiResult<Vec<Chap
         .map_err(internal)?
         .ok_or_else(|| not_found("manga not found"))?;
 
-    // Canonical rows: the scored winner per chapter number
-    let canonical = db::chapter::get_canonical_for_manga(pool.inner(), manga_id)
-        .await
-        .map_err(internal)?;
-
-    // All rows: needed to build the per-chapter provider alternatives list
     let all_rows = db::chapter::get_all_for_manga(pool.inner(), manga_id)
         .await
         .map_err(internal)?;
+
+    let canonical_uuids: std::collections::HashSet<String> =
+        db::chapter::get_canonical_uuids(pool.inner(), manga_id)
+            .await
+            .map_err(internal)?
+            .into_iter()
+            .collect();
 
     let trusted = db::provider::get_trusted_groups(pool.inner())
         .await
         .map_err(internal)?;
 
-    // Group all rows by (chapter_base, chapter_variant) for quick lookup
-    let mut alternatives: std::collections::HashMap<(i32, i32), Vec<&Chapter>> =
-        std::collections::HashMap::new();
-    for row in &all_rows {
-        alternatives
-            .entry((row.chapter_base, row.chapter_variant))
-            .or_default()
-            .push(row);
-    }
-
-    let items = canonical
+    let items = all_rows
         .into_iter()
         .map(|ch| {
-            let number_sort = ch.number_sort();
-            let key = (ch.chapter_base, ch.chapter_variant);
-            let mut providers: Vec<ChapterProviderInfo> = alternatives
-                .get(&key)
-                .map(|rows| {
-                    rows.iter()
-                        .filter_map(|r| {
-                            let provider_name = r.provider_name.clone()?;
-                            let tier = compute_tier(r.scanlator_group.as_deref(), &trusted);
-                            Some(ChapterProviderInfo {
-                                provider_name,
-                                chapter_url: r.chapter_url.clone(),
-                                scanlator_group: r.scanlator_group.clone(),
-                                tier,
-                                language: r.language.clone(),
-                                released_at: r.released_at.map(|dt| dt.to_rfc3339()),
-                            })
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            providers.sort_by_key(|p| p.tier);
-
-            ChapterListItem { chapter: ch, number_sort, providers }
+            let is_canonical = canonical_uuids.contains(&ch.id.to_string());
+            let tier = compute_tier(ch.scanlator_group.as_deref(), &trusted);
+            ChapterListItem {
+                id: ch.id.to_string(),
+                manga_id: ch.manga_id.to_string(),
+                chapter_base: ch.chapter_base,
+                chapter_variant: ch.chapter_variant,
+                title: ch.title,
+                language: ch.language,
+                scanlator_group: ch.scanlator_group,
+                provider_name: ch.provider_name,
+                chapter_url: ch.chapter_url,
+                download_status: ch.download_status.as_str().to_string(),
+                released_at: ch.released_at.map(|dt| dt.timestamp()),
+                downloaded_at: ch.downloaded_at.map(|dt| dt.timestamp()),
+                scraped_at: ch.scraped_at.map(|dt| dt.timestamp()),
+                is_extra: ch.is_extra,
+                is_canonical,
+                tier,
+            }
         })
         .collect();
 
@@ -572,14 +562,15 @@ async fn list_chapters(pool: &State<SqlitePool>, id: &str) -> ApiResult<Vec<Chap
 }
 
 // ---------------------------------------------------------------------------
-// POST /api/manga/<id>/chapters/<num>/download
+// POST /api/manga/<id>/chapters/<base>/<variant>/download
 // ---------------------------------------------------------------------------
 
-#[post("/api/manga/<id>/chapters/<num>/download")]
+#[post("/api/manga/<id>/chapters/<base>/<variant>/download")]
 async fn download_chapter_api(
     pool: &State<SqlitePool>,
     id: &str,
-    num: f32,
+    base: i32,
+    variant: i32,
 ) -> Result<Status, (Status, Json<ApiError>)> {
     let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
     db::manga::get_by_id(pool.inner(), manga_id)
@@ -587,8 +578,7 @@ async fn download_chapter_api(
         .map_err(internal)?
         .ok_or_else(|| not_found("manga not found"))?;
 
-    let (chapter_base, chapter_variant) = num_to_base_variant(num);
-    let chapter = db::chapter::get_canonical_by_number(pool.inner(), manga_id, chapter_base, chapter_variant)
+    let chapter = db::chapter::get_canonical_by_number(pool.inner(), manga_id, base, variant)
         .await
         .map_err(internal)?
         .ok_or_else(|| not_found("chapter not found"))?;
@@ -651,18 +641,18 @@ async fn scan_disk_api(
 }
 
 // ---------------------------------------------------------------------------
-// POST /api/manga/<id>/chapters/<num>/mark-downloaded
+// POST /api/manga/<id>/chapters/<base>/<variant>/mark-downloaded
 // ---------------------------------------------------------------------------
 
-#[post("/api/manga/<id>/chapters/<num>/mark-downloaded")]
+#[post("/api/manga/<id>/chapters/<base>/<variant>/mark-downloaded")]
 async fn mark_chapter_downloaded(
     pool: &State<SqlitePool>,
     id: &str,
-    num: f32,
+    base: i32,
+    variant: i32,
 ) -> Result<Status, (Status, Json<ApiError>)> {
     let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
-    let (chapter_base, chapter_variant) = num_to_base_variant(num);
-    let chapter = db::chapter::get_canonical_by_number(pool.inner(), manga_id, chapter_base, chapter_variant)
+    let chapter = db::chapter::get_canonical_by_number(pool.inner(), manga_id, base, variant)
         .await
         .map_err(internal)?
         .ok_or_else(|| not_found("chapter not found"))?;
@@ -684,25 +674,39 @@ async fn mark_chapter_downloaded(
 }
 
 // ---------------------------------------------------------------------------
-// Helper: decode f32 chapter number into (chapter_base, chapter_variant)
+// POST /api/manga/<id>/chapters/<base>/<variant>/toggle-extra
 // ---------------------------------------------------------------------------
 
-fn num_to_base_variant(num: f32) -> (i32, i32) {
-    let base = num.floor() as i32;
-    let frac = (num - num.floor()).abs();
-    let variant = (frac * 10.0).round() as i32;
-    (base, variant)
+#[post("/api/manga/<id>/chapters/<base>/<variant>/toggle-extra")]
+async fn toggle_extra_api(
+    pool: &State<SqlitePool>,
+    id: &str,
+    base: i32,
+    variant: i32,
+) -> Result<Status, (Status, Json<ApiError>)> {
+    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    let chapter = db::chapter::get_canonical_by_number(pool.inner(), manga_id, base, variant)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("chapter not found"))?;
+
+    db::chapter::set_is_extra(pool.inner(), chapter.id, !chapter.is_extra)
+        .await
+        .map_err(internal)?;
+
+    Ok(Status::NoContent)
 }
 
 // ---------------------------------------------------------------------------
-// POST /api/manga/<id>/chapters/<num>/optimise
+// POST /api/manga/<id>/chapters/<base>/<variant>/optimise
 // ---------------------------------------------------------------------------
 
-#[post("/api/manga/<id>/chapters/<num>/optimise")]
+#[post("/api/manga/<id>/chapters/<base>/<variant>/optimise")]
 async fn optimise_chapter_api(
     pool: &State<SqlitePool>,
     id: &str,
-    num: f32,
+    base: i32,
+    variant: i32,
 ) -> Result<Status, (Status, Json<ApiError>)> {
     let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
     db::manga::get_by_id(pool.inner(), manga_id)
@@ -710,8 +714,7 @@ async fn optimise_chapter_api(
         .map_err(internal)?
         .ok_or_else(|| not_found("manga not found"))?;
 
-    let (chapter_base, chapter_variant) = num_to_base_variant(num);
-    let chapter = db::chapter::get_canonical_by_number(pool.inner(), manga_id, chapter_base, chapter_variant)
+    let chapter = db::chapter::get_canonical_by_number(pool.inner(), manga_id, base, variant)
         .await
         .map_err(internal)?
         .ok_or_else(|| not_found("chapter not found"))?;
@@ -727,6 +730,45 @@ async fn optimise_chapter_api(
     .map_err(internal)?;
 
     Ok(Status::Accepted)
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/manga/<id>/chapters/<base>/<variant>/set-canonical
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct SetCanonicalRequest {
+    chapter_id: String,
+}
+
+#[post("/api/manga/<id>/chapters/<base>/<variant>/set-canonical", data = "<body>")]
+async fn set_canonical_api(
+    pool: &State<SqlitePool>,
+    id: &str,
+    base: i32,
+    variant: i32,
+    body: Json<SetCanonicalRequest>,
+) -> Result<Status, (Status, Json<ApiError>)> {
+    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    let chapter_id = Uuid::parse_str(&body.chapter_id).map_err(|_| bad_request("invalid chapter UUID"))?;
+
+    let chapter = db::chapter::get_by_id(pool.inner(), chapter_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("chapter not found"))?;
+
+    if chapter.manga_id != manga_id {
+        return Err(bad_request("chapter does not belong to this manga"));
+    }
+    if chapter.chapter_base != base || chapter.chapter_variant != variant {
+        return Err(bad_request("chapter does not match the given base/variant"));
+    }
+
+    db::chapter::set_canonical_override(pool.inner(), manga_id, base, variant, chapter_id)
+        .await
+        .map_err(internal)?;
+
+    Ok(Status::NoContent)
 }
 
 // ---------------------------------------------------------------------------
@@ -968,7 +1010,9 @@ pub fn routes() -> Vec<rocket::Route> {
         refresh_manga_api,
         scan_disk_api,
         mark_chapter_downloaded,
+        toggle_extra_api,
         optimise_chapter_api,
+        set_canonical_api,
         list_tasks,
         cancel_task,
         get_settings,

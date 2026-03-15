@@ -11,16 +11,24 @@ Overview:
 5. when triggered, rebarr downloads each image in a chapter.
 
 
-To do that, we need each provider to have:
-
 
 ## Search
 
 Searches for the series. 
-Requires returning the 
+Requires returning the following:
 - `url` (that is, any url with a full list of chapters)
 - `title` (For matching to the internal name, or manual matching)
 - `cover` image (for uhhh.. idk. looking at? idk if we use this anywhere yet.)
+
+When we search, we:
+
+1. Build a list of search titles (Main title + all synonyms/other titles)
+2. Deduplicate
+3. For each provider
+    1. Ignore ones already searched with a URL
+    2. Run search from provider, check for a good scoring match
+    3. Break early with the provider's link to the series, or continue until the end.
+4. Insert found matches into db
 
 ## Series
 

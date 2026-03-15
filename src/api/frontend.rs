@@ -97,6 +97,26 @@ const FRONTEND_HTML: &str = r#"<!DOCTYPE html>
   .lib-row td { vertical-align: middle; }
   .edit-form { display: none; padding: 0.4rem 0; }
   .edit-form input { width: auto; display: inline; margin-bottom: 0; }
+  /* Chapter list styles */
+  .ch-main { cursor: pointer; }
+  .ch-main:hover { background: #f5f5f5; }
+  .ch-variant { background: #fafafa; }
+  .ch-variant:hover { background: #f0f0f0; }
+  .ch-variant-toggle { cursor: pointer; color: #06c; margin-right: 0.3rem; }
+  .ch-variant-toggle::before { content: '▶'; font-size: 0.7em; }
+  .ch-variant-toggle.open::before { content: '▼'; }
+  .ch-variant-row { display: none; }
+  .ch-variant-row.open { display: table-row; }
+  .ch-tier { display: inline-block; font-size: 0.7em; padding: 1px 4px; border-radius: 3px; color: #fff; margin-right: 0.3rem; }
+  .ch-tier-1 { background: #393; }
+  .ch-tier-2 { background: #06c; }
+  .ch-tier-3 { background: #c70; }
+  .ch-tier-4 { background: #888; }
+  .ch-source { font-size: 0.85em; color: #666; }
+  .ch-dl-icon { cursor: pointer; color: #06c; font-size: 1.1em; padding: 0.2rem; }
+  .ch-dl-icon:hover { color: #084; }
+  .ch-dl-icon.disabled { color: #ccc; cursor: default; }
+  .ch-extra-btn { font-size: 0.75em; padding: 1px 4px; }
 </style>
 </head>
 <body>
@@ -134,7 +154,7 @@ async function api(method, path, body) {
 
 function escape(s) {
   if (s == null) return '';
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(s).replace(/&/g,'&').replace(/</g,'<').replace(/>/g,'>').replace(/"/g,'"').replace(/'/g,'&#039;');
 }
 
 function statusBadge(s) {
@@ -147,6 +167,42 @@ function taskBadge(s) {
   return `<span class="${cls}">${escape(s)}</span>`;
 }
 
+// Live-updating relative time from unix timestamp (seconds)
+// Updates automatically every 30 seconds without API calls
+function relTime(ts) {
+  if (!ts) return '—';
+  const now = Math.floor(Date.now() / 1000);
+  const diff = now - ts;
+  const title = new Date(ts * 1000).toLocaleString();
+  
+  if (diff < 60) return `<span class="rel-time" data-ts="${ts}" title="${title}">just now</span>`;
+  if (diff < 3600) return `<span class="rel-time" data-ts="${ts}" title="${title}">${Math.floor(diff / 60)}m ago</span>`;
+  if (diff < 86400) return `<span class="rel-time" data-ts="${ts}" title="${title}">${Math.floor(diff / 3600)}h ago</span>`;
+  if (diff < 2592000) return `<span class="rel-time" data-ts="${ts}" title="${title}">${Math.floor(diff / 86400)}d ago</span>`;
+  if (diff < 31536000) return `<span class="rel-time" data-ts="${ts}" title="${title}">${Math.floor(diff / 2592000)}mo ago</span>`;
+  return `<span class="rel-time" data-ts="${ts}" title="${title}">${new Date(ts * 1000).toLocaleDateString(undefined,{year:'numeric',month:'short'})}</span>`;
+}
+
+// Update all .rel-time spans to show fresh relative times
+function updateRelTimes() {
+  document.querySelectorAll('.rel-time').forEach(el => {
+    const ts = parseInt(el.dataset.ts, 10);
+    if (ts) {
+      const now = Math.floor(Date.now() / 1000);
+      const diff = now - ts;
+      let text;
+      if (diff < 60) text = 'just now';
+      else if (diff < 3600) text = Math.floor(diff / 60) + 'm ago';
+      else if (diff < 86400) text = Math.floor(diff / 3600) + 'h ago';
+      else if (diff < 2592000) text = Math.floor(diff / 86400) + 'd ago';
+      else if (diff < 31536000) text = Math.floor(diff / 2592000) + 'mo ago';
+      else text = new Date(ts * 1000).toLocaleDateString(undefined,{year:'numeric',month:'short'});
+      if (el.textContent !== text) el.textContent = text;
+    }
+  });
+}
+
+// Legacy support - converts ISO date string to relative time (for older data)
 function relDate(str) {
   if (!str) return '—';
   const d = new Date(str);
@@ -161,7 +217,7 @@ function relDate(str) {
 }
 
 function toPathSafe(s) {
-  return (s || '').replace(/[\/\\:*?"<>|]/g, '').replace(/\s+/g, ' ').trim() || 'manga';
+  return (s || '').replace(/[\/\\:*?"<>|']/g, '').replace(/\s+/g, ' ').trim() || 'manga';
 }
 
 // ---------------------------------------------------------------------------
@@ -350,8 +406,7 @@ async function viewSeries(id) {
     const monitoredChecked = m.monitored !== false ? 'checked' : '';
     render(`${thumb}<h2>${escape(meta.title)} ${aniLink}</h2>
       <label style="font-size:0.9em"><input type="checkbox" id="monitored-cb" ${monitoredChecked} onchange="toggleMonitored('${m.id}', this.checked)"> Monitored <small>(auto-download new chapters)</small></label>
-      <pre>Romaji   : ${escape(meta.title_roman)}
-Original : ${escape(meta.title_og)}
+      <pre>Other Titles: ${(meta.other_titles || []).map(t => `<span class="tag">${escape(t)}</span>`).join(' ')}
 Years    : ${escape(year)}
 Status   : ${escape(meta.publishing_status)}
 Chapters : ${dl} / ${total} downloaded
@@ -400,149 +455,110 @@ Folder   : ${escape(m.relative_path)}</pre>
   }
 }
 
-// Renders a provider row for the "N available" dropdown.
-function providerRow(p) {
-  const tierLabel = {1:'T1:Official',2:'T2:Trusted',3:'T3:Unknown',4:'T4:NoGroup'}[p.tier] || 'T?';
-  const tierColor = {1:'#393',2:'#06c',3:'#c70',4:'#888'}[p.tier] || '#888';
-  const tierBadge = `<span style="font-size:0.7em;padding:1px 3px;border-radius:3px;background:${tierColor};color:#fff">${tierLabel}</span>`;
-  const grp = p.scanlator_group ? ` <small style="color:#666">(${escape(p.scanlator_group)})</small>` : '';
-  const langBadge = p.language && p.language.toLowerCase() !== 'en'
-    ? ` <span style="font-size:0.7em;padding:1px 4px;border-radius:3px;background:#555;color:#fff">${escape(p.language.toUpperCase())}</span>`
-    : '';
-  const relSpan = p.released_at ? ` <small style="color:#888">${relDate(p.released_at)}</small>` : '';
-  const link = p.chapter_url ? `<a href="${escape(p.chapter_url)}" target="_blank" rel="noopener" style="font-size:0.85em">[read]</a>` : '';
-  return `<div style="margin-bottom:0.15rem">${tierBadge} <b>${escape(p.provider_name)}</b>${grp}${langBadge}${relSpan} ${link}</div>`;
+// Helper to get tier info for a chapter
+// Renders tier badge for a chapter row
+function tierBadgeHtml(tier) {
+  const tierLabel = {1:'Official',2:'Known Scanner',3:'Unknown Scanner',4:'No Group'}[tier] || 'T?';
+  return `<span class="ch-tier ch-tier-${tier}">${tierLabel}</span>`;
 }
 
-// Renders a single chapter <tr>.
-// parts: optional array of split-part ChapterListItems to show inside the "N available" dropdown.
-function chapterRow(mangaId, ch, parts) {
-  if (!parts) parts = [];
-  const numFloat = ch.number_sort;
+// Renders a single chapter row.
+// isVariant=true for sub-rows shown in the expandable section.
+// extraActions is optional HTML appended to the last column (used for the toggle button on main rows).
+function chapterRow(mangaId, ch, isVariant = false, extraActions = '') {
   const base = ch.chapter_base;
   const variant = ch.chapter_variant;
-  let chNum;
-  if (variant === 0) {
-    chNum = `Chapter ${base}`;
-  } else if (variant >= 5) {
-    chNum = `Chapter ${base}.${variant}`;
-  } else {
-    chNum = `Chapter ${base} Part ${String.fromCharCode(64 + variant)}`; // A, B, C…
-  }
-  let label = `<b>${chNum}</b>`;
-  if (ch.title) label += ` — ${escape(ch.title)}`;
-  if (ch.scanlator_group) label += ` [${escape(ch.scanlator_group)}]`;
-  if (ch.provider_name) label += ` <small style="color:#888">@ ${escape(ch.provider_name)}</small>`;
+  const chNum = variant === 0 ? `Chapter ${base}` : `Chapter ${base}.${variant}`;
+  const title = ch.title ? ` — ${escape(ch.title)}` : '';
+  const chapterLabel = `<b>${chNum}</b>${title}`;
+
+  const tierHtml = tierBadgeHtml(ch.tier || 4);
+
+  const sourceUrl = ch.chapter_url;
+  const sourceName = ch.provider_name ? escape(ch.provider_name) : (ch.scanlator_group ? escape(ch.scanlator_group) : '—');
+  const sourceHtml = sourceUrl
+    ? `<a href="${escape(sourceUrl)}" target="_blank" rel="noopener" class="ch-source">${sourceName}</a>`
+    : `<span class="ch-source">${sourceName}</span>`;
+
+  let langHtml = '';
   if (ch.language && ch.language.toLowerCase() !== 'en') {
-    label += ` <span style="font-size:0.7em;padding:1px 4px;border-radius:3px;background:#555;color:#fff">${escape(ch.language.toUpperCase())}</span>`;
+    langHtml = ` <span style="font-size:0.7em;padding:1px 3px;border-radius:3px;background:#555;color:#fff">${escape(ch.language.toUpperCase())}</span>`;
   }
+
   const status = ch.download_status;
   const canDl = status === 'Missing' || status === 'Failed';
+
+  // Checkboxes only on canonical main rows (non-variant), for bulk download
+  const cb = (!isVariant && canDl)
+    ? `<input type="checkbox" class="ch-checkbox" data-base="${base}" data-variant="${variant}">`
+    : '';
+
   const dlBtn = canDl
-    ? `<button class="btn-sm" onclick='doDownload("${mangaId}", ${numFloat})'>Download</button>`
-    : '';
-  const markBtn = canDl
-    ? `&nbsp;<button class="btn-sm" onclick='doMarkDownloaded("${mangaId}", ${numFloat})'>Mark Done</button>`
-    : '';
-  const optBtn = status === 'Downloaded'
-    ? `<button class="btn-sm" onclick='doOptimise("${mangaId}", ${numFloat})'>Optimise</button>`
-    : '';
-  const cb = canDl
-    ? `<input type="checkbox" class="ch-checkbox" data-num="${numFloat}">`
+    ? `<button class="btn-sm" onclick='doDownload("${mangaId}", ${base}, ${variant})'>DL</button>`
     : '';
 
-  // Build provider dropdown — includes canonical providers + split parts if any
-  const totalCount = (ch.providers ? ch.providers.length : 0) + parts.length;
-  let provDetails = '';
-  if (totalCount > 0) {
-    let pRows = (ch.providers || []).map(providerRow).join('');
-    if (parts.length > 0) {
-      pRows += `<div style="margin-top:0.3rem;padding-top:0.3rem;border-top:1px solid #ddd;font-size:0.8em;color:#666">— Split versions —</div>`;
-      for (const part of parts) {
-        const pLetter = String.fromCharCode(64 + part.chapter_variant);
-        const pNum = part.number_sort;
-        const pStatus = part.download_status;
-        const pCanDl = pStatus === 'Missing' || pStatus === 'Failed';
-        const pGrp = part.scanlator_group ? ` <small style="color:#666">(${escape(part.scanlator_group)})</small>` : '';
-        const pProv = part.provider_name ? ` <small style="color:#888">@ ${escape(part.provider_name)}</small>` : '';
-        const pDlBtn = pCanDl
-          ? `<button class="btn-sm" onclick='doDownload("${mangaId}", ${pNum})'>Download Part ${pLetter}</button>`
-          : '';
-        pRows += `<div style="margin-bottom:0.15rem">Part ${pLetter}${pGrp}${pProv} ${statusBadge(pStatus)} ${pDlBtn}</div>`;
-      }
-    }
-    provDetails = `<details style="margin-top:0.25rem"><summary style="cursor:pointer;font-size:0.78em;color:#06c">${totalCount} available</summary><div style="padding:0.2rem 0 0.1rem 0.5rem">${pRows}</div></details>`;
-  }
+  // "Use" button: shown for non-canonical variant rows — lets user promote this source
+  const useBtn = (isVariant && !ch.is_canonical)
+    ? `<button class="btn-sm" onclick='doSetCanonical("${mangaId}", ${base}, ${variant}, "${ch.id}")'>Use</button>`
+    : '';
 
-  return `<tr>
+  // "Extra" toggle: shown for canonical rows only (is_extra is a per-slot property)
+  const extraBtn = ch.is_canonical
+    ? `<button class="btn-sm" onclick='doToggleExtra("${mangaId}", ${base}, ${variant})'>${ch.is_extra ? 'Un-extra' : 'Extra'}</button>`
+    : '';
+
+  const rowClass = isVariant ? 'ch-variant' : 'ch-main';
+
+  return `<tr class="${rowClass}">
     <td>${cb}</td>
-    <td>${label}${provDetails}</td>
+    <td>${chapterLabel}${langHtml}</td>
+    <td>${tierHtml}</td>
+    <td>${sourceHtml}</td>
     <td>${statusBadge(status)}</td>
-    <td><small>${relDate(ch.released_at)}</small></td>
-    <td><small>${relDate(ch.scraped_at)}</small></td>
-    <td>${dlBtn}${markBtn}${optBtn}</td>
+    <td><small>${relTime(ch.released_at)}</small></td>
+    <td><small>${relTime(ch.scraped_at)}</small></td>
+    <td>${dlBtn}${useBtn}${extraBtn}${extraActions}</td>
   </tr>`;
 }
 
-// Renders a combined <tr> for a group of split parts when no full chapter exists.
-function combinedPartsRow(mangaId, base, parts) {
-  parts = parts.slice().sort((a, c) => a.chapter_variant - c.chapter_variant);
-  const partLetters = parts.map(p => String.fromCharCode(64 + p.chapter_variant)).join('·');
+// Renders the full chapter group: main row + collapsible sub-rows.
+// mainCh      — canonical row for (base, 0), shown as the top-level row
+// v0alts      — non-canonical rows for (base, 0) i.e. alternative provider sources
+// splitParts  — array of { canonical, alts } for each variant > 0
+function chapterGroupHtml(mangaId, base, mainCh, v0alts, splitParts) {
+  if (!mainCh) return '';
 
-  const statuses = parts.map(p => p.download_status);
-  const groupStatus = statuses.every(s => s === 'Downloaded') ? 'Downloaded'
-    : statuses.some(s => s === 'Downloading') ? 'Downloading'
-    : statuses.some(s => s === 'Failed') ? 'Failed'
-    : 'Missing';
-
-  const missingNums = parts
-    .filter(p => p.download_status === 'Missing' || p.download_status === 'Failed')
-    .map(p => p.number_sort);
-  const dlAllBtn = missingNums.length > 0
-    ? `<button class="btn-sm" onclick='doDownloadParts("${mangaId}",${JSON.stringify(missingNums)})'>Download All Parts</button>`
-    : '';
-
-  // Dates: earliest released_at, latest scraped_at across parts
-  const releasedDates = parts.map(p => p.released_at).filter(Boolean);
-  const scrapedDates  = parts.map(p => p.scraped_at).filter(Boolean);
-  const releasedStr = releasedDates.length > 0 ? releasedDates.reduce((a, b) => a < b ? a : b) : null;
-  const scrapedStr  = scrapedDates.length  > 0 ? scrapedDates.reduce((a, b)  => a > b ? a : b) : null;
-
-  // Provider dropdown — all parts' providers merged
-  const allProviders = parts.flatMap(p => p.providers || []);
-  let provDropdown = '';
-  if (allProviders.length > 0) {
-    const pRows = allProviders.map(providerRow).join('');
-    provDropdown = `<details style="margin-top:0.25rem"><summary style="cursor:pointer;font-size:0.78em;color:#06c">${allProviders.length} available</summary><div style="padding:0.2rem 0 0.1rem 0.5rem">${pRows}</div></details>`;
+  // Collect all sub-rows
+  let subRows = '';
+  for (const alt of v0alts) {
+    subRows += chapterRow(mangaId, alt, true);
+  }
+  for (const sp of splitParts) {
+    if (sp.canonical) subRows += chapterRow(mangaId, sp.canonical, true);
+    for (const alt of sp.alts) {
+      subRows += chapterRow(mangaId, alt, true);
+    }
   }
 
-  // Per-part detail (expandable)
-  const partDetailRows = parts.map(part => {
-    const pLetter = String.fromCharCode(64 + part.chapter_variant);
-    const pNum = part.number_sort;
-    const pStatus = part.download_status;
-    const pCanDl = pStatus === 'Missing' || pStatus === 'Failed';
-    const pGrp = part.scanlator_group ? ` [${escape(part.scanlator_group)}]` : '';
-    const pProv = part.provider_name ? ` <small style="color:#888">@ ${escape(part.provider_name)}</small>` : '';
-    const pDl   = pCanDl ? `<button class="btn-sm" onclick='doDownload("${mangaId}", ${pNum})'>Download</button>` : '';
-    const pMark = pCanDl ? `&nbsp;<button class="btn-sm" onclick='doMarkDownloaded("${mangaId}", ${pNum})'>Mark Done</button>` : '';
-    return `<div style="margin-bottom:0.2rem">Part ${pLetter}${pGrp}${pProv} ${statusBadge(pStatus)} ${pDl}${pMark}</div>`;
-  }).join('');
-  const partDetail = `<details style="margin-top:0.25rem"><summary style="cursor:pointer;font-size:0.78em;color:#888">Parts detail</summary><div style="padding:0.2rem 0 0.1rem 0.5rem">${partDetailRows}</div></details>`;
-
-  const chapterLabel = `<b>Chapter ${base}</b> <small style="color:#888">(split · Parts ${partLetters})</small>`;
-  const cb = missingNums.length > 0
-    ? `<input type="checkbox" class="ch-checkbox-group" data-nums='${JSON.stringify(missingNums)}' data-manga="${mangaId}">`
+  const totalSub = v0alts.length + splitParts.reduce((n, sp) => n + 1 + sp.alts.length, 0);
+  const groupId = `ch-${mainCh.chapter_base}-${mainCh.chapter_variant}`;
+  const toggleHtml = totalSub > 0
+    ? `<br><span class="ch-variant-toggle" onclick="toggleVariants('${groupId}', this)">${totalSub} variant${totalSub !== 1 ? 's' : ''}</span>`
     : '';
 
-  return `<tr>
-    <td>${cb}</td>
-    <td>${chapterLabel}${provDropdown}${partDetail}</td>
-    <td>${statusBadge(groupStatus)}</td>
-    <td><small>${relDate(releasedStr)}</small></td>
-    <td><small>${relDate(scrapedStr)}</small></td>
-    <td>${dlAllBtn}</td>
-  </tr>`;
+  const mainRow = chapterRow(mangaId, mainCh, false, toggleHtml);
+
+  if (!subRows) return mainRow;
+
+  return mainRow +
+    `<tr class="ch-variant-row" id="${groupId}"><td colspan="8" style="padding:0;border:0;background:#fafafa"><table style="width:100%">${subRows}</table></td></tr>`;
+}
+
+function toggleVariants(groupId, toggleEl) {
+  const row = document.getElementById(groupId);
+  if (!row) return;
+  const isOpen = row.classList.toggle('open');
+  toggleEl.classList.toggle('open', isOpen);
 }
 
 async function loadChapters(mangaId) {
@@ -555,39 +571,66 @@ async function loadChapters(mangaId) {
       el.innerHTML = '<p>No chapters found. Try scanning.</p>';
       return;
     }
-    // Bucket each chapter into full (variant=0), split parts (1–4), or extras (5+)
-    const groups = {};
-    for (const ch of chapters) {
-      const b = ch.chapter_base;
-      if (!groups[b]) groups[b] = { full: null, parts: [], extras: [] };
-      if (ch.chapter_variant === 0) {
-        groups[b].full = ch;
-      } else if (ch.chapter_variant >= 5) {
-        groups[b].extras.push(ch);
-      } else {
-        groups[b].parts.push(ch);
-      }
-    }
-    const sortedBases = Object.keys(groups).map(Number).sort((a, b) => b - a);
-    const rows = [];
-    for (const b of sortedBases) {
-      const g = groups[b];
-      g.parts.sort((a, c) => a.chapter_variant - c.chapter_variant);
-      g.extras.sort((a, c) => a.chapter_variant - c.chapter_variant);
 
-      if (g.full) {
-        // Full chapter is primary; parts appear inside its "N available" dropdown
-        rows.push(chapterRow(mangaId, g.full, g.parts));
-      } else if (g.parts.length > 0) {
-        // Only split parts exist — single combined row (expandable)
-        rows.push(combinedPartsRow(mangaId, b, g.parts));
-      }
-      // Extras are always standalone
-      for (const extra of g.extras) rows.push(chapterRow(mangaId, extra));
+    // Group by chapter_base → chapter_variant → [rows]
+    const baseMap = new Map();
+    for (const ch of chapters) {
+      if (!baseMap.has(ch.chapter_base)) baseMap.set(ch.chapter_base, new Map());
+      const varMap = baseMap.get(ch.chapter_base);
+      if (!varMap.has(ch.chapter_variant)) varMap.set(ch.chapter_variant, []);
+      varMap.get(ch.chapter_variant).push(ch);
     }
+
+    const sortedBases = [...baseMap.keys()].sort((a, b) => b - a);
+    let rows = '';
+
+    for (const base of sortedBases) {
+      const varMap = baseMap.get(base);
+
+      // Variant 0: find canonical + alternatives
+      const v0rows = varMap.get(0) || [];
+      const v0canonical = v0rows.find(ch => ch.is_canonical) || null;
+      const v0alts = v0rows.filter(ch => !ch.is_canonical).sort((a, b) => (a.tier || 4) - (b.tier || 4));
+
+      // Variants > 0 (split parts), sorted by variant number
+      const splitParts = [...varMap.keys()]
+        .filter(v => v > 0)
+        .sort((a, b) => a - b)
+        .map(v => {
+          const vrows = varMap.get(v);
+          return {
+            canonical: vrows.find(ch => ch.is_canonical) || null,
+            alts: vrows.filter(ch => !ch.is_canonical).sort((a, b) => (a.tier || 4) - (b.tier || 4)),
+          };
+        });
+
+      // Determine main row: prefer canonical for variant 0, else fall back
+      let mainCh = v0canonical;
+      let effectiveV0alts = v0alts;
+      if (!mainCh) {
+        if (v0alts.length > 0) {
+          mainCh = v0alts[0];
+          effectiveV0alts = v0alts.slice(1);
+        }
+      }
+
+      if (mainCh) {
+        rows += chapterGroupHtml(mangaId, base, mainCh, effectiveV0alts, splitParts);
+      } else {
+        // No variant-0 at all — each split part is its own standalone chapter
+        for (const sp of splitParts) {
+          const spMain = sp.canonical || sp.alts[0];
+          if (spMain) {
+            const spAlts = sp.canonical ? sp.alts : sp.alts.slice(1);
+            rows += chapterGroupHtml(mangaId, base, spMain, spAlts, []);
+          }
+        }
+      }
+    }
+
     el.innerHTML = `<table>
-      <tr><th><input type="checkbox" title="Select all" onchange="toggleSelectAll(this.checked)"></th><th>Chapter</th><th>Status</th><th>Released</th><th>Scraped</th><th></th></tr>
-      ${rows.join('')}
+      <tr><th style="width:30px"><input type="checkbox" title="Select all" onchange="toggleSelectAll(this.checked)"></th><th>Chapter</th><th style="width:40px">Tier</th><th>Source</th><th>Status</th><th>Released</th><th>Scraped</th><th style="width:50px"></th></tr>
+      ${rows}
     </table>`;
   } catch(e) {
     el.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
@@ -627,38 +670,49 @@ async function doRefreshMetadata(mangaId) {
   }
 }
 
-async function doMarkDownloaded(mangaId, chapterNum) {
+async function doMarkDownloaded(mangaId, base, variant) {
   try {
-    await api('POST', `/api/manga/${mangaId}/chapters/${chapterNum}/mark-downloaded`);
+    await api('POST', `/api/manga/${mangaId}/chapters/${base}/${variant}/mark-downloaded`);
     loadChapters(mangaId);
   } catch(e) {
     alert('Error: ' + e.message);
   }
 }
 
-async function doOptimise(mangaId, chapterNum) {
+async function doOptimise(mangaId, base, variant) {
   try {
-    await api('POST', `/api/manga/${mangaId}/chapters/${chapterNum}/optimise`);
+    await api('POST', `/api/manga/${mangaId}/chapters/${base}/${variant}/optimise`);
     alert('Optimise task queued.');
   } catch(e) {
     alert('Error: ' + e.message);
   }
 }
 
-async function doDownload(mangaId, chapterNum) {
+async function doDownload(mangaId, base, variant) {
   try {
-    await api('POST', `/api/manga/${mangaId}/chapters/${chapterNum}/download`);
+    await api('POST', `/api/manga/${mangaId}/chapters/${base}/${variant}/download`);
     loadChapters(mangaId);
   } catch(e) {
     alert('Download error: ' + e.message);
   }
 }
 
-async function doDownloadParts(mangaId, nums) {
-  for (const n of nums) {
-    try { await api('POST', `/api/manga/${mangaId}/chapters/${n}/download`); } catch(_) {}
+async function doToggleExtra(mangaId, base, variant) {
+  try {
+    await api('POST', `/api/manga/${mangaId}/chapters/${base}/${variant}/toggle-extra`);
+    loadChapters(mangaId);
+  } catch(e) {
+    alert('Error: ' + e.message);
   }
-  loadChapters(mangaId);
+}
+
+async function doSetCanonical(mangaId, base, variant, chapterId) {
+  try {
+    await api('POST', `/api/manga/${mangaId}/chapters/${base}/${variant}/set-canonical`, { chapter_id: chapterId });
+    loadChapters(mangaId);
+  } catch(e) {
+    alert('Error: ' + e.message);
+  }
 }
 
 async function toggleMonitored(mangaId, checked) {
@@ -675,33 +729,19 @@ function toggleSelectAll(checked) {
 
 async function doDownloadSelected(mangaId) {
   const checked = Array.from(document.querySelectorAll('.ch-checkbox:checked'));
-  const groupChecked = Array.from(document.querySelectorAll('.ch-checkbox-group:checked'));
-  if (checked.length === 0 && groupChecked.length === 0) { alert('Select at least one chapter.'); return; }
+  if (checked.length === 0) { alert('Select at least one chapter.'); return; }
   let count = 0;
   for (const cb of checked) {
-    try { await api('POST', `/api/manga/${mangaId}/chapters/${cb.dataset.num}/download`); count++; } catch(_) {}
-  }
-  for (const cb of groupChecked) {
-    const nums = JSON.parse(cb.dataset.nums);
-    for (const n of nums) {
-      try { await api('POST', `/api/manga/${mangaId}/chapters/${n}/download`); count++; } catch(_) {}
-    }
+    try { await api('POST', `/api/manga/${mangaId}/chapters/${cb.dataset.base}/${cb.dataset.variant}/download`); count++; } catch(_) {}
   }
   if (count > 0) loadChapters(mangaId);
 }
 
 async function doDownloadAllMissing(mangaId) {
-  const singles = Array.from(document.querySelectorAll('.ch-checkbox'));
-  const groups  = Array.from(document.querySelectorAll('.ch-checkbox-group'));
-  if (singles.length === 0 && groups.length === 0) { alert('No missing chapters to download.'); return; }
-  for (const cb of singles) {
-    try { await api('POST', `/api/manga/${mangaId}/chapters/${cb.dataset.num}/download`); } catch(_) {}
-  }
-  for (const cb of groups) {
-    const nums = JSON.parse(cb.dataset.nums);
-    for (const n of nums) {
-      try { await api('POST', `/api/manga/${mangaId}/chapters/${n}/download`); } catch(_) {}
-    }
+  const cbs = Array.from(document.querySelectorAll('.ch-checkbox'));
+  if (cbs.length === 0) { alert('No missing chapters to download.'); return; }
+  for (const cb of cbs) {
+    try { await api('POST', `/api/manga/${mangaId}/chapters/${cb.dataset.base}/${cb.dataset.variant}/download`); } catch(_) {}
   }
   loadChapters(mangaId);
 }
@@ -720,21 +760,23 @@ async function loadProviders(mangaId) {
     }
     const rows = providers.map(p => {
       if (!p.found) {
-        const searched = p.search_attempted_at ? new Date(p.search_attempted_at).toLocaleString() : 'never';
+        // search_attempted_at is unix timestamp in seconds, multiply by 1000 for JS Date
+        const searched = p.search_attempted_at ? relTime(p.search_attempted_at) : 'never';
         return `<tr style="opacity:0.5">
           <td><b>${escape(p.provider_name)}</b></td>
           <td><span style="color:#a55">Not found</span></td>
           <td></td>
-          <td><small>searched: ${escape(searched)}</small></td>
+          <td><small>searched: ${searched}</small></td>
         </tr>`;
       }
-      const synced = p.last_synced_at ? new Date(p.last_synced_at).toLocaleString() : 'Never';
+      // last_synced_at is unix timestamp in seconds - use relTime for live updating
+      const synced = p.last_synced_at ? relTime(p.last_synced_at) : 'Never';
       const link = p.provider_url ? `<a href="${escape(p.provider_url)}" target="_blank" rel="noopener">[open]</a>` : '—';
       return `<tr>
         <td><b>${escape(p.provider_name)}</b></td>
         <td><span style="color:#393">Found</span></td>
         <td>${link}</td>
-        <td><small>${escape(synced)}</small></td>
+        <td><small>${synced}</small></td>
       </tr>`;
     }).join('');
     el.innerHTML = `<table>
@@ -785,15 +827,19 @@ async function doSearch() {
       const title = m.metadata?.title ?? 'Unknown';
       const year = m.metadata?.start_year ?? '?';
       const status = m.metadata?.publishing_status ?? 'Unknown';
+      const synopsis = m.metadata?.synopsis ?? '';
+      // Truncate synopsis to ~150 chars for search results
+      const synopsisShort = synopsis.length > 150 ? synopsis.substring(0, 150) + '...' : synopsis;
       const thumb = m.thumbnail_url ? `<img class="cover" src="${escape(m.thumbnail_url)}" alt="">` : '';
       return `<tr>
         <td>${thumb}</td>
         <td>
           <b><a href="https://anilist.co/manga/${id}" target="_blank">${escape(title)}</a></b><br>
           ${escape(year)} [${escape(status)}]<br>
-          Romaji: ${escape(m.metadata?.title_roman)}
+          Other Titles: ${(m.metadata?.other_titles || []).map(t => `<span class="tag">${escape(t)}</span>`).join(' ')}
+          ${synopsisShort ? `<br><small style="color:#666">${escape(synopsisShort)}</small>` : ''}
         </td>
-        <td><button onclick='showAddManga(${id}, ${JSON.stringify(title)})'>Add to Library</button></td>
+        <td><button onclick='showAddManga(${id}, "${toPathSafe(title)}")'>Add to Library</button></td>
       </tr>`;
     }).join('');
     document.getElementById('results').innerHTML =
@@ -804,9 +850,11 @@ async function doSearch() {
   }
 }
 
-async function showAddManga(anilistId, title) {
-  render('<p>Loading libraries...</p>');
+async function showAddManga(anilistId, pathSafeTitle) {
+render('<p>Loading...</p>');
   try {
+    // pathSafeTitle is already sanitized by toPathSafe() - no decoding needed
+    const title = pathSafeTitle || 'Unknown';
     const libs = await api('GET', '/api/libraries');
     if (libs.length === 0) {
       render('<p class="error">No libraries found. <a onclick="navigate(\'/library\')" style="cursor:pointer;color:#06c">Add one first.</a></p>');
@@ -875,10 +923,9 @@ async function manualTab() {
     <table style="width:100%">
       <tr><td style="width:160px;vertical-align:top;padding-top:0.4rem"><b>Title *</b></td>
           <td><input type="text" id="me-title" placeholder="English title" oninput="meAutoPath()"></td></tr>
-      <tr><td style="vertical-align:top;padding-top:0.4rem">Native Title</td>
-          <td><input type="text" id="me-title-og" placeholder="e.g. 呪術廻戦"></td></tr>
-      <tr><td style="vertical-align:top;padding-top:0.4rem">Romanised Title</td>
-          <td><input type="text" id="me-title-roman" placeholder="e.g. Jujutsu Kaisen"></td></tr>
+      <tr><td style="vertical-align:top;padding-top:0.4rem">Other Titles</td>
+          <td><input type="text" id="me-other-titles" placeholder="Comma-separated: 呪術廻戦, Jujutsu Kaisen">
+              <small>Alternative names, separated by commas.</small></td></tr>
       <tr><td style="vertical-align:top;padding-top:0.4rem">Synopsis</td>
           <td><textarea id="me-synopsis" rows="4" style="width:100%;box-sizing:border-box;padding:0.3rem;font-family:monospace" placeholder="Series description..."></textarea></td></tr>
       <tr><td style="vertical-align:top;padding-top:0.4rem">Status</td>
@@ -929,12 +976,14 @@ async function doAddManual() {
   const tagsRaw      = document.getElementById('me-tags').value.trim();
   const coverUrl     = document.getElementById('me-cover').value.trim();
 
+  const otherTitlesRaw = document.getElementById('me-other-titles').value.trim();
+  const other_titles = otherTitlesRaw ? otherTitlesRaw.split(',').map(t => t.trim()).filter(Boolean) : null;
+
   const body = {
     library_id: lib,
     relative_path: path,
     title,
-    title_og:    document.getElementById('me-title-og').value.trim() || null,
-    title_roman: document.getElementById('me-title-roman').value.trim() || null,
+    other_titles: other_titles,
     synopsis:    document.getElementById('me-synopsis').value.trim() || null,
     publishing_status: document.getElementById('me-status').value,
     tags: tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : [],
@@ -1149,6 +1198,9 @@ async function cancelTask(taskId) {
 
 // Boot
 dispatch(window.location.pathname);
+
+// Global timer to update all relative timestamps every 30 seconds (without API calls)
+setInterval(updateRelTimes, 30000);
 </script>
 </body>
 </html>"#;

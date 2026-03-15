@@ -16,6 +16,7 @@ struct ChapterRow {
     manga_id: String,
     chapter_base: i64,
     chapter_variant: i64,
+    is_extra: i64,
     title: Option<String>,
     language: String,
     scanlator_group: Option<String>,
@@ -51,6 +52,7 @@ fn chapter_from_row(row: ChapterRow) -> Result<Chapter, sqlx::Error> {
         manga_id,
         chapter_base: row.chapter_base as i32,
         chapter_variant: row.chapter_variant as i32,
+        is_extra: row.is_extra != 0,
         title: row.title,
         language: row.language,
         scanlator_group: row.scanlator_group,
@@ -86,25 +88,34 @@ pub async fn upsert_from_scrape(
         let language = info.language.as_deref().unwrap_or("EN").to_uppercase();
         let released_at = info.date_released;
 
+        // Normalize NULL to empty string for conflict detection.
+        // In SQLite, NULL != NULL in unique constraints, causing duplicate inserts.
+        // By using empty string, we ensure NULL + NULL = conflict detected.
+        // The URL IS still updated on conflict (chapter_url = excluded.chapter_url).
+        let scanlator_group = info.scanlator_group.as_deref().unwrap_or("");
+        let title = info.title.as_deref().unwrap_or("");
+
         let result = sqlx::query(
             "INSERT INTO Chapters
-                (uuid, manga_id, chapter_base, chapter_variant, title, language,
+                (uuid, manga_id, chapter_base, chapter_variant, is_extra, title, language,
                  scanlator_group, provider_name, chapter_url, download_status, released_at, scraped_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Missing', ?, ?)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Missing', ?, ?)
              ON CONFLICT(manga_id, chapter_base, chapter_variant, language, scanlator_group, provider_name)
              DO UPDATE SET
                  scraped_at       = excluded.scraped_at,
                  chapter_url      = excluded.chapter_url,
-                 title            = COALESCE(excluded.title, Chapters.title),
-                 scanlator_group  = COALESCE(excluded.scanlator_group, Chapters.scanlator_group)",
+                 title            = COALESCE(NULLIF(Chapters.title, ''), excluded.title),
+                 scanlator_group  = COALESCE(Chapters.scanlator_group, excluded.scanlator_group),
+                 is_extra         = CASE WHEN Chapters.is_extra = 0 THEN excluded.is_extra ELSE Chapters.is_extra END",
         )
         .bind(new_id.to_string())
         .bind(&manga_id_str)
         .bind(info.chapter_base as i64)
         .bind(info.chapter_variant as i64)
-        .bind(&info.title)
+        .bind(info.is_extra as i64)
+        .bind(title)
         .bind(&language)
-        .bind(&info.scanlator_group)
+        .bind(scanlator_group)
         .bind(provider_name)
         .bind(&info.url)
         .bind(released_at)
@@ -138,7 +149,7 @@ pub async fn get_all_for_manga(
     manga_id: Uuid,
 ) -> Result<Vec<Chapter>, sqlx::Error> {
     let rows = sqlx::query_as::<_, ChapterRow>(
-        "SELECT uuid, manga_id, chapter_base, chapter_variant, title, language,
+        "SELECT uuid, manga_id, chapter_base, chapter_variant, is_extra, title, language,
                 scanlator_group, provider_name, chapter_url, download_status,
                 released_at, downloaded_at, scraped_at
          FROM Chapters
@@ -160,7 +171,7 @@ pub async fn get_all_for_chapter(
     chapter_variant: i32,
 ) -> Result<Vec<Chapter>, sqlx::Error> {
     let rows = sqlx::query_as::<_, ChapterRow>(
-        "SELECT uuid, manga_id, chapter_base, chapter_variant, title, language,
+        "SELECT uuid, manga_id, chapter_base, chapter_variant, is_extra, title, language,
                 scanlator_group, provider_name, chapter_url, download_status,
                 released_at, downloaded_at, scraped_at
          FROM Chapters
@@ -178,7 +189,7 @@ pub async fn get_all_for_chapter(
 /// Get a chapter by UUID.
 pub async fn get_by_id(pool: &SqlitePool, id: Uuid) -> Result<Option<Chapter>, sqlx::Error> {
     let row = sqlx::query_as::<_, ChapterRow>(
-        "SELECT uuid, manga_id, chapter_base, chapter_variant, title, language,
+        "SELECT uuid, manga_id, chapter_base, chapter_variant, is_extra, title, language,
                 scanlator_group, provider_name, chapter_url, download_status,
                 released_at, downloaded_at, scraped_at
          FROM Chapters WHERE uuid = ?",
@@ -192,7 +203,7 @@ pub async fn get_by_id(pool: &SqlitePool, id: Uuid) -> Result<Option<Chapter>, s
 
 /// Get the canonical list of chapter UUIDs for a manga (from CanonicalChapters).
 /// Returns an empty Vec if no canonical entry exists yet.
-async fn get_canonical_uuids(
+pub async fn get_canonical_uuids(
     pool: &SqlitePool,
     manga_id: Uuid,
 ) -> Result<Vec<String>, sqlx::Error> {
@@ -222,7 +233,7 @@ pub async fn get_canonical_for_manga(
     // Build a query with the right number of placeholders
     let placeholders: String = uuids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
     let sql = format!(
-        "SELECT uuid, manga_id, chapter_base, chapter_variant, title, language,
+        "SELECT uuid, manga_id, chapter_base, chapter_variant, is_extra, title, language,
                 scanlator_group, provider_name, chapter_url, download_status,
                 released_at, downloaded_at, scraped_at
          FROM Chapters
@@ -252,7 +263,7 @@ pub async fn get_canonical_by_number(
 
     let placeholders: String = uuids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
     let sql = format!(
-        "SELECT uuid, manga_id, chapter_base, chapter_variant, title, language,
+        "SELECT uuid, manga_id, chapter_base, chapter_variant, is_extra, title, language,
                 scanlator_group, provider_name, chapter_url, download_status,
                 released_at, downloaded_at, scraped_at
          FROM Chapters
@@ -300,6 +311,24 @@ pub async fn update_canonical(
     preferred_language: &str,
 ) -> Result<(), sqlx::Error> {
     let all = get_all_for_manga(pool, manga_id).await?;
+
+    // Auto-classify: if a base has variant>=5 chapters but no variant 1–4, mark them as extras.
+    // e.g. a lone Ch.1.5 with no Ch.1.1–1.4 siblings → extra/bonus, not a split part.
+    {
+        let mut by_base: std::collections::HashMap<i32, Vec<&Chapter>> =
+            std::collections::HashMap::new();
+        for ch in &all {
+            by_base.entry(ch.chapter_base).or_default().push(ch);
+        }
+        for (_base, chs) in &by_base {
+            let has_low = chs.iter().any(|c| c.chapter_variant >= 1 && c.chapter_variant <= 4);
+            if !has_low {
+                for ch in chs.iter().filter(|c| c.chapter_variant >= 5 && !c.is_extra) {
+                    set_is_extra(pool, ch.id, true).await?;
+                }
+            }
+        }
+    }
 
     // Group by (chapter_base, chapter_variant)
     let mut groups: std::collections::BTreeMap<(i32, i32), Vec<Chapter>> =
@@ -380,19 +409,63 @@ pub async fn update_manga_counts(pool: &SqlitePool, manga_id: Uuid) -> Result<()
     Ok(())
 }
 
+/// Toggle the is_extra flag for a specific chapter row.
+pub async fn set_is_extra(pool: &SqlitePool, chapter_id: Uuid, is_extra: bool) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE Chapters SET is_extra = ? WHERE uuid = ?")
+        .bind(is_extra as i64)
+        .bind(chapter_id.to_string())
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Manually override the canonical chapter for a specific (chapter_base, chapter_variant) slot.
+/// Replaces whichever UUID was previously canonical for that slot with `new_uuid`.
+pub async fn set_canonical_override(
+    pool: &SqlitePool,
+    manga_id: Uuid,
+    chapter_base: i32,
+    chapter_variant: i32,
+    new_uuid: Uuid,
+) -> Result<(), sqlx::Error> {
+    let current = get_canonical_for_manga(pool, manga_id).await?;
+
+    let mut new_uuids: Vec<String> = current
+        .iter()
+        .filter(|ch| !(ch.chapter_base == chapter_base && ch.chapter_variant == chapter_variant))
+        .map(|ch| ch.id.to_string())
+        .collect();
+    new_uuids.push(new_uuid.to_string());
+
+    let json = serde_json::to_string(&new_uuids)
+        .map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
+
+    sqlx::query(
+        "INSERT OR REPLACE INTO CanonicalChapters (manga_id, canonical_list, last_updated)
+         VALUES (?, ?, unixepoch())",
+    )
+    .bind(manga_id.to_string())
+    .bind(&json)
+    .execute(pool)
+    .await?;
+
+    update_manga_counts(pool, manga_id).await
+}
+
 /// Insert a new chapter row directly (used by disk scanner for manually-found CBZ files).
 pub async fn insert(pool: &SqlitePool, chapter: &Chapter) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT OR IGNORE INTO Chapters
-            (uuid, manga_id, chapter_base, chapter_variant, title, language,
+            (uuid, manga_id, chapter_base, chapter_variant, is_extra, title, language,
              scanlator_group, provider_name, chapter_url, download_status,
              released_at, downloaded_at, scraped_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(chapter.id.to_string())
     .bind(chapter.manga_id.to_string())
     .bind(chapter.chapter_base as i64)
     .bind(chapter.chapter_variant as i64)
+    .bind(chapter.is_extra as i64)
     .bind(&chapter.title)
     .bind(&chapter.language)
     .bind(&chapter.scanlator_group)

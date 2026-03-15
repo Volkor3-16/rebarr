@@ -175,10 +175,7 @@ impl YamlProvider {
             match step {
                 StepDef::Open { open: url_tmpl } => {
                     let url = self.expand(url_tmpl, &vars);
-                    log::info!("open: {url}");
-                    if ctx.verbose {
-                        eprintln!("[step] open → {url}");
-                    }
+                    log::debug!("open: {url}");
 
                     if let Some(ref p) = page {
                         // Subsequent navigation on the same page.
@@ -642,16 +639,16 @@ fn records_to_search_results(records: Vec<HashMap<String, String>>) -> Vec<Provi
         .collect()
 }
 
-/// Parse a raw chapter number string into (number_sort, chapter_base, chapter_variant, is_extra).
+/// Parse a raw chapter number string into (number_sort, chapter_base, chapter_variant).
 ///
 /// Handles:
-/// - Plain numbers: "12" → (12.0, 12.0, 0, false)
-/// - Decimal splits: "12.1" → (12.1, 12.0, 1, false)
-/// - Decimal extras: "12.5" → (12.5, 12.0, 5, true)  [decimal >= 0.5 = bonus extra]
-/// - Letter suffixes: "12a" → (12.1, 12.0, 1, false), "12b" → (12.2, 12.0, 2, false)
+/// - Plain numbers: "12" → (12.0, 12.0, 0)
+/// - Decimal splits: "12.1" → (12.1, 12.0, 1)
+/// - Higher decimals: "12.5" → (12.5, 12.0, 5)  [whether extra is determined by title, not number]
+/// - Letter suffixes: "12a" → (12.1, 12.0, 1), "12b" → (12.2, 12.0, 2)
 /// - Prefixed: "Ch. 12.5" → takes last whitespace token before applying rules
-/// - Fallback: returns (0.0, 0.0, 0, false) instead of silently losing chapters
-fn parse_chapter_number(raw: &str) -> (f32, f32, u8, bool) {
+/// - Fallback: returns (0.0, 0.0, 0) instead of silently losing chapters
+fn parse_chapter_number(raw: &str) -> (f32, f32, u8) {
     // Take the last whitespace-separated token (strips "Ch.", "Chapter", "Vol.X Ch.Y" prefixes)
     let token = raw.split_whitespace().last().unwrap_or(raw).trim();
 
@@ -660,8 +657,7 @@ fn parse_chapter_number(raw: &str) -> (f32, f32, u8, bool) {
         let base = n.floor();
         let frac = (n - base).abs();
         let variant = (frac * 10.0).round() as u8;
-        let is_extra = frac >= 0.5 - f32::EPSILON;
-        return (n, base, variant, is_extra);
+        return (n, base, variant);
     }
 
     // Try letter suffix pattern: digits followed by a single lowercase letter ("12a", "12b")
@@ -673,14 +669,25 @@ fn parse_chapter_number(raw: &str) -> (f32, f32, u8, bool) {
                     // a=1, b=2, c=3, ...
                     let variant = (letter.to_ascii_lowercase() as u8) - b'a' + 1;
                     let number = base + (variant as f32) / 10.0;
-                    return (number, base, variant, false);
+                    return (number, base, variant);
                 }
             }
         }
     }
 
     // Fallback: could not parse — return 0 so the chapter still appears (not silently dropped)
-    (0.0, 0.0, 0, false)
+    (0.0, 0.0, 0)
+}
+
+/// Infer whether a chapter is an extra/bonus from its title using keyword matching.
+fn infer_is_extra(title: Option<&str>) -> bool {
+    let Some(t) = title else { return false };
+    let lower = t.to_lowercase();
+    const KEYWORDS: &[&str] = &[
+        "extra", "omake", "special", "bonus",
+        "side story", "side chapter", "interlude", "gaiden",
+    ];
+    KEYWORDS.iter().any(|kw| lower.contains(kw))
 }
 
 /// Parse a date string using an explicit strftime format, or `"relative"` for English
@@ -749,15 +756,17 @@ fn records_to_chapters(records: Vec<HashMap<String, String>>) -> Vec<ProviderCha
         .into_iter()
         .filter_map(|mut r| {
             let raw_number = r.remove("number_raw")?;
-            let (number, chapter_base, chapter_variant, is_extra) =
+            let (number, chapter_base, chapter_variant) =
                 parse_chapter_number(&raw_number);
+            let title = r.remove("title").filter(|s| !s.is_empty());
+            let is_extra = infer_is_extra(title.as_deref());
             Some(ProviderChapterInfo {
                 raw_number,
                 number,
                 chapter_base,
                 chapter_variant,
                 is_extra,
-                title: r.remove("title").filter(|s| !s.is_empty()),
+                title,
                 url: r.remove("url").filter(|s| !s.is_empty()),
                 volume: r.remove("volume").and_then(|s| s.parse().ok()),
                 scanlator_group: r.remove("scanlator_group").filter(|s| !s.is_empty()),

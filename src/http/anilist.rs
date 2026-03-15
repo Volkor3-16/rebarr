@@ -19,7 +19,6 @@ impl ALClient {
 
     /// Performs a manga search for a given title
     /// Returns the raw Page<Vec<Media>>
-    /// BUG: The search results can contain Light Novel results. So please filter them out if required.
     pub async fn search_manga(
         &self,
         title: &str,
@@ -41,7 +40,7 @@ impl ALClient {
     }
 
     /// Converts search results Media type into Manga Struct objects
-    /// We also filter out results that aren't manga, since anilist_moe is a bit bugged
+    /// BUG: Anilist_Moe seems to only check the MediaType and not MediaFormat, so it sometimes returns Light Novels
     pub async fn search_manga_as_manga(
         &self,
         title: &str,
@@ -49,10 +48,9 @@ impl ALClient {
         let page = self.search_manga(title).await?;
         Ok(page
             .data.into_iter()
-            .filter(|media| matches!(
-                media.format,
-                Some(MediaFormat::Manga | MediaFormat::OneShot)
-            ))
+            .filter(|media| {
+                matches!(media.format, Some(MediaFormat::Manga) | Some(MediaFormat::OneShot))
+            })
             .map(|media| media.into())
             .collect())
     }

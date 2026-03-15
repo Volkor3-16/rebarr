@@ -14,8 +14,7 @@ CREATE TABLE Manga (
     mal_id              INTEGER,
     relative_path       TEXT NOT NULL,
     title               TEXT NOT NULL,
-    title_og            TEXT NOT NULL DEFAULT '',
-    title_roman         TEXT NOT NULL DEFAULT '',
+    other_titles        TEXT,
     synopsis            TEXT,
     publishing_status   TEXT NOT NULL DEFAULT 'Unknown'
                             CHECK (publishing_status IN (

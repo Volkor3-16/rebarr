@@ -23,6 +23,7 @@ If you're here because you're hoping for your favourite site to be added, make a
 | MangaKatana   | mangakatana.com         | N/A         | Good sized lib, batch downloads. |
 | KaliScan      | kaliscan.com            | N/A         | Giant Library, but bad search and slow updates. |
 | MangaBuddy    | mangabuddy.me           | N/A         | Large library, lots of alt domains |
+| Mangakakalot  | ?                       | N/A         | My personal addition. Low quality, slow but large library. Great backup |
 
 ## WeebCentral
 

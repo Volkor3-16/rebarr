@@ -93,6 +93,7 @@ pub async fn scan_existing_chapters(pool: &SqlitePool, manga_id: Uuid) -> Result
                     manga_id,
                     chapter_base,
                     chapter_variant,
+                    is_extra: false,
                     title: None,
                     language: "EN".to_owned(),
                     scanlator_group: None,

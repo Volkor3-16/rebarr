@@ -2,6 +2,22 @@
 
 This a informal changelog so i can keep track of what im doing.
 
+## 2026-03-15
+
+- Improved Manga searching
+    - We now save the synonyms (other names) for each manga. While searching for chapters, if we don't find a result, we try its other names before giving up.
+    - Internally, we removed `title_og`, `title_roman`, and merged them into `other_titles`
+    - `other_titles` is the Anilist `synonyms` + `title_og` + `title_roman`
+    - We now filter out non-Manga from the Anilist search results.
+        - Made an issue upstream: https://github.com/Thunder-Blaze/anilist_moe/issues/10
+    - We now properly escape searching. things with ' and " and other fucked up characters work now.
+    - We now show the synposis in the search results (the first 150 characters anyway), helps when searching a lot.
+    - Fixed a bug with how searching works: previously any results in the search (even non-matching) would end a search early, now we continue until all are exhausted, or no actual matches are found.
+- Updated Comix provider to use their search endpoint correctly (sort by most relevant first...oops!)
+- The frontend has been updated accordingly, we now show other titles in the same nice bubble thing as tags.
+- We've disabled a bunch of needless logging by default. You can still use `RUST_LOG` or `.env` to override.
+- We've also cleaned up the frontend's table, made it easier to see chapters and their variants, along with actioning them.
+
 ## 2026-03-13
 
 - Added language and date scraping from providers (if supported)

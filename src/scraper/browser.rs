@@ -27,7 +27,7 @@ impl BrowserPool {
         self.inner
             .get_or_try_init(|| async {
                 let config = StealthConfig {
-                    headless: true,
+                    headless: false,
                     // patch_binary modifies the Chrome binary on disk (~400 MB copy).
                     // Disabled to avoid issues in environments with read-only Chrome installs.
                     // eoka's CDP command filtering provides substantial evasion without it.

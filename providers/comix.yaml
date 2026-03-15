@@ -5,7 +5,7 @@ rate_limit:
 
 search:
   steps:
-    - open: "/browser?keyword={query}"
+    - open: "/browser?keyword={query}&order=relevance%3Adesc&genres=-87264,-87266,-87268,-87265&genres_mode=and"
     - foreach:
         selector: ".item"
         extract:
@@ -53,6 +53,7 @@ chapters:
               a.setAttribute('data-language', ch.language);
               a.setAttribute('data-date', ch.created_at);
               a.setAttribute('data-scanlator', ch.scanlation_group ? ch.scanlation_group.name : '');
+              a.setAttribute('data-title', ch.name || ('Chapter ' + ch.number)); // fallback
               a.href = base + '/' + ch.chapter_id + '-chapter-' + ch.number;
               c.appendChild(a);
             });
@@ -66,6 +67,10 @@ chapters:
             selector: ""
             content: attr
             attr_name: data-number
+          title:
+            selector: ""
+            content: attr
+            attr_name: data-title
           url:
             selector: ""
             content: attr
