@@ -595,7 +595,7 @@ async function loadChapters(mangaId) {
       // Variants > 0 (split parts), sorted by variant number
       const splitParts = [...varMap.keys()]
         .filter(v => v > 0)
-        .sort((a, b) => a - b)
+        .sort((a, b) => b - a)
         .map(v => {
           const vrows = varMap.get(v);
           return {

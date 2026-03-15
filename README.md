@@ -16,11 +16,12 @@ The plan is to use AniList as the metadata source, and to automatically* match m
 - Duplicate series can be added
     - We should make sure only one instance for each anilist id/mal_id
 - We can't delete manga / chapters from the frontend.
-- Comix chapters duplicate each time they're scanned.
 - Scan for chapters does a full scan of all providers. This should only be done once when adding, and then once a week/month/n days/however
     - We should have two buttons:
     1. Search all providers (does the same as now, searches all providers)
     2. Scan for new chapters (only searches providers that have a series url) - This is the one that'll run automatically, checking for new chapters and therefore triggering downloads.
+- Test out actual thingo downloading. yah I wanna know if it works automatically.
+
 
 ## Features
 ### Minimum Viable Release
