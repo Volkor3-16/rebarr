@@ -1,5 +1,5 @@
-use anilist_moe::{AniListClient, AniListError};
-use log::debug;
+use anilist_moe::{AniListClient, AniListError, enums::media::MediaFormat, objects::media::Media};
+use log::{debug, trace};
 
 use crate::manga::manga::Manga;
 
@@ -18,7 +18,8 @@ impl ALClient {
     }
 
     /// Performs a manga search for a given title
-    /// Returns the raw Page<Vec<Media>> for external use, or Vec<Manga> for internal use.
+    /// Returns the raw Page<Vec<Media>>
+    /// BUG: The search results can contain Light Novel results. So please filter them out if required.
     pub async fn search_manga(
         &self,
         title: &str,
@@ -39,13 +40,21 @@ impl ALClient {
         Ok(response)
     }
 
-    /// Returns converted Manga Vec from search results
+    /// Converts search results Media type into Manga Struct objects
+    /// We also filter out results that aren't manga, since anilist_moe is a bit bugged
     pub async fn search_manga_as_manga(
         &self,
         title: &str,
     ) -> Result<Vec<Manga>, AniListError> {
         let page = self.search_manga(title).await?;
-        Ok(page.data.into_iter().map(|media| media.into()).collect())
+        Ok(page
+            .data.into_iter()
+            .filter(|media| matches!(
+                media.format,
+                Some(MediaFormat::Manga | MediaFormat::OneShot)
+            ))
+            .map(|media| media.into())
+            .collect())
     }
 
     /// Grabs the metadata for a specific AniList ID and converts to internal Manga struct
@@ -69,6 +78,4 @@ impl ALClient {
         Ok(page.data.into_iter().map(|media| media.into()).collect())
     }
 
-    // /// Downloads the thumbnail to disk.
-    // pub async fn download_thumbnail(id: i32)
 }
