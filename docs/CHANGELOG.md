@@ -2,6 +2,11 @@
 
 This a informal changelog so i can keep track of what im doing.
 
+## 2026-03-17
+
+- Add chapter deleting (will delete chapter)
+- Add series deleting (will not delete chapters)
+
 ## 2026-03-16
 
 - Added LHTranslation provider

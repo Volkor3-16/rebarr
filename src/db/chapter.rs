@@ -479,3 +479,61 @@ pub async fn insert(pool: &SqlitePool, chapter: &Chapter) -> Result<(), sqlx::Er
     .await?;
     Ok(())
 }
+
+/// Delete a chapter by UUID and update canonical chapters list.
+pub async fn delete(pool: &SqlitePool, chapter_id: Uuid) -> Result<(), sqlx::Error> {
+    // First get the manga_id so we can update canonical chapters
+    let chapter = get_by_id(pool, chapter_id).await?;
+    
+    if let Some(ch) = chapter {
+        let manga_id = ch.manga_id;
+        
+        // Delete the chapter row
+        sqlx::query("DELETE FROM Chapters WHERE uuid = ?")
+            .bind(chapter_id.to_string())
+            .execute(pool)
+            .await?;
+        
+        // Remove from canonical chapters list
+        let uuids = get_canonical_uuids(pool, manga_id).await?;
+        let chapter_id_str = chapter_id.to_string();
+        let new_uuids: Vec<String> = uuids
+            .into_iter()
+            .filter(|uuid| uuid != &chapter_id_str)
+            .collect();
+        
+        let json = serde_json::to_string(&new_uuids)
+            .map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
+        
+        sqlx::query(
+            "INSERT OR REPLACE INTO CanonicalChapters (manga_id, canonical_list, last_updated)
+             VALUES (?, ?, unixepoch())",
+        )
+        .bind(manga_id.to_string())
+        .bind(&json)
+        .execute(pool)
+        .await?;
+        
+        // Update manga chapter counts
+        update_manga_counts(pool, manga_id).await?;
+    }
+    
+    Ok(())
+}
+
+/// Delete all chapters for a manga (used when deleting a series).
+pub async fn delete_all_for_manga(pool: &SqlitePool, manga_id: Uuid) -> Result<(), sqlx::Error> {
+    // Delete all chapter rows
+    sqlx::query("DELETE FROM Chapters WHERE manga_id = ?")
+        .bind(manga_id.to_string())
+        .execute(pool)
+        .await?;
+    
+    // Delete canonical chapters entry
+    sqlx::query("DELETE FROM CanonicalChapters WHERE manga_id = ?")
+        .bind(manga_id.to_string())
+        .execute(pool)
+        .await?;
+    
+    Ok(())
+}

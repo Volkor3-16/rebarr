@@ -13,16 +13,21 @@ The plan is to use AniList as the metadata source, and to automatically* match m
     - One queue per provider
 - Make sure rate limts do something
     - at the moment they all just go super quick, we need to make sure the rate limits are set and enforced properly
-- Duplicate series can be added
-    - We should make sure only one instance for each anilist id/mal_id
-- We can't delete manga / chapters from the frontend.
 - Scan for chapters does a full scan of all providers. This should only be done once when adding, and then once a week/month/n days/however
     - We should have two buttons:
     1. Search all providers (does the same as now, searches all providers)
     2. Scan for new chapters (only searches providers that have a series url) - This is the one that'll run automatically, checking for new chapters and therefore triggering downloads.
 - Test out actual thingo downloading. yah I wanna know if it works automatically.
 - Add a button for promoting/scoring scanlators to 'trusted/untrusted'
-
+- [ ] Providers run out of steam with rate limits? Chapter downloads time out due to long downloads?
+    - WeebCentral just stops responding in a timely manner
+    - Comix slows down a fuckload - until it times out
+    - They get stuck, cancelling doesn't exit task early.
+    - We can't reset back to missing and redownload
+- Tasks should show more information
+    - the raw data in the task (what chapter is being downloaded??)
+    - We should show the page/chapter download %, like sonarr
+- Extras show below the chapter, (Chapter 26, Chapter 27.5, Chapter 27, Chapter 28.) Should be: (Chapter 26, Chapter 27, Chapter 27.5, Chapter 28)
 
 ## Features
 ### Minimum Viable Release
@@ -36,9 +41,11 @@ The plan is to use AniList as the metadata source, and to automatically* match m
         - Match and import into DB.
         - Moves, renames, matches files to chapters - exactly like sonarr bulk import
         - Do this for each manga series, let user match and verify if it doesn't match automatically.
-- [ ] Local 'Provider'
+- [ ] Local files management / local provider
     - Scans existing FS for manga in the library directory, but not added (from previous installs)
-    - Allows the user to import them (adds into db, adds chapters, reads local info and ads to db.)
+    - Allows the user to import them (adds into db, adds chapters, reads local info and adss to db.)
+    - Use embedded ComicInfo.xml to get metadata
+        - We should embed custom xml for more data.
     - Ranks them, so allows for upgrades to go through normally.
 - [ ] Allow users to select which providers to use per series, as an override. Just incase the user prefers one provider of any automated ranking.
     - This leaves a warning or something, since it means all provider management is done manually by the user

@@ -287,14 +287,25 @@ async function viewHome() {
             <td><a onclick='navigate("/series/${m.id}")' style="cursor:pointer;color:#06c">${escape(m.metadata?.title)}</a></td>
             <td>${escape(year)}</td>
             <td>${dl} / ${total}</td>
+            <td><button class="btn-sm btn-danger" onclick='doDeleteManga("${m.id}")'>Delete</button></td>
           </tr>`;
         }).join('');
-        html += `<table><tr><th></th><th>Title</th><th>Year</th><th>Chapters</th></tr>${rows}</table>`;
+        html += `<table><tr><th></th><th>Title</th><th>Year</th><th>Chapters</th><th></th></tr>${rows}</table>`;
       }
     });
     render(html);
   } catch(e) {
     render(`<p class="error">Error: ${escape(e.message)}</p>`);
+  }
+}
+
+async function doDeleteManga(mangaId) {
+  if (!confirm('Delete this series and ALL its chapters from the database? (Files on disk are not deleted.)')) return;
+  try {
+    await api('DELETE', `/api/manga/${mangaId}`);
+    viewHome();
+  } catch(e) {
+    alert('Error: ' + e.message);
   }
 }
 
@@ -497,6 +508,11 @@ function chapterRow(mangaId, ch, isVariant = false, extraActions = '') {
     ? `<button class="btn-sm" onclick='doDownload("${mangaId}", ${base}, ${variant})'>DL</button>`
     : '';
 
+  // Delete button: shown for canonical rows only
+  const deleteBtn = ch.is_canonical
+    ? `<button class="btn-sm btn-danger" onclick='doDeleteChapter("${mangaId}", ${base}, ${variant})'>Del</button>`
+    : '';
+
   // "Use" button: shown for non-canonical variant rows — lets user promote this source
   const useBtn = (isVariant && !ch.is_canonical)
     ? `<button class="btn-sm" onclick='doSetCanonical("${mangaId}", ${base}, ${variant}, "${ch.id}")'>Use</button>`
@@ -520,7 +536,7 @@ function chapterRow(mangaId, ch, isVariant = false, extraActions = '') {
     <td>${statusBadge(status)}</td>
     <td><small>${relTime(ch.released_at)}</small></td>
     <td><small>${relTime(ch.scraped_at)}</small></td>
-    <td>${dlBtn}${useBtn}${extraBtn}${extraActions}</td>
+    <td>${dlBtn}${deleteBtn}${useBtn}${extraBtn}${extraActions}</td>
   </tr>`;
 }
 
@@ -712,6 +728,16 @@ async function doDownload(mangaId, base, variant) {
     loadChapters(mangaId);
   } catch(e) {
     alert('Download error: ' + e.message);
+  }
+}
+
+async function doDeleteChapter(mangaId, base, variant) {
+  if (!confirm('Delete this chapter? This will also remove downloaded files from disk.')) return;
+  try {
+    await api('DELETE', `/api/manga/${mangaId}/chapters/${base}/${variant}`);
+    loadChapters(mangaId);
+  } catch(e) {
+    alert('Delete error: ' + e.message);
   }
 }
 

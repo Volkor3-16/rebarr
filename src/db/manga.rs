@@ -258,11 +258,82 @@ pub async fn get_all_for_library(
     Ok(out)
 }
 
+/// Check if a manga with the given anilist_id or mal_id already exists in a library.
+/// Returns the existing manga if found, None otherwise.
+pub async fn exists_by_external_ids(
+    pool: &SqlitePool,
+    library_id: Uuid,
+    anilist_id: Option<u32>,
+    mal_id: Option<u32>,
+) -> Result<Option<Manga>, sqlx::Error> {
+    let lib_str = library_id.to_string();
+    let al_id = anilist_id.map(|v| v as i64);
+    let m_id = mal_id.map(|v| v as i64);
+
+    // Only search if we have at least one external ID
+    if al_id.is_none() && m_id.is_none() {
+        return Ok(None);
+    }
+
+    let row = sqlx::query_as::<_, MangaRow>(
+        r#"SELECT
+            uuid, library_id, anilist_id, mal_id, relative_path,
+            title, other_titles, synopsis, publishing_status,
+            start_year, end_year, chapter_count, downloaded_count,
+            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at
+        FROM Manga 
+        WHERE library_id = ? 
+          AND (anilist_id = ? OR mal_id = ?)"#,
+    )
+    .bind(&lib_str)
+    .bind(al_id)
+    .bind(m_id)
+    .fetch_optional(pool)
+    .await?;
+
+    match row {
+        None => Ok(None),
+        Some(row) => {
+            let tags = fetch_tags(pool, &row.uuid).await?;
+            manga_from_parts(row, tags).map(Some)
+        }
+    }
+}
+
 pub async fn delete(pool: &SqlitePool, id: Uuid) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    
+    // Delete all chapters for this manga (also cleans up CanonicalChapters)
+    sqlx::query("DELETE FROM Chapters WHERE manga_id = ?")
+        .bind(id.to_string())
+        .execute(&mut *tx)
+        .await?;
+    
+    // Delete canonical chapters entry
+    sqlx::query("DELETE FROM CanonicalChapters WHERE manga_id = ?")
+        .bind(id.to_string())
+        .execute(&mut *tx)
+        .await?;
+    
+    // Delete all tags for this manga
+    sqlx::query("DELETE FROM MangaTags WHERE manga_id = ?")
+        .bind(id.to_string())
+        .execute(&mut *tx)
+        .await?;
+    
+    // Delete all provider records for this manga
+    sqlx::query("DELETE FROM MangaProvider WHERE manga_id = ?")
+        .bind(id.to_string())
+        .execute(&mut *tx)
+        .await?;
+    
+    // Delete the manga itself
     sqlx::query("DELETE FROM Manga WHERE uuid = ?")
         .bind(id.to_string())
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+    
+    tx.commit().await?;
     Ok(())
 }
 

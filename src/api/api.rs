@@ -173,6 +173,27 @@ async fn add_manga(
         .await
         .map_err(|e| err(Status::BadGateway, format!("AniList lookup failed: {e}")))?;
 
+    // Check for duplicates in this library
+    if let Some(existing) = db::manga::exists_by_external_ids(
+        pool.inner(),
+        library_id,
+        manga.anilist_id,
+        manga.mal_id,
+    )
+    .await
+    .map_err(internal)?
+    {
+        return Err((
+            Status::Conflict,
+            Json(ApiError {
+                error: format!(
+                    "This manga ({}) already exists in this library with ID: {}",
+                    existing.metadata.title, existing.id
+                ),
+            }),
+        ));
+    }
+
     manga.id = Uuid::new_v4();
     manga.library_id = library_id;
     manga.relative_path = PathBuf::from(body.relative_path.trim());
@@ -597,6 +618,84 @@ async fn download_chapter_api(
 }
 
 // ---------------------------------------------------------------------------
+// DELETE /api/manga/<id>/chapters/<base>/<variant>
+// ---------------------------------------------------------------------------
+
+#[delete("/api/manga/<id>/chapters/<base>/<variant>")]
+async fn delete_chapter_api(
+    pool: &State<SqlitePool>,
+    id: &str,
+    base: i32,
+    variant: i32,
+) -> Result<Status, (Status, Json<ApiError>)> {
+    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    
+    // Verify manga exists
+    let manga = db::manga::get_by_id(pool.inner(), manga_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("manga not found"))?;
+    
+    // Find the canonical chapter
+    let chapter = db::chapter::get_canonical_by_number(pool.inner(), manga_id, base, variant)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("chapter not found"))?;
+    
+    // Delete the downloaded files from disk if they exist
+    if chapter.download_status == DownloadStatus::Downloaded {
+        let library = db::library::get_by_id(pool.inner(), manga.library_id)
+            .await
+            .map_err(internal)?
+            .ok_or_else(|| not_found("library not found"))?;
+        
+        // Chapter file naming: "Chapter XX" or "Chapter XX.Y" + optional title + optional group
+        let mut cbz_name = if chapter.chapter_variant == 0 {
+            format!("Chapter {}", chapter.chapter_base)
+        } else {
+            format!("Chapter {}.{}", chapter.chapter_base, chapter.chapter_variant)
+        };
+        
+        // Add title if present
+        if let Some(ref title) = chapter.title {
+            cbz_name.push_str(&format!(" - {}", title));
+        }
+        
+        // Add scanlator group if present
+        if let Some(ref group) = chapter.scanlator_group {
+            cbz_name.push_str(&format!(" [{}]", group));
+        }
+        
+        // Sanitize filename
+        let cbz_name: String = cbz_name
+            .chars()
+            .map(|c| {
+                if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                    '_'
+                } else {
+                    c
+                }
+            })
+            .collect();
+        
+        let chapter_path = library.root_path.join(&manga.relative_path).join(format!("{}.cbz", cbz_name));
+        
+        if chapter_path.exists() {
+            if let Err(e) = std::fs::remove_file(&chapter_path) {
+                log::warn!("[api] Failed to delete chapter file '{}': {}", chapter_path.display(), e);
+            }
+        }
+    }
+    
+    // Delete from database
+    db::chapter::delete(pool.inner(), chapter.id)
+        .await
+        .map_err(internal)?;
+    
+    Ok(Status::NoContent)
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/manga/<id>/refresh
 // ---------------------------------------------------------------------------
 
@@ -1007,6 +1106,7 @@ pub fn routes() -> Vec<rocket::Route> {
         list_manga_providers,
         list_chapters,
         download_chapter_api,
+        delete_chapter_api,
         refresh_manga_api,
         scan_disk_api,
         mark_chapter_downloaded,
