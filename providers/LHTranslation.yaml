@@ -1,0 +1,122 @@
+name: LHTranslation
+base_url: https://lhtranslation.net
+rate_limit:
+  requests_per_minute: 30
+
+search:
+  steps:
+    - open: "/?s={query}&post_type=wp-manga&op=&author=&artist=&release=&adult="
+    - foreach:
+        selector: "div.row.c-tabs-item__content"   # one block per search result
+        extract:
+          title:
+            selector: ".post-title h3 a"
+            content: text
+          url:
+            selector: ".post-title h3 a"
+            content: attr
+            attr_name: href
+            prefix: "{base_url}"                 # resolves to https://lhtranslation.net
+          cover:
+            selector: ".tab-thumb img"
+            content: attr
+            attr_name: src
+
+chapters:
+  steps:
+    - open: "{manga_url}"
+    # This wouldn't have needed JS but I wanted fancy time conversion, they use both relative time and a date for release times, so we might as well just do the whole scrape in js.
+    - extract_js:
+        var: _injected
+        script: |
+          (function () {
+            const now = Date.now();
+
+            function parseRelative(text) {
+              text = text.trim().toLowerCase();
+              const num = parseInt(text, 10) || 0;
+              if (text.includes("minute")) return now - num * 60 * 1000;
+              if (text.includes("hour"))   return now - num * 60 * 60 * 1000;
+              if (text.includes("day"))    return now - num * 24 * 60 * 60 * 1000;
+              if (text.includes("just now")) return now;
+              return null;
+            }
+
+            document.querySelectorAll(".wp-manga-chapter").forEach(li => {
+              const a = li.querySelector("a[href*='chapter']:not(.btn-chapter-download)") || li.querySelector("a");
+              if (!a) return;
+
+              // Create hidden spans to hold values
+              let t = document.createElement("span");
+              t.className = "scrape-title";
+              t.textContent = a.textContent.trim();
+              t.style.display = "none";
+              li.appendChild(t);
+
+              let u = document.createElement("span");
+              u.className = "scrape-url";
+              u.textContent = a.href;
+              u.style.display = "none";
+              li.appendChild(u);
+
+              let n = document.createElement("span");
+              n.className = "scrape-number";
+              const match = a.href.match(/chapter[-/](\d+(?:[.-]\d+)?)/);
+              n.textContent = match ? match[1] : "";
+              n.style.display = "none";
+              li.appendChild(n);
+
+              // Normalize date
+              const dateEl = li.querySelector(".chapter-release-date i");
+              if (dateEl) {
+                const raw = dateEl.textContent.trim();
+                let ts = null;
+                if (/ago|minute|hour|day/i.test(raw)) {
+                  ts = parseRelative(raw);
+                } else {
+                  const d = new Date(raw);
+                  if (!isNaN(d)) ts = d.getTime();
+                }
+                if (ts) dateEl.textContent = Math.floor(ts / 1000);
+              }
+            });
+
+            return true;
+          })();
+
+    - foreach:
+        selector: 'li.wp-manga-chapter'
+        extract:
+          title:
+            selector: ".scrape-title"
+            content: text
+
+          url:
+            selector: ".scrape-url"
+            content: text
+
+          number_raw:
+            selector: ".scrape-number"
+            content: text
+
+          date:
+            selector: ".chapter-release-date i"
+            content: text
+            date_format: "%s"
+
+          scanlator_group:
+            static_value: "LHTranslation"
+
+          language:
+            static_value: "en"
+
+pages:
+  steps:
+    - open: "{chapter_url}"
+    - foreach:
+        selector: "div.page-break > img"
+        extract:
+          url:
+            selector: ""
+            content: attr
+            attr_name: src
