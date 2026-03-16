@@ -2,6 +2,12 @@
 
 This a informal changelog so i can keep track of what im doing.
 
+## 2026-03-16
+
+- Added LHTranslation provider
+- Added scanlator column to chapterview
+- Fix chapters again lol, extras should show in the main chapter table
+
 ## 2026-03-15
 
 - Improved Manga searching

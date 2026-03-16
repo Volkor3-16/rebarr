@@ -21,6 +21,7 @@ The plan is to use AniList as the metadata source, and to automatically* match m
     1. Search all providers (does the same as now, searches all providers)
     2. Scan for new chapters (only searches providers that have a series url) - This is the one that'll run automatically, checking for new chapters and therefore triggering downloads.
 - Test out actual thingo downloading. yah I wanna know if it works automatically.
+- Add a button for promoting/scoring scanlators to 'trusted/untrusted'
 
 
 ## Features

@@ -61,8 +61,15 @@ chapters:
 
               let n = document.createElement("span");
               n.className = "scrape-number";
-              const match = a.href.match(/chapter[-/](\d+(?:[.-]\d+)?)/);
-              n.textContent = match ? match[1] : "";
+              // Extract chapter number including split parts
+              let numberMatch = a.href.match(/chapter[-/](\d+)(?:[-\.](\d+))?/);
+              if (numberMatch) {
+                let main = numberMatch[1];          // e.g., "42"
+                let split = numberMatch[2] || "";   // e.g., "1" or ""
+                n.textContent = split ? `${main}.${split}` : main;  // "42.1"
+              } else {
+                n.textContent = "";
+              }
               n.style.display = "none";
               li.appendChild(n);
 

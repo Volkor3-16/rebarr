@@ -509,9 +509,12 @@ function chapterRow(mangaId, ch, isVariant = false, extraActions = '') {
 
   const rowClass = isVariant ? 'ch-variant' : 'ch-main';
 
+  const scanlatorHtml = ch.scanlator_group ? escape(ch.scanlator_group) : '—';
+
   return `<tr class="${rowClass}">
     <td>${cb}</td>
     <td>${chapterLabel}${langHtml}</td>
+    <td>${scanlatorHtml}</td>
     <td>${tierHtml}</td>
     <td>${sourceHtml}</td>
     <td>${statusBadge(status)}</td>
@@ -551,7 +554,7 @@ function chapterGroupHtml(mangaId, base, mainCh, v0alts, splitParts) {
   if (!subRows) return mainRow;
 
   return mainRow +
-    `<tr class="ch-variant-row" id="${groupId}"><td colspan="8" style="padding:0;border:0;background:#fafafa"><table style="width:100%">${subRows}</table></td></tr>`;
+    `<tr class="ch-variant-row" id="${groupId}"><td colspan="9" style="padding:0;border:0;background:#fafafa"><table style="width:100%">${subRows}</table></td></tr>`;
 }
 
 function toggleVariants(groupId, toggleEl) {
@@ -587,17 +590,27 @@ async function loadChapters(mangaId) {
     for (const base of sortedBases) {
       const varMap = baseMap.get(base);
 
-      // Variant 0: find canonical + alternatives
-      const v0rows = varMap.get(0) || [];
+      // Collect ALL extras for this base from ALL variants (not just variant 0)
+      const extras = [];
+      for (const [variant, chs] of varMap) {
+        for (const ch of chs) {
+          if (ch.is_extra) extras.push(ch);
+        }
+      }
+      // Sort extras by variant descending (like regular chapters)
+      extras.sort((a, b) => (b.chapter_variant || 0) - (a.chapter_variant || 0));
+
+      // Get all variant 0 rows (excluding extras)
+      const v0rows = (varMap.get(0) || []).filter(ch => !ch.is_extra);
       const v0canonical = v0rows.find(ch => ch.is_canonical) || null;
       const v0alts = v0rows.filter(ch => !ch.is_canonical).sort((a, b) => (a.tier || 4) - (b.tier || 4));
 
-      // Variants > 0 (split parts), sorted by variant number
+      // Variants > 0 (split parts), sorted by variant number (excluding extras)
       const splitParts = [...varMap.keys()]
         .filter(v => v > 0)
         .sort((a, b) => b - a)
         .map(v => {
-          const vrows = varMap.get(v);
+          const vrows = varMap.get(v).filter(ch => !ch.is_extra);
           return {
             canonical: vrows.find(ch => ch.is_canonical) || null,
             alts: vrows.filter(ch => !ch.is_canonical).sort((a, b) => (a.tier || 4) - (b.tier || 4)),
@@ -626,10 +639,15 @@ async function loadChapters(mangaId) {
           }
         }
       }
+
+      // Render extras as standalone rows (not collapsible variants)
+      for (const extra of extras) {
+        rows += chapterRow(mangaId, extra, false, '');
+      }
     }
 
     el.innerHTML = `<table>
-      <tr><th style="width:30px"><input type="checkbox" title="Select all" onchange="toggleSelectAll(this.checked)"></th><th>Chapter</th><th style="width:40px">Tier</th><th>Source</th><th>Status</th><th>Released</th><th>Scraped</th><th style="width:50px"></th></tr>
+      <tr><th style="width:30px"><input type="checkbox" title="Select all" onchange="toggleSelectAll(this.checked)"></th><th>Chapter</th><th>Scanlator</th><th style="width:40px">Tier</th><th>Source</th><th>Status</th><th>Released</th><th>Scraped</th><th style="width:50px"></th></tr>
       ${rows}
     </table>`;
   } catch(e) {
