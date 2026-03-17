@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>REBARR</title>
+  <script src="https://code.iconify.design/iconify-icon/3.0.0/iconify-icon.min.js"></script>
+  <link rel="stylesheet" href="/web/css/main.css">
+</head>
+<body>
+  <div id="app">
+    <div class="header-container">
+      <div class="header-brand">
+        <h1>REBARR</h1>
+        <div class="brand-subtitle">Manga Library Manager</div>
+        <div id="mini-ticker" class="mini-ticker hidden">
+          <span class="console-empty">No recent activity</span>
+        </div>
+      </div>
+      <div class="activity-console" id="activity-console">
+        <h4>Activity</h4>
+        <div id="console-entries">
+          <div class="console-empty">No recent activity</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <nav id="nav">
+    <a onclick="navigate('/')" data-path="/">Home</a>
+    <a onclick="navigate('/library')" data-path="/library">Libraries</a>
+    <a onclick="navigate('/search')" data-path="/search">Search</a>
+    <a onclick="navigate('/settings')" data-path="/settings">Settings</a>
+    <a onclick="navigate('/queue')" data-path="/queue">Queue</a>
+    <button id="theme-toggle" class="theme-toggle" onclick="cycleTheme()">
+      <iconify-icon icon="mdi:moon-waxing-crescent" width="24" height="24"></iconify-icon>
+    </button>
+  </nav>
+
+  <main id="content">
+    <p>Loading...</p>
+  </main>
+
+  <div id="toast-container"></div>
+
+  <!-- Load all JS modules -->
+  <script type="module" src="/web/js/app.js"></script>
+</body>
+</html>

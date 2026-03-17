@@ -14,11 +14,9 @@ The plan is to use AniList as the metadata source, and to automatically* match m
     - turn the scanlator group into a bubble thing, with a + to promote to trusted
 - Tasks should show more information
     - [x] Chapter is now listed
-    - [ ] Page count is not
+    - [ ] Page count is not (would need more changes)
 - Downloads do not follow user selections
     - When you click 'use' on a variant chapter, it selects in the frontend, showed as a canonical chapter, but when you click download it downloads the old chaptter from source
-- Chapters that are missing shouldn't have 'Del' buttons
-- Chapters with no scanlater group shouldn't have the empty [] in the filename
 
 ## Features
 ### Minimum Viable Release

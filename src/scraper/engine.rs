@@ -704,6 +704,22 @@ fn parse_chapter_number(raw: &str) -> (f32, f32, u8) {
     (0.0, 0.0, 0)
 }
 
+/// Returns true if the title is just a chapter number restatement (e.g. "Chapter 5", "Ch. 14.5").
+/// "Chapter of the Dragon" → false. "Chapter 14" → true.
+fn is_fake_chapter_title(title: &str) -> bool {
+    let lower = title.trim().to_ascii_lowercase();
+    let rest = if lower.starts_with("chapter ") {
+        &lower["chapter ".len()..]
+    } else if lower.starts_with("ch. ") {
+        &lower["ch. ".len()..]
+    } else if lower.starts_with("ch ") {
+        &lower["ch ".len()..]
+    } else {
+        return false;
+    };
+    rest.trim().parse::<f64>().is_ok()
+}
+
 /// Infer whether a chapter is an extra/bonus from its title using keyword matching.
 fn infer_is_extra(title: Option<&str>) -> bool {
     let Some(t) = title else { return false };
@@ -783,7 +799,9 @@ fn records_to_chapters(records: Vec<HashMap<String, String>>) -> Vec<ProviderCha
             let raw_number = r.remove("number_raw")?;
             let (number, chapter_base, chapter_variant) =
                 parse_chapter_number(&raw_number);
-            let title = r.remove("title").filter(|s| !s.is_empty());
+            let title = r.remove("title")
+                .filter(|s| !s.is_empty())
+                .filter(|s| !is_fake_chapter_title(s));
             let is_extra = infer_is_extra(title.as_deref());
             Some(ProviderChapterInfo {
                 raw_number,

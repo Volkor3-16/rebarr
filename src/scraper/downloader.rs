@@ -143,11 +143,12 @@ pub async fn download_chapter(
                 if let Some(ref t) = chapter.title {
                     cbz_name.push_str(&format!(" - {t}"));
                 }
-                if let Some(ref g) = chapter.scanlator_group {
+                if let Some(g) = chapter.scanlator_group.as_deref().filter(|s| !s.is_empty()) {
                     cbz_name.push_str(&format!(" [{g}]"));
                 }
                 let cbz_name: String = cbz_name
                     .chars()
+                    // TODO: surely there's a better path-safe conversion thing that already exists in rust.
                     .map(|c| {
                         if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
                             '_'

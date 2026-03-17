@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use dotenvy::dotenv;
+use rocket::fs::FileServer;
 
 mod api;
 mod db;
@@ -74,6 +75,7 @@ async fn main() -> Result<(), rocket::Error> {
         .manage(cancel_map)
         .mount("/", frontend_routes())
         .mount("/", api_routes())
+        .mount("/web", FileServer::from("web"))
         .launch()
         .await?;
 

@@ -4,17 +4,17 @@ This a informal changelog so i can keep track of what im doing.
 
 ## 2026-03-17
 
-- Add chapter deleting (will delete chapter)
-- Add series deleting (will not delete chapters)
+- Replaced frontend almost completely
+    - Similar base, just split into files and a more sensible structure.
+    - Dark/Light theme (depending on browser preferences/override)
+    - Series view improved substantially
+    - Home view looks nicer
+    - Github looking quick chapter status view
 - We now restart the embedded browser when it dies (often)
-- Fix chapters again lmfao, extras show PROPERLY now, (70.5 is inbetween 70 and 71.)
-    - It used to be fucked up ordering, 70.5, 70, 71
 - Claude re-wrote the rate limiting / queue system
     - Rate limiting during page downloads (with page_delay_ms)
     - Cancelling chapters won't just get the task stuck, stops the download mid-state and resets to 'Missing'
     - Reset buttons on chapters flagged as Failed
-- Downloads are more responsive (frontend tags them, doesn't shit view up)
-- Chapter Downloads now show more info on the series page
 - Merged testing migrations
 
 ## 2026-03-16
