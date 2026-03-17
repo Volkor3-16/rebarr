@@ -153,7 +153,28 @@ impl YamlProvider {
     // Step execution engine
     // ------------------------------------------------------------------
 
+    /// Run the action, transparently restarting Chromium once if the CDP
+    /// transport has died (WebSocket gone, reader thread exited, etc.).
     async fn execute_action(
+        &self,
+        ctx: &ScraperCtx,
+        action: &ActionDef,
+        input_vars: HashMap<String, String>,
+    ) -> Result<ActionResult, ScraperError> {
+        match self.run_action(ctx, action, input_vars.clone()).await {
+            Err(ref e) if is_transport_error(e) => {
+                log::warn!(
+                    "provider '{}': CDP transport error — resetting browser and retrying: {e}",
+                    self.def.name
+                );
+                ctx.browser.reset().await;
+                self.run_action(ctx, action, input_vars).await
+            }
+            other => other,
+        }
+    }
+
+    async fn run_action(
         &self,
         ctx: &ScraperCtx,
         action: &ActionDef,
@@ -559,6 +580,10 @@ impl Provider for YamlProvider {
         self.def.rate_limit.requests_per_minute
     }
 
+    fn page_delay_ms(&self) -> u64 {
+        self.def.rate_limit.page_delay_ms
+    }
+
     async fn search(
         &self,
         ctx: &ScraperCtx,
@@ -815,6 +840,23 @@ fn result_to_pages(result: ActionResult) -> Result<Vec<PageUrl>, ScraperError> {
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Transport-error detection
+// ---------------------------------------------------------------------------
+
+/// Return true when `e` looks like a dead CDP WebSocket rather than a
+/// recoverable page error. These errors require restarting Chromium.
+fn is_transport_error(e: &ScraperError) -> bool {
+    let ScraperError::Browser(msg) = e else {
+        return false;
+    };
+    msg.contains("Transport error")
+        || msg.contains("reader thread has exited")
+        || msg.contains("WebSocket")
+        || msg.contains("connection reset")
+        || msg.contains("broken pipe")
 }
 
 // ---------------------------------------------------------------------------

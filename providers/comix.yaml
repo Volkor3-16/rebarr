@@ -2,6 +2,7 @@ name: Comix
 base_url: https://comix.to
 rate_limit:
   requests_per_minute: 30
+  page_delay_ms: 500
 
 search:
   steps:

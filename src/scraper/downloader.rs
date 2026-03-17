@@ -5,6 +5,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use thiserror::Error;
 use tokio::sync::Semaphore;
+use tokio_util::sync::CancellationToken;
 
 use crate::db::{chapter as db_chapter, provider as db_provider, settings as db_settings};
 use crate::manga::comicinfo;
@@ -22,6 +23,8 @@ pub enum DownloadError {
     NoProviders,
     #[error("all providers failed to download chapter {0}")]
     AllProvidersFailed(String),
+    #[error("cancelled")]
+    Cancelled,
     #[error("database error: {0}")]
     Db(#[from] sqlx::Error),
     #[error("io error: {0}")]
@@ -48,6 +51,7 @@ pub async fn download_chapter(
     manga: &Manga,
     chapter: &Chapter,
     lib_root: &Path,
+    cancel_token: CancellationToken,
 ) -> Result<(), DownloadError> {
     db_chapter::set_status(pool, chapter.id, DownloadStatus::Downloading, None).await?;
 
@@ -79,6 +83,12 @@ pub async fn download_chapter(
     let mut last_err = String::new();
 
     for entry in &entries {
+        // Check for cancellation before each provider attempt
+        if cancel_token.is_cancelled() {
+            db_chapter::set_status(pool, chapter.id, DownloadStatus::Missing, None).await?;
+            return Err(DownloadError::Cancelled);
+        }
+
         let provider_name = match &entry.provider_name {
             Some(n) => n.as_str(),
             None => {
@@ -127,7 +137,7 @@ pub async fn download_chapter(
             continue;
         }
 
-        match download_pages(ctx, &pages).await {
+        match download_pages(ctx, &pages, provider.page_delay_ms(), cancel_token.clone()).await {
             Ok(image_data) => {
                 let mut cbz_name = format!("Chapter {}", chapter.number_sort());
                 if let Some(ref t) = chapter.title {
@@ -172,6 +182,10 @@ pub async fn download_chapter(
                     cbz_path.display()
                 );
                 return Ok(());
+            }
+            Err(DownloadError::Cancelled) => {
+                db_chapter::set_status(pool, chapter.id, DownloadStatus::Missing, None).await?;
+                return Err(DownloadError::Cancelled);
             }
             Err(e) => {
                 log::warn!("[dl] Image download failed on {}: {e}", provider.name());
@@ -236,14 +250,22 @@ async fn ensure_chapter_url(
 }
 
 /// Download all page images concurrently (max 4 parallel). Returns Vec<(index, bytes)> sorted.
+/// `page_delay_ms` — if non-zero, sleep this many ms after acquiring the semaphore permit
+/// before each request to avoid hammering the provider.
 async fn download_pages(
     ctx: &ScraperCtx,
     pages: &[crate::scraper::PageUrl],
+    page_delay_ms: u64,
+    cancel_token: CancellationToken,
 ) -> Result<Vec<(u32, Vec<u8>)>, DownloadError> {
     let semaphore = Arc::new(Semaphore::new(4));
     let mut handles = Vec::with_capacity(pages.len());
 
     for page in pages {
+        if cancel_token.is_cancelled() {
+            return Err(DownloadError::Cancelled);
+        }
+
         let url = page.url.clone();
         let index = page.index;
         let http = ctx.http.clone();
@@ -251,6 +273,9 @@ async fn download_pages(
 
         handles.push(tokio::spawn(async move {
             let _permit = sem.acquire().await.unwrap();
+            if page_delay_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(page_delay_ms)).await;
+            }
             let bytes = http.get(&url).send().await?.bytes().await?;
             Ok::<(u32, Vec<u8>), reqwest::Error>((index, bytes.to_vec()))
         }));

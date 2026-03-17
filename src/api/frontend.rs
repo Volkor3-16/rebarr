@@ -79,6 +79,7 @@ const FRONTEND_HTML: &str = r#"<!DOCTYPE html>
   .error { color: red; }
   .tag { background: #eee; padding: 0.1rem 0.4rem; border-radius: 3px; margin: 0.1rem; display: inline-block; font-size: 0.85em; }
   .st-missing { color: #888; }
+  .st-queued { color: #a78; font-weight: bold; }
   .st-downloading { color: #f80; font-weight: bold; }
   .st-downloaded { color: #393; font-weight: bold; }
   .st-failed { color: #c33; font-weight: bold; }
@@ -158,7 +159,7 @@ function escape(s) {
 }
 
 function statusBadge(s) {
-  const cls = { Missing:'st-missing', Downloading:'st-downloading', Downloaded:'st-downloaded', Failed:'st-failed' }[s] || 'st-missing';
+  const cls = { Missing:'st-missing', Queued:'st-queued', Downloading:'st-downloading', Downloaded:'st-downloaded', Failed:'st-failed' }[s] || 'st-missing';
   return `<span class="${cls}">${escape(s)}</span>`;
 }
 
@@ -425,7 +426,8 @@ Folder   : ${escape(m.relative_path)}</pre>
       <p><b>Synopsis:</b><br>${escape(meta.synopsis ?? 'No synopsis available.')}</p>
       <p><b>Tags:</b><br>${tags || 'None'}</p>
       <h3>Chapters</h3>
-      <button onclick='doScan("${m.id}")'>Scan for chapters</button>
+      <button onclick='doScan("${m.id}")'>Search All Providers</button>
+      &nbsp;<button onclick='doCheckNew("${m.id}")'>Check New Chapters</button>
       &nbsp;<button onclick='doScanDisk("${m.id}")'>Scan Disk</button>
       &nbsp;<button onclick='loadChapters("${m.id}")'>Refresh</button>
       &nbsp;<button onclick='doRefreshMetadata("${m.id}")'>Refresh Metadata</button>
@@ -450,7 +452,10 @@ Folder   : ${escape(m.relative_path)}</pre>
         const banner = document.getElementById('tasks-banner');
         if (!banner) return;
         if (active.length > 0) {
-          const lines = active.map(t => `<b>${escape(t.task_type)}</b>: ${taskBadge(t.status)}`).join(' &nbsp;|&nbsp; ');
+          const lines = active.map(t => {
+            const chNum = t.chapter_number_raw ? ` ch&nbsp;${escape(t.chapter_number_raw)}` : '';
+            return `<b>${escape(t.task_type)}</b>${chNum}: ${taskBadge(t.status)}`;
+          }).join(' &nbsp;|&nbsp; ');
           banner.innerHTML = `<div class="task-banner">${lines}</div>`;
           prevHadActive = true;
         } else {
@@ -508,6 +513,12 @@ function chapterRow(mangaId, ch, isVariant = false, extraActions = '') {
     ? `<button class="btn-sm" onclick='doDownload("${mangaId}", ${base}, ${variant})'>DL</button>`
     : '';
 
+  // Reset button: shown for Failed or stuck Downloading chapters
+  const canReset = (status === 'Failed' || status === 'Queued' || status === 'Downloading') && ch.is_canonical;
+  const resetBtn = canReset
+    ? `<button class="btn-sm btn-danger" onclick='doResetChapter("${mangaId}", ${base}, ${variant})'>Reset</button>`
+    : '';
+
   // Delete button: shown for canonical rows only
   const deleteBtn = ch.is_canonical
     ? `<button class="btn-sm btn-danger" onclick='doDeleteChapter("${mangaId}", ${base}, ${variant})'>Del</button>`
@@ -536,7 +547,7 @@ function chapterRow(mangaId, ch, isVariant = false, extraActions = '') {
     <td>${statusBadge(status)}</td>
     <td><small>${relTime(ch.released_at)}</small></td>
     <td><small>${relTime(ch.scraped_at)}</small></td>
-    <td>${dlBtn}${deleteBtn}${useBtn}${extraBtn}${extraActions}</td>
+    <td>${dlBtn}${resetBtn}${deleteBtn}${useBtn}${extraBtn}${extraActions}</td>
   </tr>`;
 }
 
@@ -581,6 +592,7 @@ function toggleVariants(groupId, toggleEl) {
 }
 
 async function loadChapters(mangaId) {
+  const savedScroll = window.scrollY;
   const el = document.getElementById('chapters-list');
   if (!el) return;
   el.innerHTML = '<p>Loading...</p>';
@@ -643,6 +655,11 @@ async function loadChapters(mangaId) {
         }
       }
 
+      // Render extras BEFORE main chapter so descending order is: 28, 27.5, 27, 26
+      for (const extra of extras) {
+        rows += chapterRow(mangaId, extra, false, '');
+      }
+
       if (mainCh) {
         rows += chapterGroupHtml(mangaId, base, mainCh, effectiveV0alts, splitParts);
       } else {
@@ -655,11 +672,6 @@ async function loadChapters(mangaId) {
           }
         }
       }
-
-      // Render extras as standalone rows (not collapsible variants)
-      for (const extra of extras) {
-        rows += chapterRow(mangaId, extra, false, '');
-      }
     }
 
     el.innerHTML = `<table>
@@ -669,6 +681,7 @@ async function loadChapters(mangaId) {
   } catch(e) {
     el.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
   }
+  window.scrollTo(0, savedScroll);
 }
 
 async function doScan(mangaId) {
@@ -677,6 +690,17 @@ async function doScan(mangaId) {
   try {
     await api('POST', `/api/manga/${mangaId}/scan`);
     if (statusEl) statusEl.textContent = ' Scan queued!';
+  } catch(e) {
+    if (statusEl) statusEl.textContent = ` Error: ${escape(e.message)}`;
+  }
+}
+
+async function doCheckNew(mangaId) {
+  const statusEl = document.getElementById('scan-status');
+  if (statusEl) statusEl.textContent = ' Queueing chapter check...';
+  try {
+    await api('POST', `/api/manga/${mangaId}/check-new`);
+    if (statusEl) statusEl.textContent = ' Chapter check queued!';
   } catch(e) {
     if (statusEl) statusEl.textContent = ` Error: ${escape(e.message)}`;
   }
@@ -728,6 +752,15 @@ async function doDownload(mangaId, base, variant) {
     loadChapters(mangaId);
   } catch(e) {
     alert('Download error: ' + e.message);
+  }
+}
+
+async function doResetChapter(mangaId, base, variant) {
+  try {
+    await api('POST', `/api/manga/${mangaId}/chapters/${base}/${variant}/reset`);
+    loadChapters(mangaId);
+  } catch(e) {
+    alert(`Reset failed: ${e.message}`);
   }
 }
 
@@ -1194,7 +1227,7 @@ async function refreshQueue() {
       return `<tr>
         <td>${cb}</td>
         <td><small>${escape(ts)}</small></td>
-        <td>${escape(t.task_type)}</td>
+        <td>${escape(t.task_type)}${t.chapter_number_raw ? ` <small style="color:#888">ch ${escape(t.chapter_number_raw)}</small>` : ''}</td>
         <td>${manga}</td>
         <td>${taskBadge(t.status)}${err}</td>
         <td>${cancelBtn}</td>

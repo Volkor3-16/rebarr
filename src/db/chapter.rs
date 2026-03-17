@@ -42,6 +42,7 @@ fn chapter_from_row(row: ChapterRow) -> Result<Chapter, sqlx::Error> {
     let id = Uuid::parse_str(&row.uuid).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
     let manga_id = Uuid::parse_str(&row.manga_id).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
     let download_status = match row.download_status.as_str() {
+        "Queued" => DownloadStatus::Queued,
         "Downloading" => DownloadStatus::Downloading,
         "Downloaded" => DownloadStatus::Downloaded,
         "Failed" => DownloadStatus::Failed,
@@ -300,6 +301,25 @@ pub async fn set_status(
     Ok(())
 }
 
+/// Load the user's manual canonical overrides map from the DB.
+/// Returns a HashMap of "base:variant" -> uuid strings.
+async fn load_canonical_overrides(
+    pool: &SqlitePool,
+    manga_id: Uuid,
+) -> Result<std::collections::HashMap<String, String>, sqlx::Error> {
+    let row: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT canonical_overrides FROM CanonicalChapters WHERE manga_id = ?",
+    )
+    .bind(manga_id.to_string())
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row
+        .flatten()
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default())
+}
+
 /// Score all Chapters rows for a manga, pick one winner per (chapter_base, chapter_variant),
 /// write the result to CanonicalChapters, and update chapter_count/downloaded_count on Manga.
 ///
@@ -330,6 +350,13 @@ pub async fn update_canonical(
         }
     }
 
+    // Build a set of all valid chapter UUIDs for this manga (for override validation).
+    let valid_uuids: std::collections::HashSet<String> =
+        all.iter().map(|ch| ch.id.to_string()).collect();
+
+    // Load user-set overrides before re-scoring.
+    let overrides = load_canonical_overrides(pool, manga_id).await?;
+
     // Group by (chapter_base, chapter_variant)
     let mut groups: std::collections::BTreeMap<(i32, i32), Vec<Chapter>> =
         std::collections::BTreeMap::new();
@@ -342,7 +369,7 @@ pub async fn update_canonical(
 
     let mut canonical_uuids: Vec<String> = Vec::with_capacity(groups.len());
 
-    for (_, mut entries) in groups {
+    for ((base, variant), mut entries) in groups {
         // Language filter: prefer matching language but fall back to all
         if !preferred_language.is_empty() {
             let lang_filtered: Vec<_> = entries
@@ -359,19 +386,39 @@ pub async fn update_canonical(
         entries.sort_by_key(|e| compute_tier(e.scanlator_group.as_deref(), trusted_groups));
 
         if let Some(winner) = entries.into_iter().next() {
-            canonical_uuids.push(winner.id.to_string());
+            // Apply user override if present and the overridden chapter still exists.
+            let key = format!("{}:{}", base, variant);
+            let uuid = if let Some(ov_uuid) = overrides.get(&key) {
+                if valid_uuids.contains(ov_uuid.as_str()) {
+                    ov_uuid.clone()
+                } else {
+                    winner.id.to_string()
+                }
+            } else {
+                winner.id.to_string()
+            };
+            canonical_uuids.push(uuid);
         }
     }
 
     let json = serde_json::to_string(&canonical_uuids)
         .map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
 
+    // Prune stale overrides (chapters that no longer exist) before saving.
+    let pruned_overrides: std::collections::HashMap<String, String> = overrides
+        .into_iter()
+        .filter(|(_, uuid)| valid_uuids.contains(uuid.as_str()))
+        .collect();
+    let overrides_json = serde_json::to_string(&pruned_overrides)
+        .map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
+
     sqlx::query(
-        "INSERT OR REPLACE INTO CanonicalChapters (manga_id, canonical_list, last_updated)
-         VALUES (?, ?, unixepoch())",
+        "INSERT OR REPLACE INTO CanonicalChapters (manga_id, canonical_list, canonical_overrides, last_updated)
+         VALUES (?, ?, ?, unixepoch())",
     )
     .bind(manga_id.to_string())
     .bind(&json)
+    .bind(&overrides_json)
     .execute(pool)
     .await?;
 
@@ -421,6 +468,7 @@ pub async fn set_is_extra(pool: &SqlitePool, chapter_id: Uuid, is_extra: bool) -
 
 /// Manually override the canonical chapter for a specific (chapter_base, chapter_variant) slot.
 /// Replaces whichever UUID was previously canonical for that slot with `new_uuid`.
+/// The override is persisted in `canonical_overrides` so that it survives future scans.
 pub async fn set_canonical_override(
     pool: &SqlitePool,
     manga_id: Uuid,
@@ -440,12 +488,19 @@ pub async fn set_canonical_override(
     let json = serde_json::to_string(&new_uuids)
         .map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
 
+    // Persist the user's override so it survives future auto-scans.
+    let mut overrides = load_canonical_overrides(pool, manga_id).await?;
+    overrides.insert(format!("{}:{}", chapter_base, chapter_variant), new_uuid.to_string());
+    let overrides_json = serde_json::to_string(&overrides)
+        .map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
+
     sqlx::query(
-        "INSERT OR REPLACE INTO CanonicalChapters (manga_id, canonical_list, last_updated)
-         VALUES (?, ?, unixepoch())",
+        "INSERT OR REPLACE INTO CanonicalChapters (manga_id, canonical_list, canonical_overrides, last_updated)
+         VALUES (?, ?, ?, unixepoch())",
     )
     .bind(manga_id.to_string())
     .bind(&json)
+    .bind(&overrides_json)
     .execute(pool)
     .await?;
 

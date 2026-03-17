@@ -2,11 +2,13 @@
 // - All potential tasks that can be loaded into the queue
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use sqlx::SqlitePool;
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 use crate::library::scanner::scan_existing_chapters;
 use crate::manga::covers;
@@ -18,13 +20,17 @@ use crate::http::anilist::ALClient;
 use crate::scraper::{ProviderRegistry, ScraperCtx};
 use crate::scheduler::optimiser;
 
+/// Shared map of task UUID → CancellationToken for in-flight tasks.
+/// The cancel API endpoint signals the token; the running task checks it.
+pub type CancelMap = Arc<Mutex<HashMap<Uuid, CancellationToken>>>;
+
 // Workers
 // This file handles all the queue and tasks.
 
 /// Spawn the background worker as a detached tokio task.
 /// The worker loops indefinitely, polling for pending tasks every 5 seconds.
 /// Also spawns a separate scheduler task that enqueues periodic chapter checks.
-pub fn start(pool: SqlitePool, registry: Arc<ProviderRegistry>, ctx: ScraperCtx) -> JoinHandle<()> {
+pub fn start(pool: SqlitePool, registry: Arc<ProviderRegistry>, ctx: ScraperCtx, cancel_map: CancelMap) -> JoinHandle<()> {
     // Spawn the periodic scheduler as a separate task
     let scheduler_pool = pool.clone();
     tokio::spawn(async move {
@@ -55,13 +61,25 @@ pub fn start(pool: SqlitePool, registry: Arc<ProviderRegistry>, ctx: ScraperCtx)
                     // Throttle based on provider(s) involved
                     throttle_for_task(&pool, &registry, &task, &mut rate_limiter).await;
 
-                    let result = dispatch(&pool, &registry, &ctx, &task).await;
+                    // Register a cancellation token for this task
+                    let token = CancellationToken::new();
+                    cancel_map.lock().unwrap().insert(task.id, token.clone());
+
+                    let result = dispatch(&pool, &registry, &ctx, &task, token).await;
+
+                    // Remove the token from the map — task is no longer in-flight
+                    cancel_map.lock().unwrap().remove(&task.id);
+
                     match result {
                         Ok(()) => {
                             if let Err(e) = db_task::complete(&pool, task.id).await {
                                 log::error!("[worker] Failed to mark task complete: {e}");
                             }
                             log::info!("[worker] Task {} completed.", task.id);
+                        }
+                        Err(e) if e == "cancelled" => {
+                            log::info!("[worker] Task {} was cancelled.", task.id);
+                            // Status already set to Cancelled by the cancel endpoint
                         }
                         Err(e) => {
                             log::warn!("[worker] Task {} failed: {e}", task.id);
@@ -143,9 +161,10 @@ async fn dispatch(
     registry: &ProviderRegistry,
     ctx: &ScraperCtx,
     task: &Task,
+    cancel_token: CancellationToken,
 ) -> Result<(), String> {
     match task.task_type {
-        TaskType::ScanLibrary | TaskType::CheckNewChapter => {
+        TaskType::ScanLibrary => {
             let manga_id = task.manga_id.ok_or("ScanLibrary task missing manga_id")?;
             let manga = db_manga::get_by_id(pool, manga_id)
                 .await
@@ -157,9 +176,29 @@ async fn dispatch(
                 .map_err(|e| e.to_string())?;
 
             log::info!(
-                "[worker] Scan complete for '{}': {} providers, {} new chapters.",
+                "[worker] Full scan complete for '{}': {} providers, {} new chapters.",
                 manga.metadata.title,
                 result.providers_found,
+                result.new_chapters
+            );
+
+            Ok(())
+        }
+
+        TaskType::CheckNewChapter => {
+            let manga_id = task.manga_id.ok_or("CheckNewChapter task missing manga_id")?;
+            let manga = db_manga::get_by_id(pool, manga_id)
+                .await
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("manga {manga_id} not found"))?;
+
+            let result = merge::check_new_chapters(pool, registry, ctx, &manga)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            log::info!(
+                "[worker] Chapter check complete for '{}': {} new chapters.",
+                manga.metadata.title,
                 result.new_chapters
             );
 
@@ -186,7 +225,7 @@ async fn dispatch(
                 .map_err(|e| e.to_string())?
                 .ok_or_else(|| format!("library {} not found", manga.library_id))?;
 
-            downloader::download_chapter(pool, registry, ctx, &manga, &chapter, &library.root_path)
+            downloader::download_chapter(pool, registry, ctx, &manga, &chapter, &library.root_path, cancel_token)
                 .await
                 .map_err(|e| e.to_string())
         }

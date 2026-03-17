@@ -285,6 +285,29 @@ pub async fn cancel(pool: &SqlitePool, task_id: Uuid) -> Result<(), sqlx::Error>
     Ok(())
 }
 
+/// Get UUIDs of all Running DownloadChapter tasks for a specific chapter (for cancellation signalling).
+pub async fn get_running_for_chapter(pool: &SqlitePool, chapter_id: Uuid) -> Result<Vec<Uuid>, sqlx::Error> {
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT uuid FROM Task WHERE chapter_id = ? AND task_type = 'DownloadChapter' AND status = 'Running'",
+    )
+    .bind(chapter_id.to_string())
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().filter_map(|s| Uuid::parse_str(&s).ok()).collect())
+}
+
+/// Cancel all Pending or Running DownloadChapter tasks for a specific chapter.
+pub async fn cancel_by_chapter(pool: &SqlitePool, chapter_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE Task SET status = 'Cancelled', updated_at = ? WHERE chapter_id = ? AND task_type = 'DownloadChapter' AND status IN ('Pending', 'Running')",
+    )
+    .bind(Utc::now())
+    .bind(chapter_id.to_string())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Recent tasks for the API / queue page
 // ---------------------------------------------------------------------------
@@ -301,6 +324,7 @@ pub struct RecentTask {
     pub max_attempts: i64,
     pub last_error: Option<String>,
     pub manga_title: Option<String>,
+    pub chapter_number_raw: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -317,6 +341,8 @@ struct RecentTaskRow {
     max_attempts: i64,
     last_error: Option<String>,
     manga_title: Option<String>,
+    chapter_base: Option<i64>,
+    chapter_variant: Option<i64>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -351,9 +377,11 @@ pub async fn get_recent(
         "SELECT t.uuid, t.task_type, t.status, t.manga_id, t.chapter_id,
                 t.priority, t.attempt, t.max_attempts, t.last_error,
                 t.created_at, t.updated_at,
-                m.title AS manga_title
+                m.title AS manga_title,
+                c.chapter_base, c.chapter_variant
          FROM Task t
          LEFT JOIN Manga m ON t.manga_id = m.uuid
+         LEFT JOIN Chapters c ON t.chapter_id = c.uuid
          WHERE (? IS NULL OR t.manga_id = ?)
          ORDER BY t.created_at DESC
          LIMIT ?",
@@ -365,19 +393,31 @@ pub async fn get_recent(
     .await
     .map(|rows| {
         rows.into_iter()
-            .map(|r| RecentTask {
-                id: r.uuid,
-                task_type: r.task_type,
-                status: r.status,
-                manga_id: r.manga_id,
-                chapter_id: r.chapter_id,
-                priority: r.priority,
-                attempt: r.attempt,
-                max_attempts: r.max_attempts,
-                last_error: r.last_error,
-                manga_title: r.manga_title,
-                created_at: r.created_at,
-                updated_at: r.updated_at,
+            .map(|r| {
+                // Build a display string like "27" or "27.5" from base + variant
+                let chapter_number_raw = r.chapter_base.map(|base| {
+                    let variant = r.chapter_variant.unwrap_or(0);
+                    if variant == 0 {
+                        base.to_string()
+                    } else {
+                        format!("{base}.{variant}")
+                    }
+                });
+                RecentTask {
+                    id: r.uuid,
+                    task_type: r.task_type,
+                    status: r.status,
+                    manga_id: r.manga_id,
+                    chapter_id: r.chapter_id,
+                    priority: r.priority,
+                    attempt: r.attempt,
+                    max_attempts: r.max_attempts,
+                    last_error: r.last_error,
+                    manga_title: r.manga_title,
+                    chapter_number_raw,
+                    created_at: r.created_at,
+                    updated_at: r.updated_at,
+                }
             })
             .collect()
     })

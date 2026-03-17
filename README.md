@@ -9,25 +9,16 @@ The plan is to use AniList as the metadata source, and to automatically* match m
 
 ## Bugs / Dev TODO
 
-- Make sure threads/workers/queues are being spawned correctly
-    - One queue per provider
-- Make sure rate limts do something
-    - at the moment they all just go super quick, we need to make sure the rate limits are set and enforced properly
-- Scan for chapters does a full scan of all providers. This should only be done once when adding, and then once a week/month/n days/however
-    - We should have two buttons:
-    1. Search all providers (does the same as now, searches all providers)
-    2. Scan for new chapters (only searches providers that have a series url) - This is the one that'll run automatically, checking for new chapters and therefore triggering downloads.
 - Test out actual thingo downloading. yah I wanna know if it works automatically.
 - Add a button for promoting/scoring scanlators to 'trusted/untrusted'
-- [ ] Providers run out of steam with rate limits? Chapter downloads time out due to long downloads?
-    - WeebCentral just stops responding in a timely manner
-    - Comix slows down a fuckload - until it times out
-    - They get stuck, cancelling doesn't exit task early.
-    - We can't reset back to missing and redownload
+    - turn the scanlator group into a bubble thing, with a + to promote to trusted
 - Tasks should show more information
-    - the raw data in the task (what chapter is being downloaded??)
-    - We should show the page/chapter download %, like sonarr
-- Extras show below the chapter, (Chapter 26, Chapter 27.5, Chapter 27, Chapter 28.) Should be: (Chapter 26, Chapter 27, Chapter 27.5, Chapter 28)
+    - [x] Chapter is now listed
+    - [ ] Page count is not
+- Downloads do not follow user selections
+    - When you click 'use' on a variant chapter, it selects in the frontend, showed as a canonical chapter, but when you click download it downloads the old chaptter from source
+- Chapters that are missing shouldn't have 'Del' buttons
+- Chapters with no scanlater group shouldn't have the empty [] in the filename
 
 ## Features
 ### Minimum Viable Release
@@ -47,13 +38,13 @@ The plan is to use AniList as the metadata source, and to automatically* match m
     - Use embedded ComicInfo.xml to get metadata
         - We should embed custom xml for more data.
     - Ranks them, so allows for upgrades to go through normally.
-- [ ] Allow users to select which providers to use per series, as an override. Just incase the user prefers one provider of any automated ranking.
+- [ ] Allow users to select which providers to use per series, as an override. Just in case the user prefers one provider of any automated ranking.
     - This leaves a warning or something, since it means all provider management is done manually by the user
 - [ ] Manual Matching
     - If the system can't find a series url (from a supported provider) but it definitely *does* exist, we should let users paste it in and go from there.
-    - Some sites (comix) have really bad searching algos, so we're out of luck with perfect matching. rip.
 - [ ] Automatic upgrade path
     - We should re-download existing chapters if they're a new canonical one. (Upgrade from scan to official)
+    - Ignore/warn user of overrides
 - [ ] Docker builds
     - [x] Dockerfile
     - [x] Docker compose

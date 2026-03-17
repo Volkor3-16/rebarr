@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use dotenvy::dotenv;
 
@@ -12,7 +13,7 @@ mod library;
 
 use crate::api::{api_routes, frontend_routes};
 use crate::http::anilist::ALClient;
-use crate::scheduler::worker;
+use crate::scheduler::worker::{self, CancelMap};
 use crate::scraper::{
     browser::BrowserPool,
     {ProviderRegistry, ScraperCtx},
@@ -60,7 +61,8 @@ async fn main() -> Result<(), rocket::Error> {
     scraper_ctx.flaresolverr_url = std::env::var("REBARR_FLARESOLVERR_URL").ok();
 
     // Background Task Handler start
-    let _worker = worker::start(pool.clone(), Arc::clone(&registry), scraper_ctx.clone());
+    let cancel_map: CancelMap = Arc::new(Mutex::new(HashMap::new()));
+    let _worker = worker::start(pool.clone(), Arc::clone(&registry), scraper_ctx.clone(), Arc::clone(&cancel_map));
     log::info!("Background task worker started.");
 
     rocket::build()
@@ -69,6 +71,7 @@ async fn main() -> Result<(), rocket::Error> {
         .manage(http_client)
         .manage(scraper_ctx)
         .manage(Arc::clone(&registry))
+        .manage(cancel_map)
         .mount("/", frontend_routes())
         .mount("/", api_routes())
         .launch()

@@ -8,7 +8,7 @@ use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::{
-    db::{self, task::{RecentTask, TaskType}}, http::anilist::ALClient, manga::{comicinfo, covers, manga::{DownloadStatus, Library, Manga, MangaMetadata, MangaSource, MangaType, PublishingStatus}, scoring::compute_tier}, scraper::ProviderRegistry,
+    db::{self, task::{RecentTask, TaskType}}, http::anilist::ALClient, manga::{comicinfo, covers, manga::{DownloadStatus, Library, Manga, MangaMetadata, MangaSource, MangaType, PublishingStatus}, scoring::compute_tier}, scraper::ProviderRegistry, scheduler::worker::CancelMap,
 };
 
 
@@ -422,6 +422,28 @@ async fn scan_manga_api(
 }
 
 // ---------------------------------------------------------------------------
+// POST /api/manga/<id>/check-new
+// ---------------------------------------------------------------------------
+
+#[post("/api/manga/<id>/check-new")]
+async fn check_new_chapters_api(
+    pool: &State<SqlitePool>,
+    id: &str,
+) -> Result<Status, (Status, Json<ApiError>)> {
+    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    db::manga::get_by_id(pool.inner(), manga_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("manga not found"))?;
+
+    db::task::enqueue(pool.inner(), TaskType::CheckNewChapter, Some(manga_id), None, 5)
+        .await
+        .map_err(internal)?;
+
+    Ok(Status::Accepted)
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/manga/<id>/provider
 // ---------------------------------------------------------------------------
 
@@ -614,6 +636,10 @@ async fn download_chapter_api(
     .await
     .map_err(internal)?;
 
+    db::chapter::set_status(pool.inner(), chapter.id, DownloadStatus::Queued, None)
+        .await
+        .map_err(internal)?;
+
     Ok(Status::Accepted)
 }
 
@@ -766,6 +792,48 @@ async fn mark_chapter_downloaded(
     .map_err(internal)?;
 
     db::chapter::update_manga_counts(pool.inner(), manga_id)
+        .await
+        .map_err(internal)?;
+
+    Ok(Status::NoContent)
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/manga/<id>/chapters/<base>/<variant>/reset
+// ---------------------------------------------------------------------------
+
+#[post("/api/manga/<id>/chapters/<base>/<variant>/reset")]
+async fn reset_chapter_api(
+    pool: &State<SqlitePool>,
+    cancel_map: &State<CancelMap>,
+    id: &str,
+    base: i32,
+    variant: i32,
+) -> Result<Status, (Status, Json<ApiError>)> {
+    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    let chapter = db::chapter::get_canonical_by_number(pool.inner(), manga_id, base, variant)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("chapter not found"))?;
+
+    db::chapter::set_status(pool.inner(), chapter.id, DownloadStatus::Missing, None)
+        .await
+        .map_err(internal)?;
+
+    db::chapter::update_manga_counts(pool.inner(), manga_id)
+        .await
+        .map_err(internal)?;
+
+    // Cancel any in-flight or pending DownloadChapter tasks for this chapter
+    let running_tasks = db::task::get_running_for_chapter(pool.inner(), chapter.id)
+        .await
+        .map_err(internal)?;
+    for task_id in running_tasks {
+        if let Some(token) = cancel_map.lock().unwrap().get(&task_id) {
+            token.cancel();
+        }
+    }
+    db::task::cancel_by_chapter(pool.inner(), chapter.id)
         .await
         .map_err(internal)?;
 
@@ -941,12 +1009,17 @@ async fn list_tasks(
 #[post("/api/tasks/<id>/cancel")]
 async fn cancel_task(
     pool: &State<SqlitePool>,
+    cancel_map: &State<CancelMap>,
     id: &str,
 ) -> Result<Status, (Status, Json<ApiError>)> {
     let uuid = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
     db::task::cancel(pool.inner(), uuid)
         .await
         .map_err(internal)?;
+    // Signal the running task to stop
+    if let Some(token) = cancel_map.lock().unwrap().get(&uuid) {
+        token.cancel();
+    }
     Ok(Status::NoContent)
 }
 
@@ -1102,6 +1175,7 @@ pub fn routes() -> Vec<rocket::Route> {
         patch_manga,
         list_providers,
         scan_manga_api,
+        check_new_chapters_api,
         // set_provider,
         list_manga_providers,
         list_chapters,
@@ -1110,6 +1184,7 @@ pub fn routes() -> Vec<rocket::Route> {
         refresh_manga_api,
         scan_disk_api,
         mark_chapter_downloaded,
+        reset_chapter_api,
         toggle_extra_api,
         optimise_chapter_api,
         set_canonical_api,

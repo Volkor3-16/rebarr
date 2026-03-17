@@ -116,6 +116,12 @@ pub trait Provider: Send + Sync {
         30
     }
 
+    /// Milliseconds to sleep between individual page image downloads.
+    /// Defaults to 0 (no delay).
+    fn page_delay_ms(&self) -> u64 {
+        0
+    }
+
     /// Search for a manga by title. Returns ranked candidates.
     async fn search(
         &self,
