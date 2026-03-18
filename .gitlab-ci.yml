@@ -12,7 +12,7 @@ variables:
 build-x86:
   stage: build
   tags:
-    - x86-runner
+    - docker-amd64
   image: rust:1.88-alpine
   script:
     - apk add --no-cache musl-dev pkgconfig openssl-dev curl
@@ -34,7 +34,7 @@ build-x86:
 build-arm64:
   stage: build
   tags:
-    - arm-runner
+    - docker-arm64
   image: rust:1.88-alpine
   script:
     - apk add --no-cache musl-dev pkgconfig openssl-dev curl
