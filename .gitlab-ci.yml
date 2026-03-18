@@ -4,7 +4,7 @@ stages:
 variables:
   DOCKER_CONFIG: /kaniko/.docker
 
-build:
+build-x64:
   stage: build
   image:
     name: registry.gitlab.com/gitlab-ci-utils/container-images/kaniko:debug
@@ -47,6 +47,34 @@ build:
           --dockerfile $CI_PROJECT_DIR/Dockerfile \
           --destination "docker.io/$DOCKERHUB_USERNAME/$TAG"
       done
+  only:
+    - branches
+    - tags
+
+build-arm64:
+  stage: build
+  tags:
+    - arm-runner
+  image:
+    name: registry.gitlab.com/gitlab-ci-utils/container-images/kaniko:debug
+    entrypoint: [""]
+  script:
+    - echo "Building ARM64 image..."
+    - mkdir -p $DOCKER_CONFIG
+    - |
+      cat > $DOCKER_CONFIG/config.json <<EOF
+      {
+        "auths": {
+          "https://index.docker.io/v1/": {
+            "auth": "$(echo -n "$DOCKERHUB_USERNAME:$DOCKERHUB_PASSWORD" | base64)"
+          }
+        }
+      }
+      EOF
+    - /kaniko/executor \
+        --context $CI_PROJECT_DIR \
+        --dockerfile $CI_PROJECT_DIR/Dockerfile \
+        --destination "docker.io/$DOCKERHUB_USERNAME/rabarr:arm64-latest"
   only:
     - branches
     - tags

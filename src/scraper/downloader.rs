@@ -212,7 +212,7 @@ async fn ensure_chapter_url(
     manga_id: uuid::Uuid,
     entry: &Chapter,
 ) -> Option<String> {
-    if let Some(ref url) = entry.chapter_url {
+    if let Some(url) = &entry.chapter_url {
         if !url.is_empty() {
             log::debug!(
                 "[dl] Using cached URL for chapter {} from {}.",
