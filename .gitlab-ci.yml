@@ -10,7 +10,8 @@ docker-build:
   stage: docker
   image: docker:27-cli
   services:
-    - docker:27-dind
+    - name: docker:27-dind
+      alias: docker
 
   before_script:
     # Log in to Docker Hub using CI/CD variables
