@@ -6,7 +6,6 @@ stages:
 variables:
   OPENSSL_STATIC: "1"
   OPENSSL_DIR: "/usr/local/ssl"
-  RUSTC_WRAPPER: "/usr/local/cargo/bin/sccache"
   SCCACHE_DIR: "/tmp/sccache"
 
 cache:
