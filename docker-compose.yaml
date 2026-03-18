@@ -1,6 +1,9 @@
 services:
   rebarr:
-    image: volkor/rebarr:latest
+    # :latest   - latest recommended stable build
+    # :main     - Follows main branch, dev build
+    # :branch-* - Builds all commits in a dev branch 
+    image: volkor/rebarr:main
     container_name: rebarr
     ports:
       - "8008:8000"
