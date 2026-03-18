@@ -3,16 +3,12 @@ stages:
   - package
   - fix-docker
 
-variables:
-  SCCACHE_DIR: "/tmp/sccache"
-
 cache:
   key: "${CI_COMMIT_REF_SLUG}-${CI_JOB_NAME}"
   paths:
     - .cargo/registry
     - .cargo/git
     - target
-    - /tmp/sccache
 
 # -----------------------------------
 # Kaniko packaging shared snippet
@@ -72,9 +68,6 @@ build-x86:
   image: rust:1.88-alpine
   before_script:
     - apk add --no-cache musl-dev pkgconfig openssl-dev curl bash
-    - cargo install sccache
-    - mkdir -p $SCCACHE_DIR
-    - export RUSTC_WRAPPER=$(which sccache)
   script:
     - mkdir -p target
     - cargo build --release --bin rebarr
@@ -93,9 +86,6 @@ build-arm64:
   image: rust:1.88-alpine
   before_script:
     - apk add --no-cache musl-dev pkgconfig openssl-dev curl bash
-    - cargo install sccache
-    - mkdir -p $SCCACHE_DIR
-    - export RUSTC_WRAPPER=$(which sccache)
   script:
     - mkdir -p target
     - cargo build --release --bin rebarr
