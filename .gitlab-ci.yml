@@ -4,4 +4,4 @@ build:
     name: registry.gitlab.com/gitlab-ci-utils/container-images/kaniko:debug
     entrypoint: [""]
   script:
-    - /kaniko/executor --no-push
+    - /kaniko/executor --context $CI_PROJECT_DIR --dockerfile $CI_PROJECT_DIR/Dockerfile --destination your-image:tag
