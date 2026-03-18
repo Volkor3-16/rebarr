@@ -10,14 +10,17 @@ The plan is to use AniList as the metadata source, and to automatically* match m
 ## Bugs / Dev TODO
 
 - Test out actual thingo downloading. yah I wanna know if it works automatically.
-- Add a button for promoting/scoring scanlators to 'trusted/untrusted'
-    - turn the scanlator group into a bubble thing, with a + to promote to trusted
-- Tasks should show more information
-    - [x] Chapter is now listed
-    - [ ] Page count is not (would need more changes)
 - Downloads do not follow user selections
     - When you click 'use' on a variant chapter, it selects in the frontend, showed as a canonical chapter, but when you click download it downloads the old chaptter from source
 - Task view/system log half works, refreshing clears logs, but you have to refresh during a task to see one.
+- [ ] Local files management / local provider
+    - Scans existing FS for manga in the library directory, but not added (from previous installs)
+    - Allows the user to import them (adds into db, adds chapters, reads local info and adss to db.)
+    - Use embedded ComicInfo.xml to get metadata
+        - We should embed custom xml for more data.
+    - Ranks them, so allows for upgrades to go through normally.
+- [ ] Add better debug logging so I know when shit happens.
+    - example: when I use the app to promote a chapter to canonical (with use button), i can't see any logs saying how far the code ran, did it update the thing in the db? I wanna know when I have debug logs on. But for everything!
 
 ## Features
 ### Minimum Viable Release
@@ -31,16 +34,6 @@ The plan is to use AniList as the metadata source, and to automatically* match m
         - Match and import into DB.
         - Moves, renames, matches files to chapters - exactly like sonarr bulk import
         - Do this for each manga series, let user match and verify if it doesn't match automatically.
-- [ ] Local files management / local provider
-    - Scans existing FS for manga in the library directory, but not added (from previous installs)
-    - Allows the user to import them (adds into db, adds chapters, reads local info and adss to db.)
-    - Use embedded ComicInfo.xml to get metadata
-        - We should embed custom xml for more data.
-    - Ranks them, so allows for upgrades to go through normally.
-- [ ] Allow users to select which providers to use per series, as an override. Just in case the user prefers one provider of any automated ranking.
-    - This leaves a warning or something, since it means all provider management is done manually by the user
-- [ ] Manual Matching
-    - If the system can't find a series url (from a supported provider) but it definitely *does* exist, we should let users paste it in and go from there.
 - [ ] Automatic upgrade path
     - We should re-download existing chapters if they're a new canonical one. (Upgrade from scan to official)
     - Ignore/warn user of overrides
@@ -48,6 +41,10 @@ The plan is to use AniList as the metadata source, and to automatically* match m
     - [x] Dockerfile
     - [x] Docker compose
     - [ ] .gitlab-ci.yml
+- [ ] Provider Scores
+    - Use this to help decide which providers get used in the case of a conflict (Comix & LHTranslation having the same copy, lhtranslation should be preferred.)
+    - Global setting, acts on the entire app where the provider is used.
+    - This should NOT be able to make a trusted scan be more important than an official copy.
 
 ### Maximum Viable Release (in order of importance)
 
@@ -125,7 +122,6 @@ for testing a provider, use
 ## Thanks
 
 - My mates claude subscription that i'm borrowing lmfao.
-
 
 ## Copyright Holders
 

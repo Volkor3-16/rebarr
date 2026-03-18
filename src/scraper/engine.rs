@@ -136,8 +136,7 @@ impl YamlProvider {
             return match parse_date(&raw, fmt) {
                 Some(ts) => Ok(ts.to_string()),
                 None => Err(ScraperError::Parse(format!(
-                    "date '{}' did not match format '{fmt}'",
-                    raw
+                    "date '{raw}' did not match format '{fmt}'"
                 ))),
             };
         }

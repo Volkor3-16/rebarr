@@ -2,6 +2,10 @@
 
 This a informal changelog so i can keep track of what im doing.
 
+## 2026-03-18
+- Fixed up docker builds with gitlab-ci.
+- Truncation of long titles
+
 ## 2026-03-17
 
 - Replaced frontend almost completely
