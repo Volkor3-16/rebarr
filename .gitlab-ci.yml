@@ -1,17 +1,69 @@
 stages:
   - build
+  - package
 
 variables:
   DOCKER_CONFIG: /kaniko/.docker
+  IMAGE_NAME: rabarr
 
-build-x64:
+# ----------------------------
+# Build Rust binary (x86)
+# ----------------------------
+build-x86:
   stage: build
+  tags:
+    - x86-runner
+  image: rust:1.88-alpine
+  script:
+    - apk add --no-cache musl-dev pkgconfig openssl-dev curl
+    - export OPENSSL_STATIC=1
+    - export OPENSSL_DIR=/usr/local/ssl
+    - mkdir -p target
+    - cargo build --release --bin rebarr
+  artifacts:
+    paths:
+      - target/release/rebarr
+    expire_in: 1h
+  rules:
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+# ----------------------------
+# Build Rust binary (ARM64)
+# ----------------------------
+build-arm64:
+  stage: build
+  tags:
+    - arm-runner
+  image: rust:1.88-alpine
+  script:
+    - apk add --no-cache musl-dev pkgconfig openssl-dev curl
+    - export OPENSSL_STATIC=1
+    - export OPENSSL_DIR=/usr/local/ssl
+    - mkdir -p target
+    - cargo build --release --bin rebarr
+  artifacts:
+    paths:
+      - target/release/rebarr
+    expire_in: 1h
+  rules:
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+# ----------------------------
+# Package runtime image using Kaniko
+# ----------------------------
+package-x86:
+  stage: package
+  tags:
+    - x86-runner
   image:
     name: registry.gitlab.com/gitlab-ci-utils/container-images/kaniko:debug
     entrypoint: [""]
+  dependencies:
+    - build-x86
   script:
-    - echo "Setting up Docker credentials for Kaniko..."
-    # Create Docker config.json for Kaniko
+    # Docker auth
     - mkdir -p $DOCKER_CONFIG
     - |
       cat > $DOCKER_CONFIG/config.json <<EOF
@@ -24,11 +76,10 @@ build-x64:
       }
       EOF
 
-    # Determine image tags based on branch or tag
+    # Determine tags
     - |
-      IMAGE_NAME="rabarr"
+      TAGS=""
       if [ -n "$CI_COMMIT_TAG" ]; then
-        # Tagged release
         TAGS="latest ${IMAGE_NAME}:$CI_COMMIT_TAG"
       elif [ "$CI_COMMIT_BRANCH" = "main" ]; then
         TAGS="main"
@@ -38,28 +89,31 @@ build-x64:
       fi
       echo "Will build tags: $TAGS"
 
-    # Build and push Docker image for each tag
+    # Build/push image
     - |
       for TAG in $TAGS; do
-        echo "Building and pushing $TAG..."
+        echo "Building $TAG..."
         /kaniko/executor \
           --context $CI_PROJECT_DIR \
           --dockerfile $CI_PROJECT_DIR/Dockerfile \
-          --destination "docker.io/$DOCKERHUB_USERNAME/$TAG"
+          --build-arg BINARY_PATH=target/release/rebarr \
+          --destination "docker.io/$DOCKERHUB_USERNAME/$TAG" 
       done
-  only:
-    - branches
-    - tags
+  rules:
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
 
-build-arm64:
-  stage: build
+package-arm64:
+  stage: package
   tags:
     - arm-runner
   image:
     name: registry.gitlab.com/gitlab-ci-utils/container-images/kaniko:debug
     entrypoint: [""]
+  dependencies:
+    - build-arm64
   script:
-    - echo "Building ARM64 image..."
+    # Docker auth
     - mkdir -p $DOCKER_CONFIG
     - |
       cat > $DOCKER_CONFIG/config.json <<EOF
@@ -71,10 +125,30 @@ build-arm64:
         }
       }
       EOF
-    - /kaniko/executor \
-        --context $CI_PROJECT_DIR \
-        --dockerfile $CI_PROJECT_DIR/Dockerfile \
-        --destination "docker.io/$DOCKERHUB_USERNAME/rabarr:arm64-latest"
-  only:
-    - branches
-    - tags
+
+    # Determine tags
+    - |
+      TAGS=""
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        TAGS="latest ${IMAGE_NAME}:$CI_COMMIT_TAG"
+      elif [ "$CI_COMMIT_BRANCH" = "main" ]; then
+        TAGS="main"
+      else
+        SAFE_BRANCH=$(echo "$CI_COMMIT_BRANCH" | tr / _)
+        TAGS="${IMAGE_NAME}:branch-${SAFE_BRANCH}"
+      fi
+      echo "Will build tags: $TAGS"
+
+    # Build/push image
+    - |
+      for TAG in $TAGS; do
+        echo "Building $TAG..."
+        /kaniko/executor \
+          --context $CI_PROJECT_DIR \
+          --dockerfile $CI_PROJECT_DIR/Dockerfile \
+          --build-arg BINARY_PATH=target/release/rebarr \
+          --destination "docker.io/$DOCKERHUB_USERNAME/$TAG" 
+      done
+  rules:
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
