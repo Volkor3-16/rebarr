@@ -401,6 +401,12 @@ pub async fn update_canonical(
         }
     }
 
+    log::debug!(
+        "[db] update_canonical: manga={manga_id}, {} canonical chapters, {} active overrides",
+        canonical_uuids.len(),
+        overrides.values().filter(|uuid| valid_uuids.contains(uuid.as_str())).count(),
+    );
+
     let json = serde_json::to_string(&canonical_uuids)
         .map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
 
@@ -476,6 +482,7 @@ pub async fn set_canonical_override(
     chapter_variant: i32,
     new_uuid: Uuid,
 ) -> Result<(), sqlx::Error> {
+    log::debug!("[db] set_canonical_override: manga={manga_id}, ch={chapter_base}.{chapter_variant} → {new_uuid}");
     let current = get_canonical_for_manga(pool, manga_id).await?;
 
     let mut new_uuids: Vec<String> = current

@@ -1,8 +1,115 @@
+use std::io::Read as _;
 use std::path::Path;
 
 use crate::manga::manga::{Chapter, Manga};
 
 // This file handles the creation of ComicInfo.xml using the various sources of info
+
+// ---------------------------------------------------------------------------
+// ComicInfo.xml parser
+// ---------------------------------------------------------------------------
+
+/// Metadata extracted from a ComicInfo.xml file (series-level and/or chapter-level).
+#[derive(Debug, Default)]
+pub struct ParsedComicInfo {
+    pub title: Option<String>,
+    pub other_titles: Option<Vec<String>>,
+    pub synopsis: Option<String>,
+    pub start_year: Option<i32>,
+    pub tags: Vec<String>,
+    /// AniList series ID, parsed from `<Web>` URL or `<Notes>rebarr:anilist_id=...</Notes>`.
+    pub anilist_id: Option<u32>,
+    // Chapter-level fields
+    pub chapter_title: Option<String>,
+    pub scanlator: Option<String>,
+    pub language: Option<String>,
+    pub release_year: Option<i32>,
+}
+
+/// Extract the text content of the first occurrence of `<tag>...</tag>` in `xml`.
+fn extract_tag(xml: &str, tag: &str) -> Option<String> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let start = xml.find(&open)? + open.len();
+    let end = xml[start..].find(&close)?;
+    let val = xml[start..start + end].trim();
+    if val.is_empty() { None } else { Some(val.to_owned()) }
+}
+
+/// Parse a ComicInfo.xml string into a `ParsedComicInfo`.
+pub fn parse_comicinfo(xml: &str) -> ParsedComicInfo {
+    let mut info = ParsedComicInfo::default();
+
+    info.title = extract_tag(xml, "Series");
+    info.other_titles = extract_tag(xml, "AlternateSeries").map(|s| {
+        s.split(';')
+            .map(|p| p.trim().to_owned())
+            .filter(|p| !p.is_empty())
+            .collect::<Vec<_>>()
+    });
+    if let Some(ref v) = info.other_titles {
+        if v.is_empty() {
+            info.other_titles = None;
+        }
+    }
+    info.synopsis = extract_tag(xml, "Summary");
+    info.start_year = extract_tag(xml, "Year").and_then(|s| s.parse().ok());
+    info.tags = extract_tag(xml, "Genre")
+        .map(|s| {
+            s.split(',')
+                .map(|p| p.trim().to_owned())
+                .filter(|p| !p.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // AniList ID from <Web>https://anilist.co/manga/12345</Web>
+    info.anilist_id = extract_tag(xml, "Web").and_then(|url| {
+        url.trim_end_matches('/').rsplit('/').next().and_then(|s| s.parse().ok())
+    });
+    // Fallback: <Notes>rebarr:anilist_id=12345</Notes>
+    if info.anilist_id.is_none() {
+        info.anilist_id = extract_tag(xml, "Notes").and_then(|notes| {
+            notes
+                .split("rebarr:anilist_id=")
+                .nth(1)
+                .and_then(|s| s.split_whitespace().next())
+                .and_then(|s| s.parse().ok())
+        });
+    }
+
+    info.chapter_title = extract_tag(xml, "Title");
+    info.scanlator = extract_tag(xml, "ScanInformation");
+    info.language = extract_tag(xml, "LanguageISO");
+    info.release_year = extract_tag(xml, "Year").and_then(|s| s.parse().ok());
+
+    info
+}
+
+/// Open a CBZ archive and parse the embedded `ComicInfo.xml`, if present.
+/// Returns `None` on any error (missing file, bad zip, parse failure).
+pub fn read_cbz_comicinfo(cbz_path: &Path) -> Option<ParsedComicInfo> {
+    let file = std::fs::File::open(cbz_path).ok()?;
+    let mut archive = zip::ZipArchive::new(file).ok()?;
+
+    // Find ComicInfo.xml (case-insensitive, may be at root or in a subdirectory)
+    let mut comicinfo_idx = None;
+    for i in 0..archive.len() {
+        if let Ok(f) = archive.by_index(i) {
+            let n = f.name().to_ascii_lowercase();
+            if n == "comicinfo.xml" || n.ends_with("/comicinfo.xml") {
+                comicinfo_idx = Some(i);
+                break;
+            }
+        }
+    }
+    let idx = comicinfo_idx?;
+
+    let mut entry = archive.by_index(idx).ok()?;
+    let mut contents = String::new();
+    entry.read_to_string(&mut contents).ok()?;
+    Some(parse_comicinfo(&contents))
+}
 
 /// Escape characters that are special in XML attribute/element values.
 fn xml_escape(s: &str) -> String {
@@ -63,6 +170,9 @@ pub fn generate_series_xml(manga: &Manga) -> String {
     xml.push_str(&opt_str_elem("Genre", genre.as_deref()));
     xml.push_str("  <Manga>Yes</Manga>\n");
     xml.push_str(&opt_str_elem("Web", web.as_deref()));
+    // Embed AniList ID for clean round-trip re-import
+    let notes = manga.anilist_id.map(|id| format!("rebarr:anilist_id={id}"));
+    xml.push_str(&opt_str_elem("Notes", notes.as_deref()));
 
     xml.push_str("</ComicInfo>\n");
     xml
@@ -107,11 +217,15 @@ pub fn generate_chapter_xml(manga: &Manga, chapter: &Chapter, page_count: usize)
     xml.push_str("  <Manga>Yes</Manga>\n");
     xml.push_str(&opt_str_elem("Web", web.as_deref()));
 
-    // Scanlator / page count
+    // Scanlator / page count / language
     xml.push_str(&opt_str_elem("ScanInformation", chapter.scanlator_group.as_deref()));
     if page_count > 0 {
         xml.push_str(&format!("  <PageCount>{page_count}</PageCount>\n"));
     }
+    xml.push_str(&opt_str_elem("LanguageISO", Some(&chapter.language.to_uppercase())));
+    // Embed AniList ID for clean round-trip re-import
+    let notes = manga.anilist_id.map(|id| format!("rebarr:anilist_id={id}"));
+    xml.push_str(&opt_str_elem("Notes", notes.as_deref()));
 
     xml.push_str("</ComicInfo>\n");
     xml

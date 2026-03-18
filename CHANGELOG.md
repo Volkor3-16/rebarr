@@ -5,6 +5,9 @@ This a informal changelog so i can keep track of what im doing.
 ## 2026-03-18
 - Fixed up docker builds with gitlab-ci.
 - Truncation of long titles
+- Activity log on the top bar should work properly now
+- Chapter downloader now actually downloads chapters where the user overrode the provider.
+- More debug logging. very helpful for testing!
 
 ## 2026-03-17
 

@@ -224,6 +224,11 @@ async fn add_manga(
         .await
         .map_err(internal)?;
 
+    // Also scan disk for pre-existing CBZ files (runs after ScanLibrary)
+    db::task::enqueue(pool.inner(), TaskType::ScanDisk, Some(manga.id), None, 6)
+        .await
+        .map_err(internal)?;
+
     Ok(Json(manga))
 }
 
@@ -312,6 +317,11 @@ async fn add_manga_manual(
 
     // Auto-trigger a scan so providers can be searched immediately
     db::task::enqueue(pool.inner(), TaskType::ScanLibrary, Some(manga.id), None, 5)
+        .await
+        .map_err(internal)?;
+
+    // Also scan disk for pre-existing CBZ files
+    db::task::enqueue(pool.inner(), TaskType::ScanDisk, Some(manga.id), None, 5)
         .await
         .map_err(internal)?;
 
@@ -626,6 +636,8 @@ async fn download_chapter_api(
         .map_err(internal)?
         .ok_or_else(|| not_found("chapter not found"))?;
 
+    log::info!("[api] Enqueuing download: manga={manga_id}, ch={base}.{variant}, canonical={}", chapter.id);
+
     db::task::enqueue(
         pool.inner(),
         TaskType::DownloadChapter,
@@ -934,6 +946,8 @@ async fn set_canonical_api(
     db::chapter::set_canonical_override(pool.inner(), manga_id, base, variant, chapter_id)
         .await
         .map_err(internal)?;
+
+    log::info!("[api] Canonical override set: manga={manga_id}, ch={base}.{variant} → {chapter_id}");
 
     Ok(Status::NoContent)
 }

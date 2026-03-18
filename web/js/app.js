@@ -9,7 +9,7 @@ import './views/settings.js';
 import './views/queue.js';
 
 import { initTheme } from './theme.js';
-import { initRouter, setPoll } from './router.js';
+import { initRouter } from './router.js';
 import { updateRelTimes } from './utils.js';
 import { tasks, settings } from './api.js';
 
@@ -20,6 +20,7 @@ const MAX_ACTIVITY_ENTRIES = 20;
 // Track task states to detect changes
 let taskStates = {}; // { [taskId]: { status, manga_title, chapter_number_raw, task_type } }
 let lastPendingCount = 0;
+let isFirstPoll = true;
 
 // Header scroll state
 let lastScrollY = 0;
@@ -127,20 +128,28 @@ async function pollActivity() {
       settings.get()
     ]);
     
-    // Process each task and detect state changes
+    // Process each task and detect state changes.
+    // On first poll: iterate oldest-first so history appears newest-at-top after unshift.
+    // On subsequent polls: API order is fine (usually newest-first, one event at a time).
+    const orderedTasks = isFirstPoll ? [...taskList].reverse() : taskList;
     const currentTaskIds = new Set();
-    
-    for (const task of taskList) {
+
+    for (const task of orderedTasks) {
       currentTaskIds.add(task.id);
       const prevState = taskStates[task.id];
       const taskDesc = formatTaskDescription(task);
-      
+
       // New task appeared
       if (!prevState) {
         if (task.status === 'Pending') {
           addActivity(`${task.task_type}: ${taskDesc} pending`, 'info');
         } else if (task.status === 'Running') {
           addActivity(`${task.task_type}: ${taskDesc} started`, 'info');
+        } else if (task.status === 'Completed') {
+          addActivity(`${task.task_type}: ${taskDesc} completed`, 'success');
+        } else if (task.status === 'Failed') {
+          const err = task.last_error ? ` - ${task.last_error}` : '';
+          addActivity(`${task.task_type}: ${taskDesc} failed${err}`, 'error');
         }
       } else {
         // Task status changed
@@ -188,6 +197,8 @@ async function pollActivity() {
     if (appSettings.queue_paused) {
       addActivity('Queue is paused', 'warning');
     }
+
+    isFirstPoll = false;
   } catch(e) {
     // Silently fail - activity console is non-critical
   }
@@ -203,9 +214,11 @@ function init() {
   
   // Start the relative time updater (updates every 30 seconds)
   setInterval(updateRelTimes, 30000);
-  
-  // Start activity console polling (every 10 seconds)
-  setPoll(pollActivity, 10000);
+
+  // Activity console polling runs independently — not through setPoll so navigation
+  // can't kill it. Poll every 3s to catch fast tasks.
+  pollActivity();
+  setInterval(pollActivity, 3000);
   
   // Add scroll listener for header collapse
   window.addEventListener('scroll', handleScroll, { passive: true });

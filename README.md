@@ -10,17 +10,14 @@ The plan is to use AniList as the metadata source, and to automatically* match m
 ## Bugs / Dev TODO
 
 - Test out actual thingo downloading. yah I wanna know if it works automatically.
-- Downloads do not follow user selections
-    - When you click 'use' on a variant chapter, it selects in the frontend, showed as a canonical chapter, but when you click download it downloads the old chaptter from source
-- Task view/system log half works, refreshing clears logs, but you have to refresh during a task to see one.
 - [ ] Local files management / local provider
     - Scans existing FS for manga in the library directory, but not added (from previous installs)
     - Allows the user to import them (adds into db, adds chapters, reads local info and adss to db.)
     - Use embedded ComicInfo.xml to get metadata
         - We should embed custom xml for more data.
     - Ranks them, so allows for upgrades to go through normally.
-- [ ] Add better debug logging so I know when shit happens.
-    - example: when I use the app to promote a chapter to canonical (with use button), i can't see any logs saying how far the code ran, did it update the thing in the db? I wanna know when I have debug logs on. But for everything!
+- Populate ComicInfo.xml betterer. (https://github.com/anansi-project/comicinfo/blob/main/schema/v2.0/ComicInfo.xsd)
+    - Requires saving more details from anilist (Writer/Penciller/Inker/Colorist/Letterer/AgeRating/Community Rating)
 
 ## Features
 ### Minimum Viable Release
@@ -96,7 +93,9 @@ This is in addition to the above.
     - This helps shit like Brainrot Girlfriend, which is only on mangadex?
     - Easier than manually adding and matching i guess.
 - wtf even is rootless docker?
-- 
+- [ ] WebUI for viewing chapters - so we can have the user/automated bot:
+    - Detect/Select:
+        - FrontCover, InnerCover, Roundup, Story, Advertisment, Editorial, Letters, Preview, BackCover, Other, Deleted?
 
 ## Installation
 

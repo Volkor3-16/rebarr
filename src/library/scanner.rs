@@ -2,6 +2,7 @@ use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::db::{chapter as db_chapter, library as db_library, manga as db_manga};
+use crate::manga::comicinfo;
 use crate::manga::manga::{Chapter, DownloadStatus};
 
 /// Scan the manga's directory on disk for existing CBZ files and mark the
@@ -70,6 +71,8 @@ pub async fn scan_existing_chapters(pool: &SqlitePool, manga_id: Uuid) -> Result
                 chrono::DateTime::from_timestamp(secs as i64, 0)
             });
 
+        let cbz_info = comicinfo::read_cbz_comicinfo(&entry.path());
+
         match db_chapter::get_canonical_by_number(pool, manga_id, chapter_base, chapter_variant)
             .await
         {
@@ -87,20 +90,30 @@ pub async fn scan_existing_chapters(pool: &SqlitePool, manga_id: Uuid) -> Result
                 }
             }
             Ok(None) => {
-                // No canonical entry — insert a minimal row marked as Downloaded (provider_name = NULL)
+                // No canonical entry — insert a row marked as Downloaded (provider_name = NULL),
+                // enriched with metadata from the embedded ComicInfo.xml when available.
+                let released_at = cbz_info
+                    .as_ref()
+                    .and_then(|i| i.release_year)
+                    .and_then(|y| chrono::NaiveDate::from_ymd_opt(y, 1, 1))
+                    .and_then(|d| d.and_hms_opt(0, 0, 0))
+                    .map(|dt| dt.and_utc());
                 let chapter = Chapter {
                     id: Uuid::new_v4(),
                     manga_id,
                     chapter_base,
                     chapter_variant,
                     is_extra: false,
-                    title: None,
-                    language: "EN".to_owned(),
-                    scanlator_group: None,
+                    title: cbz_info.as_ref().and_then(|i| i.chapter_title.clone()),
+                    language: cbz_info
+                        .as_ref()
+                        .and_then(|i| i.language.clone())
+                        .unwrap_or_else(|| "EN".to_owned()),
+                    scanlator_group: cbz_info.as_ref().and_then(|i| i.scanlator.clone()),
                     provider_name: None,
                     chapter_url: None,
                     download_status: DownloadStatus::Downloaded,
-                    released_at: None,
+                    released_at,
                     downloaded_at,
                     scraped_at: None,
                 };

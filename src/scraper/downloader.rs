@@ -53,6 +53,11 @@ pub async fn download_chapter(
     lib_root: &Path,
     cancel_token: CancellationToken,
 ) -> Result<(), DownloadError> {
+    log::info!(
+        "[dl] Starting download: manga='{}', ch={}.{}, canonical_id={}",
+        manga.metadata.title, chapter.chapter_base, chapter.chapter_variant, chapter.id
+    );
+
     db_chapter::set_status(pool, chapter.id, DownloadStatus::Downloading, None).await?;
 
     let trusted_groups = db_provider::get_trusted_groups(pool).await?;
@@ -69,13 +74,25 @@ pub async fn download_chapter(
 
     // Rank: language filter → tier sort
     let lang_raw = db_settings::get(pool, "preferred_language", "").await?;
-    let entries = rank_entries(
+    let ranked = rank_entries(
         all_entries,
         &ChapterFilter {
             language: if lang_raw.is_empty() { None } else { Some(lang_raw) },
         },
         &trusted_groups,
     );
+
+    // Always try the user-selected canonical chapter first, then fall back to ranked order.
+    let mut entries: Vec<Chapter> = Vec::with_capacity(ranked.len());
+    let mut fallbacks: Vec<Chapter> = Vec::with_capacity(ranked.len());
+    for entry in ranked {
+        if entry.id == chapter.id {
+            entries.push(entry);
+        } else {
+            fallbacks.push(entry);
+        }
+    }
+    entries.extend(fallbacks);
 
     let provider_map: std::collections::HashMap<&str, &Arc<dyn crate::scraper::Provider>> =
         registry.all().into_iter().map(|p| (p.name(), p)).collect();
