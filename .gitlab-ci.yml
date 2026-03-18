@@ -1,40 +1,9 @@
-stages:
-  - docker
-
-variables:
-  IMAGE_NAME: volkor/rebarr
-
-docker-build:
-  stage: docker
-  image: docker:27-cli
-  services:
-    - name: docker:27-dind
-      alias: docker
-
-  before_script:
-    # Log in to Docker Hub using CI/CD variables
-    - echo "$DOCKERHUB_PASSWORD" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
-
+build:
+  stage: build
+  tags:
+    - kaniko
+  image: 
+    name: registry.gitlab.com/gitlab-ci-utils/container-images/kaniko:debug
+    entrypoint: [""]
   script:
-    - |
-      # Always tag with commit SHA (debugging + rollback)
-      TAGS="-t $IMAGE_NAME:sha-$CI_COMMIT_SHORT_SHA"
-  
-      # Build for tagged releases
-      if [ -n "$CI_COMMIT_TAG" ]; then
-        TAGS="$TAGS -t $IMAGE_NAME:$CI_COMMIT_TAG -t $IMAGE_NAME:latest"
-  
-      # Build main-branch commit releases
-      elif [ "$CI_COMMIT_BRANCH" = "main" ]; then
-        TAGS="$TAGS -t $IMAGE_NAME:main"
-  
-      # Build any other branch
-      else
-        TAGS="$TAGS -t $IMAGE_NAME:branch-$CI_COMMIT_REF_SLUG"
-      fi
-  
-      echo "Building Docker image with tags:"
-      echo "$TAGS"
-  
-      docker build $TAGS .
-      docker push --all-tags $IMAGE_NAME
+    - /kaniko/executor --no-push
