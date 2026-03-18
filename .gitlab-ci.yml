@@ -1,7 +1,5 @@
 build:
   stage: build
-  tags:
-    - kaniko
   image: 
     name: registry.gitlab.com/gitlab-ci-utils/container-images/kaniko:debug
     entrypoint: [""]
