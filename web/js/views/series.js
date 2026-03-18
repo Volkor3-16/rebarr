@@ -2,7 +2,7 @@
 
 import { manga as mangaApi, tasks, trustedGroups } from '../api.js';
 import { render, setPoll, navigate } from '../router.js';
-import { escape, relTime, statusBadge, taskBadge, tierBadgeHtml, skeleton, showToast } from '../utils.js';
+import { escape, relTime, statusBadge, taskBadge, tierBadgeHtml, skeleton, showToast, truncateMiddle } from '../utils.js';
 
 let currentMangaId = null;
 let trustedGroupsCache = [];
@@ -199,8 +199,14 @@ function chapterRow(mangaId, ch, isVariant = false, altCount = 0, extraActions =
   const base = ch.chapter_base;
   const variant = ch.chapter_variant;
   const chNum = variant === 0 ? `Chapter ${base}` : `Chapter ${base}.${variant}`;
-  const title = ch.title ? ` — ${escape(ch.title)}` : '';
-  const chapterLabel = `<b>${chNum}</b>${title}`;
+  
+  // Truncate long titles in the middle, keep full title as tooltip
+  const rawTitle = ch.title || '';
+  const truncatedTitle = truncateMiddle(rawTitle, 50);
+  const titleHtml = rawTitle 
+    ? ` — <span class="ch-title" title="${escape(rawTitle)}">${escape(truncatedTitle)}</span>` 
+    : '';
+  const chapterLabel = `<b>${chNum}</b>${titleHtml}`;
 
   const tierHtml = tierBadgeHtml(ch.tier || 4);
 

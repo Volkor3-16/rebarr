@@ -200,3 +200,24 @@ export function emptyState(title, message, action = null) {
     </div>
   `;
 }
+
+/**
+ * Truncate a string in the middle, keeping start and end portions
+ * @param {string|null} str - String to truncate
+ * @param {number} maxLength - Maximum length of result (default 50)
+ * @returns {string} Truncated string with "......" in middle if needed
+ */
+export function truncateMiddle(str, maxLength = 50) {
+  if (!str) return '';
+  if (str.length <= maxLength) return str;
+  
+  const ellipsis = '......';
+  const availableLength = maxLength - ellipsis.length;
+  
+  if (availableLength <= 0) return ellipsis.slice(0, maxLength);
+  
+  const startLength = Math.ceil(availableLength / 2);
+  const endLength = Math.floor(availableLength / 2);
+  
+  return str.slice(0, startLength) + ellipsis + str.slice(-endLength);
+}

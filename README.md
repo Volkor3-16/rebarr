@@ -17,6 +17,7 @@ The plan is to use AniList as the metadata source, and to automatically* match m
     - [ ] Page count is not (would need more changes)
 - Downloads do not follow user selections
     - When you click 'use' on a variant chapter, it selects in the frontend, showed as a canonical chapter, but when you click download it downloads the old chaptter from source
+- Task queue view in the top does not work (refreshing works, but it doesn't stay. idk man claude did it)
 
 ## Features
 ### Minimum Viable Release
