@@ -1,31 +1,7 @@
-# --- Build Stage ---
-FROM rust:1.88.0-alpine AS builder
-
-# Install dependencies
-RUN apk add --no-cache musl-dev pkgconfig openssl-dev curl
-
-# Set Rust OpenSSL to use vendored static libs
-ENV OPENSSL_STATIC=1
-ENV OPENSSL_DIR=/usr/local/ssl
-
-WORKDIR /app
-
-# This makes docker cache dependencies.... somehow
-COPY Cargo.toml Cargo.lock ./
-RUN mkdir src && echo "fn main(){}" > src/main.rs
-RUN cargo build --release
-RUN rm -rf src
-
-# Copy source
-COPY src ./src
-COPY migrations ./migrations
-
-# Compile rebarr
-RUN cargo build --release --bin rebarr
-
-# --- Runtime Stage ---
+# --- Runtime Stage only for Kaniko ---
 FROM alpine:3.21
 
+# Install runtime dependencies
 RUN apk add --no-cache \
     chromium \
     harfbuzz \
@@ -37,13 +13,19 @@ RUN adduser -u 1000 -D -s /bin/sh rebarr
 
 WORKDIR /app
 
-COPY --from=builder /app/target/release/rebarr ./rebarr
+# Copy pre-built binary from build argument
+ARG BINARY_PATH
+COPY ${BINARY_PATH} ./rebarr
+
+# Copy Rocket config (and other runtime files)
 COPY Rocket.toml ./Rocket.toml
 
+# Data dir
 RUN mkdir -p /data && chown rebarr:rebarr /data
 
 USER rebarr
 
+# Environment
 ENV DATABASE_URL=sqlite:/data/rebarr.db
 ENV REBARR_PROVIDERS_DIR=/data/providers
 ENV RUST_LOG=info
