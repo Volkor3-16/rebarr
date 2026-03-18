@@ -130,9 +130,11 @@ package-manifest:
     - package-x86
     - package-arm64
   script:
+    - docker login -u "$DOCKERHUB_USERNAME" -p "$DOCKERHUB_PASSWORD"
     - |
       docker manifest create docker.io/$DOCKERHUB_USERNAME/rebarr:main \
         docker.io/$DOCKERHUB_USERNAME/rebarr:main-amd64 \
         docker.io/$DOCKERHUB_USERNAME/rebarr:main-arm64
+    - docker manifest push docker.io/$DOCKERHUB_USERNAME/rebarr:main
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'

@@ -98,6 +98,8 @@ This is in addition to the above.
 - [ ] Fallback mode? use single provider as grand source of metadata?
     - This helps shit like Brainrot Girlfriend, which is only on mangadex?
     - Easier than manually adding and matching i guess.
+- wtf even is rootless docker?
+- 
 
 ## Installation
 
