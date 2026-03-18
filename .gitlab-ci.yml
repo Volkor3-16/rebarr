@@ -4,8 +4,6 @@ stages:
   - fix-docker
 
 variables:
-  OPENSSL_STATIC: "1"
-  OPENSSL_DIR: "/usr/local/ssl"
   SCCACHE_DIR: "/tmp/sccache"
 
 cache:
