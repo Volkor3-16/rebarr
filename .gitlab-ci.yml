@@ -4,7 +4,7 @@ stages:
 
 variables:
   DOCKER_CONFIG: /kaniko/.docker
-  IMAGE_NAME: rabarr
+  IMAGE_NAME: rebarr
 
 build-x86:
   stage: build
@@ -99,12 +99,12 @@ package-x86:
 package-arm64:
   stage: package
   tags:
-    - arm-runner
+    - docker-arm64
   image:
     name: registry.gitlab.com/gitlab-ci-utils/container-images/kaniko:debug
     entrypoint: [""]
   dependencies:
-    - docker-arm64
+    - build-arm64
   script:
     # Docker auth
     - mkdir -p $DOCKER_CONFIG
