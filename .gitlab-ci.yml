@@ -3,8 +3,6 @@ stages:
 
 variables:
   IMAGE_NAME: volkor/rebarr
-  DOCKER_HOST: tcp://docker:2375  # connect to the dind service
-  DOCKER_TLS_CERTDIR: ""          # disable TLS to simplify connection
 
 docker-build:
   stage: docker
