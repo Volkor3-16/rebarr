@@ -6,9 +6,9 @@ variables:
   DOCKER_CONFIG: /kaniko/.docker
   IMAGE_NAME: rebarr
 
-# -------------------------------
+# -----------------------------------
 # Kaniko packaging shared snippet
-# -------------------------------
+# -----------------------------------
 .kaniko-package: &kaniko-package
   image:
     name: registry.gitlab.com/gitlab-ci-utils/container-images/kaniko:debug
@@ -27,16 +27,16 @@ variables:
       }
       EOF
 
-    # Determine tags
+    # Determine arch-specific tags
     - |
       TAGS=""
       if [ -n "$CI_COMMIT_TAG" ]; then
         TAGS="latest ${IMAGE_NAME}:$CI_COMMIT_TAG"
       elif [ "$CI_COMMIT_BRANCH" = "main" ]; then
-        TAGS="${IMAGE_NAME}:main"
+        TAGS="${IMAGE_NAME}:main-${ARCH}"
       else
         SAFE_BRANCH=$(echo "$CI_COMMIT_BRANCH" | tr / _)
-        TAGS="${IMAGE_NAME}:branch-${SAFE_BRANCH}"
+        TAGS="${IMAGE_NAME}:branch-${SAFE_BRANCH}-${ARCH}"
       fi
       echo "Will build tags: $TAGS"
 
@@ -54,9 +54,9 @@ variables:
     - if: $CI_COMMIT_BRANCH
     - if: $CI_COMMIT_TAG
 
-# -------------------------------
-# Build jobs (unchanged)
-# -------------------------------
+# -----------------------------------
+# Build jobs
+# -----------------------------------
 build-x86:
   stage: build
   tags:
@@ -95,13 +95,15 @@ build-arm64:
     - if: $CI_COMMIT_BRANCH
     - if: $CI_COMMIT_TAG
 
-# -------------------------------
-# Package jobs using the anchor
-# -------------------------------
+# -----------------------------------
+# Package jobs (arch-specific)
+# -----------------------------------
 package-x86:
   stage: package
   tags:
     - docker-amd64
+  variables:
+    ARCH: amd64
   dependencies:
     - build-x86
   <<: *kaniko-package
@@ -110,6 +112,28 @@ package-arm64:
   stage: package
   tags:
     - docker-arm64
+  variables:
+    ARCH: arm64
   dependencies:
     - build-arm64
   <<: *kaniko-package
+
+# -----------------------------------
+# Multi-arch manifest job
+# -----------------------------------
+package-manifest:
+  stage: package
+  image:
+    name: docker:latest
+    entrypoint: [""]
+  dependencies:
+    - package-x86
+    - package-arm64
+  script:
+    - docker login -u "$DOCKERHUB_USERNAME" -p "$DOCKERHUB_PASSWORD"
+    - docker manifest create docker.io/$DOCKERHUB_USERNAME/rebarr:main \
+        docker.io/$DOCKERHUB_USERNAME/rebarr:main-amd64 \
+        docker.io/$DOCKERHUB_USERNAME/rebarr:main-arm64
+    - docker manifest push docker.io/$DOCKERHUB_USERNAME/rebarr:main
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
