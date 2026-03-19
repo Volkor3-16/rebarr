@@ -19,14 +19,14 @@ export async function viewLibraries() {
             <span id="libpath-${lib.uuid}">${escape(lib.root_path)}</span>
             <div class="edit-form hidden" id="libedit-${lib.uuid}">
               <input type="text" id="libinput-${lib.uuid}" value="${escape(lib.root_path)}">
-              <button class="btn-sm" onclick="saveLibrary('${lib.uuid}')">Save</button>
-              <button class="btn-sm" onclick="cancelEditLibrary('${lib.uuid}')">Cancel</button>
+              <button class="btn btn-sm btn-primary" onclick="saveLibrary('${lib.uuid}')">Save</button>
+              <button class="btn btn-sm" onclick="cancelEditLibrary('${lib.uuid}')">Cancel</button>
             </div>
           </td>
           <td>
-            <button class="btn-sm" onclick="editLibrary('${lib.uuid}')">Edit</button>
-            <button class="btn-sm btn-danger" onclick="deleteLibrary('${lib.uuid}')">Delete</button>
-            <button class="btn-sm" onclick="navigate('/search?library_id=${lib.uuid}')">Add Manga</button>
+            <button class="btn btn-sm btn-ghost" onclick="editLibrary('${lib.uuid}')">Edit</button>
+            <button class="btn btn-sm btn-error btn-outline" onclick="deleteLibrary('${lib.uuid}')">Delete</button>
+            <button class="btn btn-sm btn-primary btn-outline" onclick="navigate('/search?library_id=${lib.uuid}')">Add Manga</button>
           </td>
         </tr>
       `;
@@ -50,7 +50,7 @@ export async function viewLibraries() {
         <label>Root Path:
           <input type="text" id="al-path" placeholder="/data/manga">
         </label>
-        <button type="submit">+ Add Library</button>
+        <button type="submit" class="btn btn-primary">+ Add Library</button>
       </form>
       <div id="al-status"></div>
     `);

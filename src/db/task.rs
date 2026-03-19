@@ -9,12 +9,19 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TaskType {
-    ScanLibrary,
-    RefreshAniList,
+    /// Build a full chapter list from all enabled providers
+    BuildFullChapterList,
+    /// Refresh metadata from the source (AniList, local, etc.)
+    RefreshMetadata,
+    /// Check for new chapters on enabled providers
     CheckNewChapter,
+    /// Download a chapter
     DownloadChapter,
+    /// Scan disk for existing chapter files
     ScanDisk,
+    /// Optimise chapter images
     OptimiseChapter,
+    /// Backup database
     Backup,
 }
 
@@ -32,6 +39,7 @@ pub struct Task {
     pub id: Uuid,
     pub task_type: TaskType,
     pub status: TaskStatus,
+    pub queue: String,
     pub library_id: Option<Uuid>,
     pub manga_id: Option<Uuid>,
     pub chapter_id: Option<Uuid>,
@@ -54,6 +62,7 @@ struct TaskRow {
     uuid: String,
     task_type: String,
     status: String,
+    queue: String,
     library_id: Option<String>,
     manga_id: Option<String>,
     chapter_id: Option<String>,
@@ -73,8 +82,8 @@ struct TaskRow {
 
 fn task_type_str(t: &TaskType) -> &'static str {
     match t {
-        TaskType::ScanLibrary => "ScanLibrary",
-        TaskType::RefreshAniList => "RefreshAniList",
+        TaskType::BuildFullChapterList => "BuildFullChapterList",
+        TaskType::RefreshMetadata => "RefreshMetadata",
         TaskType::CheckNewChapter => "CheckNewChapter",
         TaskType::DownloadChapter => "DownloadChapter",
         TaskType::ScanDisk => "ScanDisk",
@@ -92,8 +101,12 @@ fn task_from_row(row: TaskRow) -> Result<Task, sqlx::Error> {
     let id = Uuid::parse_str(&row.uuid).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
 
     let task_type = match row.task_type.as_str() {
-        "ScanLibrary" => TaskType::ScanLibrary,
-        "RefreshAniList" => TaskType::RefreshAniList,
+        // Old names for backwards compatibility
+        "ScanLibrary" => TaskType::BuildFullChapterList,
+        "RefreshAniList" => TaskType::RefreshMetadata,
+        // New names
+        "BuildFullChapterList" => TaskType::BuildFullChapterList,
+        "RefreshMetadata" => TaskType::RefreshMetadata,
         "CheckNewChapter" => TaskType::CheckNewChapter,
         "DownloadChapter" => TaskType::DownloadChapter,
         "ScanDisk" => TaskType::ScanDisk,
@@ -118,6 +131,7 @@ fn task_from_row(row: TaskRow) -> Result<Task, sqlx::Error> {
         id,
         task_type,
         status,
+        queue: row.queue,
         library_id: parse_uuid_opt(row.library_id)?,
         manga_id: parse_uuid_opt(row.manga_id)?,
         chapter_id: parse_uuid_opt(row.chapter_id)?,
@@ -133,6 +147,26 @@ fn task_from_row(row: TaskRow) -> Result<Task, sqlx::Error> {
 }
 
 // ---------------------------------------------------------------------------
+// Queue helpers
+// ---------------------------------------------------------------------------
+
+/// Determine which queue a task type belongs to.
+/// System tasks go to 'system', provider-specific tasks go to the provider name.
+pub fn task_queue(task_type: &TaskType) -> &'static str {
+    match task_type {
+        // System tasks - handled by system worker
+        TaskType::BuildFullChapterList => "system",
+        TaskType::RefreshMetadata => "system",
+        TaskType::CheckNewChapter => "system",
+        TaskType::ScanDisk => "system",
+        TaskType::OptimiseChapter => "system",
+        TaskType::Backup => "system",
+        // Download tasks - will be assigned to specific provider queues based on the chapter
+        TaskType::DownloadChapter => "system", // Will be overridden when we know the provider
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Public functions
 // ---------------------------------------------------------------------------
 
@@ -144,16 +178,31 @@ pub async fn enqueue(
     chapter_id: Option<Uuid>,
     priority: i64,
 ) -> Result<Uuid, sqlx::Error> {
+    enqueue_with_queue(pool, task_type, manga_id, chapter_id, priority, None).await
+}
+
+/// Insert a new Pending task with a specific queue.
+pub async fn enqueue_with_queue(
+    pool: &SqlitePool,
+    task_type: TaskType,
+    manga_id: Option<Uuid>,
+    chapter_id: Option<Uuid>,
+    priority: i64,
+    queue: Option<String>,
+) -> Result<Uuid, sqlx::Error> {
     let id = Uuid::new_v4();
     let now = Utc::now();
+    let queue = queue.unwrap_or_else(|| task_queue(&task_type).to_string());
+    
     sqlx::query(
         "INSERT INTO Task
-            (uuid, task_type, status, manga_id, chapter_id, priority,
+            (uuid, task_type, status, queue, manga_id, chapter_id, priority,
              attempt, max_attempts, created_at, updated_at, run_after)
-         VALUES (?, ?, 'Pending', ?, ?, ?, 0, 3, ?, ?, ?)",
+         VALUES (?, ?, 'Pending', ?, ?, ?, ?, 0, 3, ?, ?, ?)",
     )
     .bind(id.to_string())
     .bind(task_type_str(&task_type))
+    .bind(queue)
     .bind(manga_id.map(|v| v.to_string()))
     .bind(chapter_id.map(|v| v.to_string()))
     .bind(priority)
@@ -163,6 +212,41 @@ pub async fn enqueue(
     .execute(pool)
     .await?;
     Ok(id)
+}
+
+/// Claim the next task from a specific queue.
+pub async fn claim_next_for_queue(pool: &SqlitePool, queue: &str) -> Result<Option<Task>, sqlx::Error> {
+    let now = Utc::now();
+    let mut tx = pool.begin().await?;
+
+    let row = sqlx::query_as::<_, TaskRow>(
+        "SELECT uuid, task_type, status, queue, library_id, manga_id, chapter_id,
+                priority, payload, attempt, max_attempts, last_error,
+                created_at, updated_at, run_after
+         FROM Task
+         WHERE queue = ? AND status = 'Pending' AND run_after <= ?
+         ORDER BY priority ASC, created_at ASC
+         LIMIT 1",
+    )
+    .bind(queue)
+    .bind(now)
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    let Some(row) = row else {
+        tx.commit().await?;
+        return Ok(None);
+    };
+
+    sqlx::query("UPDATE Task SET status = 'Running', updated_at = ? WHERE uuid = ?")
+        .bind(now)
+        .bind(&row.uuid)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+
+    task_from_row(row).map(Some)
 }
 
 /// Atomically claim the next runnable Pending task (lowest priority value,
@@ -175,7 +259,7 @@ pub async fn claim_next(pool: &SqlitePool) -> Result<Option<Task>, sqlx::Error> 
     let mut tx = pool.begin().await?;
 
     let row = sqlx::query_as::<_, TaskRow>(
-        "SELECT uuid, task_type, status, library_id, manga_id, chapter_id,
+        "SELECT uuid, task_type, status, queue, library_id, manga_id, chapter_id,
                 priority, payload, attempt, max_attempts, last_error,
                 created_at, updated_at, run_after
          FROM Task

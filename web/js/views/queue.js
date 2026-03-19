@@ -33,9 +33,9 @@ async function refreshQueue() {
     const pauseStyle = paused ? 'color:#c70;font-weight:bold' : '';
     
     ctrlEl.innerHTML = `
-      <button onclick="toggleQueuePause(${paused})" style="${pauseStyle}">${pauseLabel}</button>
-      <button class="btn-sm btn-danger" onclick="cancelSelected()">Cancel Selected</button>
-      ${paused ? '<span style="color:#c70;margin-left:0.8rem"><b>Queue paused — no new tasks will run.</b></span>' : ''}
+      <button class="btn btn-sm ${paused ? 'btn-success' : ''}" onclick="toggleQueuePause(${paused})">${pauseLabel}</button>
+      <button class="btn btn-sm btn-error btn-outline" onclick="cancelSelected()">Cancel Selected</button>
+      ${paused ? '<span class="badge badge-warning">Queue paused — no new tasks will run.</span>' : ''}
     `;
     
     if (taskList.length === 0) {
@@ -59,7 +59,7 @@ async function refreshQueue() {
       const canCancel = t.status === 'Pending' || t.status === 'Running';
       const cb = canCancel ? `<input type="checkbox" class="task-cb" data-id="${t.id}">` : '';
       const cancelBtn = canCancel
-        ? `<button class="btn-sm btn-danger" onclick='cancelTask("${t.id}")'>Cancel</button>`
+        ? `<button class="btn btn-xs btn-error btn-outline" onclick='cancelTask("${t.id}")'>Cancel</button>`
         : '';
       
       return `

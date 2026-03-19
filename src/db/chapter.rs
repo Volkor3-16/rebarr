@@ -113,7 +113,7 @@ pub fn chapter_uuid(
 /// Upsert chapters from a provider scrape into the new Chapters table.
 /// - New rows are inserted with status `Missing`.
 /// - Existing rows are updated (scraped_at, chapter_url, title/scanlator_group back-filled if missing).
-/// Returns UUIDs of newly inserted rows.
+///   Returns UUIDs of newly inserted rows.
 pub async fn upsert_from_scrape(
     pool: &SqlitePool,
     manga_id: Uuid,
@@ -396,7 +396,7 @@ pub async fn update_canonical(
         for ch in &all {
             by_base.entry(ch.chapter_base).or_default().push(ch);
         }
-        for (_base, chs) in &by_base {
+        for chs in by_base.values() {
             let has_low = chs.iter().any(|c| c.chapter_variant >= 1 && c.chapter_variant <= 4);
             if !has_low {
                 for ch in chs.iter().filter(|c| c.chapter_variant >= 5 && !c.is_extra) {
@@ -443,7 +443,7 @@ pub async fn update_canonical(
 
         if let Some(winner) = entries.into_iter().next() {
             // Apply user override if present and the overridden chapter still exists.
-            let key = format!("{}:{}", base, variant);
+            let key = format!("{base}:{variant}");
             let uuid = if let Some(ov_uuid) = overrides.get(&key) {
                 if valid_uuids.contains(ov_uuid.as_str()) {
                     ov_uuid.clone()
@@ -553,7 +553,7 @@ pub async fn set_canonical_override(
 
     // Persist the user's override so it survives future auto-scans.
     let mut overrides = load_canonical_overrides(pool, manga_id).await?;
-    overrides.insert(format!("{}:{}", chapter_base, chapter_variant), new_uuid.to_string());
+    overrides.insert(format!("{chapter_base}:{chapter_variant}"), new_uuid.to_string());
     let overrides_json = serde_json::to_string(&overrides)
         .map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
 
@@ -653,140 +653,6 @@ pub async fn delete_all_for_manga(pool: &SqlitePool, manga_id: Uuid) -> Result<(
         .bind(manga_id.to_string())
         .execute(pool)
         .await?;
-
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Data migration: backfill deterministic UUIDs
-// ---------------------------------------------------------------------------
-
-#[derive(sqlx::FromRow)]
-struct ChapterKeyRow {
-    uuid: String,
-    manga_id: String,
-    chapter_base: i64,
-    chapter_variant: i64,
-    language: String,
-    scanlator_group: Option<String>,
-    provider_name: Option<String>,
-}
-
-/// One-time startup migration: recompute all chapter UUIDs deterministically.
-///
-/// Idempotent — skips if `DataMigrations` already records `deterministic_chapter_uuids_v2`.
-/// Also updates any `Task.chapter_id` references and rebuilds `CanonicalChapters`
-/// for every affected manga.
-pub async fn backfill_deterministic_uuids(
-    pool: &SqlitePool,
-    trusted_groups: &[String],
-    preferred_language: &str,
-) -> Result<(), sqlx::Error> {
-    // Idempotency guard
-    let already_ran: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM DataMigrations WHERE name = 'deterministic_chapter_uuids_v2'",
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap_or(0);
-
-    if already_ran > 0 {
-        return Ok(());
-    }
-
-    let rows: Vec<ChapterKeyRow> = sqlx::query_as::<_, ChapterKeyRow>(
-        "SELECT uuid, manga_id, chapter_base, chapter_variant, language, scanlator_group, provider_name
-         FROM Chapters",
-    )
-    .fetch_all(pool)
-    .await?;
-
-    if rows.is_empty() {
-        // Nothing to migrate; mark as done and return.
-        sqlx::query("INSERT OR IGNORE INTO DataMigrations (name, ran_at) VALUES ('deterministic_chapter_uuids_v2', unixepoch())")
-            .execute(pool)
-            .await?;
-        return Ok(());
-    }
-
-    let mut changed_manga_ids: std::collections::HashSet<String> =
-        std::collections::HashSet::new();
-
-    let mut tx = pool.begin().await?;
-
-    for row in &rows {
-        let manga_id = match Uuid::parse_str(&row.manga_id) {
-            Ok(id) => id,
-            Err(_) => {
-                log::warn!("[backfill] Could not parse manga_id '{}' — skipping row.", row.manga_id);
-                continue;
-            }
-        };
-
-        let new_id = chapter_uuid(
-            manga_id,
-            row.chapter_base as i32,
-            row.chapter_variant as i32,
-            &row.language,
-            row.scanlator_group.as_deref(),
-            row.provider_name.as_deref(),
-        );
-        let new_id_str = new_id.to_string();
-
-        if new_id_str == row.uuid {
-            continue; // Already correct
-        }
-
-        // Collision guard: if new_id already exists, skip (shouldn't happen given UNIQUE constraint).
-        let collision: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM Chapters WHERE uuid = ?")
-                .bind(&new_id_str)
-                .fetch_one(&mut *tx)
-                .await
-                .unwrap_or(0);
-
-        if collision > 0 {
-            log::warn!(
-                "[backfill] UUID collision for row {} → {} — skipping.",
-                row.uuid, new_id_str
-            );
-            continue;
-        }
-
-        sqlx::query("UPDATE Chapters SET uuid = ? WHERE uuid = ?")
-            .bind(&new_id_str)
-            .bind(&row.uuid)
-            .execute(&mut *tx)
-            .await?;
-
-        sqlx::query("UPDATE Task SET chapter_id = ? WHERE chapter_id = ?")
-            .bind(&new_id_str)
-            .bind(&row.uuid)
-            .execute(&mut *tx)
-            .await?;
-
-        changed_manga_ids.insert(row.manga_id.clone());
-    }
-
-    sqlx::query("INSERT OR IGNORE INTO DataMigrations (name, ran_at) VALUES ('deterministic_chapter_uuids_v2', unixepoch())")
-        .execute(&mut *tx)
-        .await?;
-
-    tx.commit().await?;
-
-    // Rebuild canonical chapter lists for every affected manga.
-    for manga_id_str in &changed_manga_ids {
-        if let Ok(manga_id) = Uuid::parse_str(manga_id_str) {
-            if let Err(e) = update_canonical(pool, manga_id, trusted_groups, preferred_language).await {
-                log::warn!("[backfill] update_canonical failed for {manga_id_str}: {e}");
-            }
-        }
-    }
-
-    let changed = changed_manga_ids.len();
-    if changed > 0 {
-        log::info!("[backfill] Backfilled deterministic UUIDs for {changed} manga.");
-    }
 
     Ok(())
 }

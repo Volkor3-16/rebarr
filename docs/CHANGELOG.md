@@ -11,8 +11,11 @@ This a informal changelog so i can keep track of what im doing.
 - Implemented chapter upgrades (for when a official release upgrades over a scanlator copy automatically)
 - Changed provider score colours a bit
 - Searching & Filtering works now!
-- Allow addition and removal of synonyms / other names (helps with speeding up searching)
 - Add more debugging logs
+- Replaced some stuff with tailwind/daisyUI so I can come back and use it properly
+- Refactored api module into a bunch of different files.
+- Implemented a bunch of shit i forgor
+
 
 ## 2026-03-18
 - Fixed up docker builds with gitlab-ci.

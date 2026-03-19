@@ -1,5 +1,5 @@
-use anilist_moe::{AniListClient, AniListError, enums::media::MediaFormat, objects::media::Media};
-use log::{debug, trace};
+use anilist_moe::{AniListClient, AniListError, enums::media::MediaFormat};
+use log::debug;
 
 use crate::manga::manga::Manga;
 

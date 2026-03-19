@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-
-use chrono::{DateTime, NaiveDateTime, Utc};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
@@ -53,6 +51,7 @@ struct MangaRow {
     created_at: i64,
     metadata_updated_at: i64,
     monitored: bool,
+    last_checked_at: Option<i64>,
 }
 
 /// Fetch tags for a single manga.
@@ -129,6 +128,7 @@ fn manga_from_parts(row: MangaRow, tags: Vec<String>) -> Result<Manga, sqlx::Err
         monitored: row.monitored,
         created_at: row.created_at,
         metadata_updated_at: row.metadata_updated_at,
+        last_checked_at: row.last_checked_at,
         metadata: MangaMetadata {
             title: row.title,
             other_titles,
@@ -237,7 +237,7 @@ pub async fn get_by_id(pool: &SqlitePool, id: Uuid) -> Result<Option<Manga>, sql
             uuid, library_id, anilist_id, mal_id, relative_path,
             title, other_titles, synopsis, publishing_status,
             start_year, end_year, chapter_count, downloaded_count,
-            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at
+            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at
         FROM Manga WHERE uuid = ?"#,
     )
     .bind(&id_str)
@@ -266,7 +266,7 @@ pub async fn get_all_for_library(
             uuid, library_id, anilist_id, mal_id, relative_path,
             title, other_titles, synopsis, publishing_status,
             start_year, end_year, chapter_count, downloaded_count,
-            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at
+            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at
         FROM Manga WHERE library_id = ? ORDER BY title ASC"#,
     )
     .bind(&lib_str)
@@ -305,7 +305,7 @@ pub async fn exists_by_external_ids(
             uuid, library_id, anilist_id, mal_id, relative_path,
             title, other_titles, synopsis, publishing_status,
             start_year, end_year, chapter_count, downloaded_count,
-            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at
+            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at
         FROM Manga 
         WHERE library_id = ? 
           AND (anilist_id = ? OR mal_id = ?)"#,
@@ -372,6 +372,45 @@ pub async fn set_monitored(pool: &SqlitePool, id: Uuid, monitored: bool) -> Resu
     Ok(())
 }
 
+/// Update the last_checked_at timestamp for a manga.
+/// Called after CheckNewChapter task completes.
+pub async fn update_last_checked(pool: &SqlitePool, id: Uuid) -> Result<(), sqlx::Error> {
+    let now = chrono::Utc::now().timestamp();
+    sqlx::query("UPDATE Manga SET last_checked_at = ? WHERE uuid = ?")
+        .bind(now)
+        .bind(id.to_string())
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Get manga that are due for a chapter check.
+/// Returns manga where monitored = 1 AND (last_checked_at IS NULL OR now - last_checked_at > interval_hours)
+pub async fn get_due_for_check(pool: &SqlitePool, interval_hours: i64) -> Result<Vec<Manga>, sqlx::Error> {
+    let cutoff = chrono::Utc::now().timestamp() - (interval_hours * 3600);
+    
+    let rows = sqlx::query_as::<_, MangaRow>(
+        r#"SELECT
+            uuid, library_id, anilist_id, mal_id, relative_path,
+            title, other_titles, synopsis, publishing_status,
+            start_year, end_year, chapter_count, downloaded_count,
+            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at
+        FROM Manga 
+        WHERE monitored = 1 AND (last_checked_at IS NULL OR last_checked_at < ?)
+        ORDER BY last_checked_at ASC NULLS FIRST"#
+    )
+    .bind(cutoff)
+    .fetch_all(pool)
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let tags = fetch_tags(pool, &row.uuid).await?;
+        out.push(manga_from_parts(row, tags)?);
+    }
+    Ok(out)
+}
+
 /// Update the mutable metadata fields for an existing manga record.
 /// Tags are replaced atomically (delete old, insert new).
 /// Does NOT touch library_id, relative_path, chapter_count, downloaded_count, or created_at.
@@ -423,106 +462,6 @@ pub async fn update_metadata(pool: &SqlitePool, manga: &Manga) -> Result<(), sql
     tx.commit().await
 }
 
-// ---------------------------------------------------------------------------
-// Data migration
-// ---------------------------------------------------------------------------
-
-#[derive(sqlx::FromRow)]
-struct MangaKeyRow {
-    uuid: String,
-    anilist_id: Option<i64>,
-    relative_path: String,
-}
-
-/// One-time startup migration: recompute all manga UUIDs deterministically.
-///
-/// Idempotent — skips if `DataMigrations` already records
-/// `deterministic_manga_uuids_v1`. Updates all FK tables that reference
-/// `Manga.uuid`: Chapters, CanonicalChapters, MangaTags, MangaProvider, Task.
-///
-/// Returns `true` if any UUIDs were changed (caller should re-run chapter
-/// backfill in that case).
-pub async fn backfill_deterministic_uuids(pool: &SqlitePool) -> Result<bool, sqlx::Error> {
-    let already_ran: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM DataMigrations WHERE name = 'deterministic_manga_uuids_v1'",
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap_or(0);
-
-    if already_ran > 0 {
-        return Ok(false);
-    }
-
-    let rows: Vec<MangaKeyRow> = sqlx::query_as::<_, MangaKeyRow>(
-        "SELECT uuid, anilist_id, relative_path FROM Manga",
-    )
-    .fetch_all(pool)
-    .await?;
-
-    let mut any_changed = false;
-    let mut tx = pool.begin().await?;
-
-    sqlx::query("PRAGMA foreign_keys = OFF").execute(&mut *tx).await?;
-
-    for row in &rows {
-        let new_id = if let Some(al_id) = row.anilist_id {
-            manga_uuid(al_id as u32)
-        } else {
-            manual_manga_uuid(&row.relative_path)
-        };
-
-        let new_id_str = new_id.to_string();
-
-        if new_id_str == row.uuid {
-            continue;
-        }
-
-        let collision: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM Manga WHERE uuid = ?")
-                .bind(&new_id_str)
-                .fetch_one(&mut *tx)
-                .await
-                .unwrap_or(0);
-
-        if collision > 0 {
-            log::warn!("[backfill] Manga UUID collision {} → {} — skipping.", row.uuid, new_id_str);
-            continue;
-        }
-
-        sqlx::query("UPDATE Manga SET uuid = ? WHERE uuid = ?")
-            .bind(&new_id_str).bind(&row.uuid).execute(&mut *tx).await?;
-        sqlx::query("UPDATE Chapters SET manga_id = ? WHERE manga_id = ?")
-            .bind(&new_id_str).bind(&row.uuid).execute(&mut *tx).await?;
-        sqlx::query("UPDATE CanonicalChapters SET manga_id = ? WHERE manga_id = ?")
-            .bind(&new_id_str).bind(&row.uuid).execute(&mut *tx).await?;
-        sqlx::query("UPDATE MangaTags SET manga_id = ? WHERE manga_id = ?")
-            .bind(&new_id_str).bind(&row.uuid).execute(&mut *tx).await?;
-        sqlx::query("UPDATE MangaProvider SET manga_id = ? WHERE manga_id = ?")
-            .bind(&new_id_str).bind(&row.uuid).execute(&mut *tx).await?;
-        sqlx::query("UPDATE Task SET manga_id = ? WHERE manga_id = ?")
-            .bind(&new_id_str).bind(&row.uuid).execute(&mut *tx).await?;
-
-        any_changed = true;
-    }
-
-    sqlx::query("PRAGMA foreign_keys = ON").execute(&mut *tx).await?;
-
-    sqlx::query(
-        "INSERT OR IGNORE INTO DataMigrations (name, ran_at) VALUES ('deterministic_manga_uuids_v1', unixepoch())",
-    )
-    .execute(&mut *tx)
-    .await?;
-
-    tx.commit().await?;
-
-    if any_changed {
-        log::info!("[backfill] Backfilled deterministic UUIDs for {} manga.", rows.len());
-    }
-
-    Ok(any_changed)
-}
-
 /// Fetch all monitored manga across all libraries, each with their tags.
 pub async fn get_all_monitored(pool: &SqlitePool) -> Result<Vec<Manga>, sqlx::Error> {
     let rows = sqlx::query_as::<_, MangaRow>(
@@ -530,7 +469,7 @@ pub async fn get_all_monitored(pool: &SqlitePool) -> Result<Vec<Manga>, sqlx::Er
             uuid, library_id, anilist_id, mal_id, relative_path,
             title, other_titles, synopsis, publishing_status,
             start_year, end_year, chapter_count, downloaded_count,
-            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at
+            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at
         FROM Manga WHERE monitored = 1 ORDER BY title ASC"#,
     )
     .fetch_all(pool)

@@ -30,7 +30,8 @@ CREATE TABLE Manga (
     thumbnail_url       TEXT,
     created_at          INTEGER,
     metadata_updated_at INTEGER,
-    monitored           BOOLEAN NOT NULL DEFAULT 1
+    monitored           BOOLEAN NOT NULL DEFAULT 1,
+    last_checked_at     INTEGER
 );
 
 CREATE TABLE Chapters (
@@ -48,7 +49,8 @@ CREATE TABLE Chapters (
                         CHECK (download_status IN ('Missing', 'Queued', 'Downloading', 'Downloaded', 'Failed')),
     released_at     INTEGER,
     downloaded_at   INTEGER,
-    scraped_at      INTEGER
+    scraped_at      INTEGER,
+    file_size_bytes INTEGER
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_chapter_unique
@@ -86,8 +88,8 @@ CREATE TABLE MangaTags (
 CREATE TABLE Task (
     uuid         TEXT PRIMARY KEY,
     task_type    TEXT NOT NULL CHECK (task_type IN (
-                     'ScanLibrary', 'RefreshAniList', 'CheckNewChapter',
-                     'DownloadChapter', 'ScanDisk', 'OptimiseChapter', 'Backup'
+                     'ScanLibrary', 'BuildFullChapterList', 'RefreshMetadata',
+                     'CheckNewChapter', 'DownloadChapter', 'ScanDisk', 'OptimiseChapter', 'Backup'
                  )),
     status       TEXT NOT NULL DEFAULT 'Pending'
                      CHECK (status IN ('Pending', 'Running', 'Completed', 'Failed', 'Cancelled')),
@@ -111,7 +113,9 @@ CREATE TABLE Task (
     -- Scheduling (run_after enables delayed retry with backoff)
     created_at   INTEGER,
     updated_at   INTEGER,
-    run_after    INTEGER
+    run_after    INTEGER,
+    -- new task system
+    queue        TEXT NOT NULL DEFAULT 'system'
 );
 
 -- Composite index for the worker's polling query:
@@ -119,6 +123,7 @@ CREATE TABLE Task (
 CREATE INDEX idx_task_worker     ON Task(status, priority, run_after);
 CREATE INDEX idx_task_manga_id   ON Task(manga_id);
 CREATE INDEX idx_task_chapter_id ON Task(chapter_id);
+CREATE INDEX idx_task_queue_priority ON Task(queue, status, priority, run_after);
 
 
 -- Cache of "this manga lives at this URL on this provider".

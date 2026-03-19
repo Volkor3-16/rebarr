@@ -33,7 +33,7 @@ export async function viewSeries(id) {
       ? `<img class="cover-lg" src="${escape(m.thumbnail_url)}" alt="cover">`
       : '';
     
-    const tags = (meta.tags ?? []).map(t => `<span class="tag">${escape(t)}</span>`).join(' ');
+    const tags = (meta.tags ?? []).map(t => `<span class="badge badge-neutral">${escape(t)}</span>`).join(' ');
     const aniLink = m.anilist_id 
       ? `<a href="https://anilist.co/manga/${m.anilist_id}" target="_blank" class="anilist-link"><iconify-icon icon="simple-icons:anilist" width="16" height="16"></iconify-icon><span>AniList</span></a>` 
       : '';
@@ -76,12 +76,12 @@ export async function viewSeries(id) {
             <div class="series-meta-item">
               <span class="label">Aliases:</span>
               <span class="value synonyms-list" id="synonyms-list">${renderSynonyms(meta.other_titles || [])}</span>
-              <button class="btn-sm" onclick="addSynonym()" title="Add alias">+</button>
+              <button class="btn btn-sm btn-ghost" onclick="addSynonym()" title="Add alias">+</button>
             </div>
             ` : `
             <div class="series-meta-item">
               <span class="label">Aliases:</span>
-              <button class="btn-sm" onclick="addSynonym()" title="Add alias">+ Add</button>
+              <button class="btn btn-sm btn-ghost" onclick="addSynonym()" title="Add alias">+ Add</button>
             </div>
             `}
           </div>
@@ -107,27 +107,28 @@ export async function viewSeries(id) {
       </div>
       
       <div class="action-toolbar">
-        <button onclick='doScan("${m.id}")'>
-          <iconify-icon icon="mdi-web-sync" width="24" height="24"></iconify-icon>
+        <button class="btn btn-sm btn-primary" onclick='doScan("${m.id}")'>
+          <iconify-icon icon="mdi-web-sync" width="18" height="18"></iconify-icon>
           Search All Providers
         </button>
-        <button onclick='doCheckNew("${m.id}")'>
-          <iconify-icon icon="mdi-book-search" width="24" height="24"></iconify-icon>
+        <button class="btn btn-sm" onclick='doCheckNew("${m.id}")'>
+          <iconify-icon icon="mdi-book-search" width="18" height="18"></iconify-icon>
           Check new Chapters
         </button>
-        <button onclick='doScanDisk("${m.id}")'>
-          <iconify-icon icon="mdi-harddisk-plus" width="24" height="24"></iconify-icon>
+        <button class="btn btn-sm" onclick='doScanDisk("${m.id}")'>
+          <iconify-icon icon="mdi-harddisk-plus" width="18" height="18"></iconify-icon>
           Scan Disk
-        <button onclick='doRefreshMetadata("${m.id}")'>
-          <iconify-icon icon="mdi-database-refresh" width="24" height="24"></iconify-icon>
+        </button>
+        <button class="btn btn-sm" onclick='doRefreshMetadata("${m.id}")'>
+          <iconify-icon icon="mdi-database-refresh" width="18" height="18"></iconify-icon>
           Refresh Metadata
         </button>
-        <button onclick='doDownloadAllMissing("${m.id}")'>
-          <iconify-icon icon="mdi-download" width="24" height="24"></iconify-icon>
+        <button class="btn btn-sm btn-accent" onclick='doDownloadAllMissing("${m.id}")'>
+          <iconify-icon icon="mdi-download" width="18" height="18"></iconify-icon>
           Download All Missing
         </button>
-        <button onclick='doDownloadSelected("${m.id}")'>
-          <iconify-icon icon="mdi-checkbox-marked" width="24" height="24"></iconify-icon>
+        <button class="btn btn-sm btn-outline" onclick='doDownloadSelected("${m.id}")'>
+          <iconify-icon icon="mdi-checkbox-marked" width="18" height="18"></iconify-icon>
           Download Selected
         </button>
         <span id="scan-status"></span>
@@ -455,7 +456,20 @@ export async function loadChapters(mangaId) {
     chapterDataCache = chapters; // Cache for filtering
     
     if (chapters.length === 0) {
-      el.innerHTML = '<p>No chapters found. Try scanning.</p>';
+      el.innerHTML = `
+        <div class="banner banner-info" style="margin: 1rem 0; padding: 1rem; border-radius: 8px; background: var(--bg-secondary); border: 1px solid var(--border-color);">
+          <h4 style="margin: 0 0 0.5rem 0;">No chapters yet!</h4>
+          <p style="margin: 0 0 0.75rem 0; color: var(--text-muted);">To get started, you'll need to:</p>
+          <ol style="margin: 0; padding-left: 1.25rem; color: var(--text-muted);">
+            <li>Enable/Disable providers for this series</li>
+            <li>Enable/Disable aliases (alternative titles)</li>
+            <li>Run 'Search All Providers' to discover chapters</li>
+          </ol>
+          <p style="margin: 0.75rem 0 0 0; font-size: 0.875rem; color: var(--text-muted);">
+            Tip: More aliases = slower searches. Each one is tried on every provider, so only include the best. (I personally keep 3)
+          </p>
+        </div>
+      `;
       // Restore scroll position
       window.scrollTo(0, savedScrollY);
       return;
@@ -1140,11 +1154,10 @@ function renderSynonyms(synonyms) {
       title = isManual ? 'Manual synonym - always used for search' : 'AniList synonym - click to hide from search';
     }
     
-    const style = isHidden ? 'opacity: 0.5; text-decoration: line-through;' : '';
+    const badgeClass = isHidden ? 'badge badge-neutral opacity-50 line-through' : 'badge badge-neutral';
     
-    const titleAttr = syn.title.replace(/'/g, "\\'");
-    return `<span class="tag synonym-tag" style="${style}" title="${title}">
-      <button class="synonym-remove" data-title="${escape(syn.title)}" data-manual="${isManual}" data-hidden="${isHidden}" title="${isHidden ? 'Show in search' : 'Hide from search'}">×</button>
+    return `<span class="${badgeClass}" title="${title}">
+      <button class="synonym-remove btn btn-xs btn-ghost" style="padding:0;margin-right:4px;min-height:auto;line-height:1" data-title="${escape(syn.title)}" data-manual="${isManual}" data-hidden="${isHidden}" title="${isHidden ? 'Show in search' : 'Hide from search'}">×</button>
       ${escape(syn.title)}
     </span>`;
   }).join(' ');

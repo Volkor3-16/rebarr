@@ -16,7 +16,6 @@ use crate::db::task::{Task, TaskType};
 use crate::db::{chapter as db_chapter, library as db_library, manga as db_manga, settings as db_settings, task as db_task};
 use crate::scraper::downloader;
 use crate::manga::merge;
-use std::collections::HashSet;
 use crate::http::anilist::ALClient;
 use crate::scraper::{ProviderRegistry, ScraperCtx};
 use crate::scheduler::optimiser;
@@ -105,26 +104,24 @@ pub fn start(pool: SqlitePool, registry: Arc<ProviderRegistry>, ctx: ScraperCtx,
 
 /// Runs the periodic "check for new chapters" scheduler.
 /// Reads scan_interval_hours from Settings at the start of each cycle and
-/// enqueues CheckNewChapter for all monitored manga that don't already have
-/// one pending or running.
+/// enqueues CheckNewChapter for all monitored manga that are due for a check.
+/// Uses offset-based scheduling: checks happen N hours after the LAST check,
+/// not at absolute intervals. This naturally spreads out checks.
 async fn run_scheduler(pool: SqlitePool) {
     loop {
         // Read interval from settings (re-read each cycle so config changes take effect)
         let hours = db_settings::get(&pool, "scan_interval_hours", "6")
             .await
             .ok()
-            .and_then(|s| s.parse::<u64>().ok())
+            .and_then(|s| s.parse::<i64>().ok())
             .unwrap_or(6);
 
-        tokio::time::sleep(Duration::from_secs(hours * 3600)).await;
-
-        match db_manga::get_all_monitored(&pool).await {
+        // Check every minute for manga that are due
+        // This way we don't wait hours if a manga's check is due shortly after server start
+        match db_manga::get_due_for_check(&pool, hours).await {
             Ok(manga_list) => {
-                log::info!(
-                    "[scheduler] Running periodic scan for {} monitored series.",
-                    manga_list.len()
-                );
                 for manga in manga_list {
+                    // Dedupe: skip if already pending/running
                     match db_task::is_pending_for_manga(&pool, manga.id, TaskType::CheckNewChapter).await {
                         Ok(false) => {
                             if let Err(e) = db_task::enqueue(
@@ -140,6 +137,11 @@ async fn run_scheduler(pool: SqlitePool) {
                                     "[scheduler] Failed to enqueue CheckNewChapter for '{}': {e}",
                                     manga.metadata.title
                                 );
+                            } else {
+                                log::debug!(
+                                    "[scheduler] Enqueued CheckNewChapter for '{}'",
+                                    manga.metadata.title
+                                );
                             }
                         }
                         Ok(true) => {} // already queued — skip
@@ -150,9 +152,12 @@ async fn run_scheduler(pool: SqlitePool) {
                 }
             }
             Err(e) => {
-                log::error!("[scheduler] Failed to fetch monitored manga: {e}");
+                log::error!("[scheduler] Failed to fetch manga due for check: {e}");
             }
         }
+
+        // Sleep for 1 minute before checking again
+        tokio::time::sleep(Duration::from_secs(60)).await;
     }
 }
 
@@ -165,8 +170,8 @@ async fn dispatch(
     cancel_token: CancellationToken,
 ) -> Result<(), String> {
     match task.task_type {
-        TaskType::ScanLibrary => {
-            let manga_id = task.manga_id.ok_or("ScanLibrary task missing manga_id")?;
+        TaskType::BuildFullChapterList => {
+            let manga_id = task.manga_id.ok_or("BuildFullChapterList task missing manga_id")?;
             let manga = db_manga::get_by_id(pool, manga_id)
                 .await
                 .map_err(|e| e.to_string())?
@@ -196,6 +201,11 @@ async fn dispatch(
             let result = merge::check_new_chapters(pool, registry, ctx, &manga)
                 .await
                 .map_err(|e| e.to_string())?;
+
+            // Update last_checked_at to spread out future checks
+            if let Err(e) = db_manga::update_last_checked(pool, manga_id).await {
+                log::warn!("[worker] Failed to update last_checked_at: {e}");
+            }
 
             log::info!(
                 "[worker] Chapter check complete for '{}': {} new chapters.",
@@ -231,70 +241,61 @@ async fn dispatch(
                 .map_err(|e| e.to_string())
         }
 
-        TaskType::RefreshAniList => {
-            let manga_id = task.manga_id.ok_or("RefreshAniList task missing manga_id")?;
+        TaskType::RefreshMetadata => {
+            let manga_id = task.manga_id.ok_or("RefreshMetadata task missing manga_id")?;
             let manga = db_manga::get_by_id(pool, manga_id)
                 .await
                 .map_err(|e| e.to_string())?
                 .ok_or_else(|| format!("manga {manga_id} not found"))?;
 
-            let Some(anilist_id) = manga.anilist_id else {
-                log::info!("[worker] Manga '{}' has no AniList ID — skipping refresh.", manga.metadata.title);
-                return Ok(());
-            };
+            // Refresh based on metadata_source
+            match manga.metadata_source {
+                crate::manga::manga::MangaSource::AniList => {
+                    let Some(anilist_id) = manga.anilist_id else {
+                        log::info!("[worker] Manga '{}' has no AniList ID — skipping refresh.", manga.metadata.title);
+                        return Ok(());
+                    };
 
-            let al = ALClient::new();
-            let mut fresh = al
-                .grab_manga(anilist_id as i32)
-                .await
-                .map_err(|e| format!("AniList fetch failed: {e}"))?;
-
-            // Preserve internal identity fields from the stored record
-            fresh.id = manga.id;
-            fresh.library_id = manga.library_id;
-            fresh.relative_path = manga.relative_path.clone();
-            fresh.downloaded_count = manga.downloaded_count;
-            fresh.chapter_count = manga.chapter_count;
-            fresh.monitored = manga.monitored;
-            fresh.created_at = manga.created_at;
-            fresh.metadata_updated_at = chrono::Utc::now().timestamp();
-
-            // Re-download cover if the URL changed
-            if let Some(url) = fresh.thumbnail_url.take() {
-                let library = db_library::get_by_id(pool, manga.library_id)
-                    .await
-                    .map_err(|e| e.to_string())?
-                    .ok_or_else(|| format!("library {} not found", manga.library_id))?;
-                let series_dir = library.root_path.join(&manga.relative_path);
-                fresh.thumbnail_url =
-                    covers::download_cover(&ctx.http, &url, manga.id, &series_dir)
+                    let al = ALClient::new();
+                    let mut fresh = al
+                        .grab_manga(anilist_id as i32)
                         .await
-                        .or(Some(url));
-            }
+                        .map_err(|e| format!("AniList fetch failed: {e}"))?;
 
-            // Apply language filters to synonyms before saving
-            // Preserve any synonyms that the user manually hid
-            let existing_synonyms = manga.metadata.other_titles.unwrap_or_default();
-            if let Some(ref mut synonyms) = fresh.metadata.other_titles {
-                let filter_codes: HashSet<String> = db_settings::get(pool, "synonym_filter_languages", "")
-                    .await
-                    .map(|s| {
-                        s.split(',')
-                            .map(|c| c.trim().to_lowercase())
-                            .filter(|c| !c.is_empty())
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                if !filter_codes.is_empty() {
-                    merge::apply_language_filters_to_synonyms(&filter_codes, &existing_synonyms, synonyms);
+                    // Preserve internal identity fields from the stored record
+                    fresh.id = manga.id;
+                    fresh.library_id = manga.library_id;
+                    fresh.relative_path = manga.relative_path.clone();
+                    fresh.downloaded_count = manga.downloaded_count;
+                    fresh.chapter_count = manga.chapter_count;
+                    fresh.monitored = manga.monitored;
+                    fresh.created_at = manga.created_at;
+                    fresh.metadata_updated_at = chrono::Utc::now().timestamp();
+
+                    // Re-download cover if the URL changed
+                    if let Some(url) = fresh.thumbnail_url.take() {
+                        let library = db_library::get_by_id(pool, manga.library_id)
+                            .await
+                            .map_err(|e| e.to_string())?
+                            .ok_or_else(|| format!("library {} not found", manga.library_id))?;
+                        let series_dir = library.root_path.join(&manga.relative_path);
+                        fresh.thumbnail_url =
+                            covers::download_cover(&ctx.http, &url, manga.id, &series_dir)
+                                .await
+                                .or(Some(url));
+                    }
+
+                    db_manga::update_metadata(pool, &fresh)
+                        .await
+                        .map_err(|e| e.to_string())?;
+
+                    log::info!("[worker] Refreshed AniList metadata for '{}'.", fresh.metadata.title);
+                }
+                crate::manga::manga::MangaSource::Local => {
+                    log::info!("[worker] Manga '{}' has Local metadata source — nothing to refresh.", manga.metadata.title);
                 }
             }
 
-            db_manga::update_metadata(pool, &fresh)
-                .await
-                .map_err(|e| e.to_string())?;
-
-            log::info!("[worker] Refreshed AniList metadata for '{}'.", fresh.metadata.title);
             Ok(())
         }
 

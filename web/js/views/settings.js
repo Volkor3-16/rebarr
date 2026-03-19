@@ -28,7 +28,7 @@ export async function viewSettings() {
       .map(s => s.trim().toLowerCase())
       .filter(s => s);
     const filterLangsHtml = filterLangs.map(lang => 
-      `<span class="tag">${escape(lang)} <button class="synonym-remove" onclick="removeFilterLanguage('${escape(lang)}')" title="Remove">×</button></span>`
+      `<span class="badge badge-neutral">${escape(lang)} <button class="synonym-remove btn btn-xs btn-ghost" style="padding:0;margin-left:4px;min-height:auto;line-height:1" onclick="removeFilterLanguage('${escape(lang)}')" title="Remove">×</button></span>`
     ).join('');
 
     render(`
@@ -40,7 +40,7 @@ export async function viewSettings() {
         <label>Scan interval (hours):
           <input type="number" id="scan-interval" min="1" max="168" value="${escape(appSettings.scan_interval_hours)}" style="width:80px">
         </label>
-        <button type="submit">Save</button>
+        <button type="submit" class="btn btn-primary">Save</button>
       </form>
       <div id="settings-status"></div>
       
@@ -50,7 +50,7 @@ export async function viewSettings() {
       <div id="filter-languages-list">${filterLangsHtml || '<p><small>No languages configured.</small></p>'}</div>
       <div class="mt-2 flex gap-1">
         <input type="text" id="new-filter-language" placeholder="Language code (e.g. cmn)" style="width:120px">
-        <button onclick="addFilterLanguage()">Add</button>
+        <button class="btn btn-sm" onclick="addFilterLanguage()">Add</button>
       </div>
       <div id="filter-languages-status"></div>
       
@@ -68,7 +68,7 @@ export async function viewSettings() {
       <div id="trusted-groups-list"><p>Loading...</p></div>
       <div class="mt-2 flex gap-1">
         <input type="text" id="new-trusted-group" placeholder="Group name (exact)" style="width:220px">
-        <button onclick="addTrustedGroup()">Add</button>
+        <button class="btn btn-sm" onclick="addTrustedGroup()">Add</button>
       </div>
       <div id="trusted-groups-status"></div>
       
@@ -159,7 +159,7 @@ async function loadTrustedGroups() {
       return;
     }
     el.innerHTML = '<ul style="margin:0.3rem 0">' + groups.map(g =>
-      `<li style="margin:0.25rem 0">${escape(g)} <button class="btn-sm" onclick='removeTrustedGroup("${escape(g)}")'>Remove</button></li>`
+      `<li style="margin:0.25rem 0">${escape(g)} <button class="btn btn-xs btn-error btn-outline" onclick='removeTrustedGroup("${escape(g)}")'>Remove</button></li>`
     ).join('') + '</ul>';
   } catch(e) {
     el.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;

@@ -13,14 +13,14 @@ export async function viewSearch() {
   render(`
     <h2>Add Manga</h2>
     <div class="search-tabs mb-2">
-      <button id="tab-search" class="btn-primary">AniList Search</button>
-      <button id="tab-manual">Manual Entry</button>
+      <button id="tab-search" class="btn btn-sm btn-primary">AniList Search</button>
+      <button id="tab-manual" class="btn btn-sm">Manual Entry</button>
     </div>
     
     <div id="search-pane">
       <div class="search-box flex gap-1">
         <input type="text" id="sq" placeholder="Search AniList for manga..." onkeydown="if(event.key==='Enter')doSearch()">
-        <button onclick="doSearch()">Search</button>
+        <button class="btn btn-primary" onclick="doSearch()">Search</button>
       </div>
       <div id="results"></div>
     </div>
@@ -99,7 +99,7 @@ async function loadManualForm() {
       <label>Folder Name *</label>
       <input type="text" id="me-path" placeholder="Series folder within library root">
       
-      <button type="submit">+ Add to Library</button>
+        <button type="submit" class="btn btn-primary">+ Add to Library</button>
     </form>
     <div id="me-status-msg"></div>
   `;
@@ -184,10 +184,10 @@ window.doSearch = async function() {
           <td>
             <b><a href="https://anilist.co/manga/${id}" target="_blank">${escape(title)}</a></b><br>
             ${escape(year)} [${escape(status)}]<br>
-            ${(m.metadata?.other_titles || []).map(t => `<span class="tag">${escape(t)}</span>`).join(' ')}
+            ${(m.metadata?.other_titles || []).map(t => `<span class="badge badge-neutral">${escape(t.title)}</span>`).join(' ')}
             ${synopsisShort ? `<br><small style="color:var(--text-secondary)">${escape(synopsisShort)}</small>` : ''}
           </td>
-          <td><button onclick='showAddManga(${id}, "${toPathSafe(title)}")'>Add to Library</button></td>
+          <td><button class="btn btn-sm btn-primary" onclick='showAddManga(${id}, "${toPathSafe(title)}")'>Add to Library</button></td>
         </tr>
       `;
     }).join('');
@@ -227,8 +227,8 @@ window.showAddManga = async function(anilistId, pathSafeTitle) {
         <label>Folder name:</label>
         <input type="text" id="am-path" value="${escape(pathSafeTitle)}">
         
-        <button type="submit">Add to Library</button>
-        <a onclick="navigate('/search')">Cancel</a>
+        <button type="submit" class="btn btn-primary">Add to Library</button>
+        <a onclick="navigate('/search')" class="btn btn-ghost">Cancel</a>
       </form>
       <div id="am-status"></div>
     `);

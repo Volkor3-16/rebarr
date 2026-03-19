@@ -1,28 +1,75 @@
 # Rebarr
 
-Rebarr is a Manga downloader.... made for selfhosting nerds.
+WARNING: This is a massively WIP project. Shit will break, the UX will change massively, blah blah no warranties and such.
 
-I never liked how **all** the other manga scrapers work. They all use the scraped site as an authoratitive source for chapter naming, and metadata. This fucked up my workflow with suwayomi when the site changes the name, and it creates a new series in komga.
+Rebarr is a sonarr-like manager and scraper for manga and comics.
 
+I never liked how **all** the other manga scrapers work. All that I tried use the scraped site as the authoritative source for metadata. To me, this seems very fragile and relies on awfully designed and maintained manga piracy sites.
+In constrast, rebarr uses Anilist and a very fancy (overdesigned) matching system to search and download only the best copies of a chapter over multiple sites.
 
-The plan is to use AniList as the metadata source, and to automatically* match manga across different sites. Sorta like how sonarr works with multiple indexers.
+## Bugs & TODO
 
-## Bugs / Dev TODO
+I'll remove this when I've got the first public release out, this is just a quick reference for me to see what I need to work on.
 
-- Test downloads for the love of god I need to find a chapter that releases so I can have a full workflow of a new chapter -> download
-- Chapter searching doesn't work on the frontend, what did claude even do here?
-- Filters don't really work 'downloaded' doesn't do anything
-- Downloads aren't as good as I hoped
-    - Downloaded chapters should make the whole row change colour a bit
-    - Also we sorta just patch on downloaded state, it should listen to the downloaded cbz metadata and not just use the canonical chapter listed. (or do, idk, whatever looks the best, more thinking needs to go into this.)
-- Tags in search are [object Object]????!?
+### Backend
+- Full test of new chapter refresh -> chapter downloading
+- Full test of chapter upgrading from site
+
+#### Provider Scores
+Implements Sonarr-style scoring system where providers can have positive or negative integer scores.
+- Default score of 0 defined in each provider's yaml file
+- Global override: stored in database, applies to all series using that provider
+- Series override: stored per-series, overrides global setting
+- Enable/disable: each provider can be individually enabled/disabled per-series
+- Canonical selection: when multiple providers have chapters in the same tier (Official, Trusted, etc), provider score acts as tiebreaker
+- Tier order (highest to lowest): Official > Trusted Scanlator > Scanlator > Unknown (unlabelled/aggregator reupload)
+- IMPORTANT: Provider scores must NEVER elevate a lower tier above Official (e.g., Trusted score 100 cannot beat Official score 0)
+
+Implementation:
+1. Add `default_score` field to provider yaml schema
+2. Add `provider_scores` table with columns: provider_name, global_score (nullable), series_id (nullable for global)
+3. Add `provider_enabled` table with columns: provider_name, series_id, enabled (boolean)
+4. Modify chapter scoring to consider provider score only within the same tier
+5. API endpoints: GET/PUT /api/providers/{name}/score (global), GET/PUT /api/series/{id}/providers/{name}/score (series-specific)
+
+### Frontend
+
+#### Downloaded Chapters UI
+- Highlight downloaded chapters with a subtle background color on their row (instead of just a small green icon like now)
+- Display the downloaded version's metadata in the chapter list (title, scanlator, etc)
+- (when theres a chapter downloaded) Store all available online versions as "variants" - accessed via expand/collapse on each chapter row
+
+#### Series Page Improvements
+- Add tooltips to all interactive elements (provider names, scanlator groups, chapter info)
+- Display scanlator group as a styled pill component
+- Improve score display (currently "basic" - needs better visualization)
+- Improve "+1 More" pill styling (indicates additional variants exist)
+- The 3-dot action menu already exists - ensure it has "Download" and "Extra" options
+
+#### Queue/Activity Page
+- Replace current queue page with fullscreen activity view in top bar
+- Stream live tracing/logs to this view
+- Implement multiple tabs: one per log channel (info, warn, error) or per task type
+
+#### Home Page Sorting
+- Implement multiple sort options, each with toggle between ascending/descending:
+  - Latest chapter (most recent chapter number)
+  - Most recent check (last_checked_at timestamp)
+  - First added (created_at timestamp)
+  - A-Z (alphabetical by title)
+  - Number of chapters (total from providers)
+  - Number of chapters downloaded (downloaded_count)
+
+#### System Info
+- Display memory usage and basic app stats in top bar next to activity icon
+
+#### Settings Page
+- it ugly af
 
 ## Features
 
-- You can add series to your library and download them
-- We automatically look on **all**(available) sites and compare what they have
-- We automatically compare them, and download the best one (Official rip > Scanlator > unlabelled/unknown)
-- the ui works.
+- You can add series to your library and download them (obviously)
+- We automatically look on **all**(available) sites and compare what they have, downloading only the best available.
 - You can monitor/unmonitor series from automatic download. Good for when you've already got a full set and don't need them to download.
 - Uses anilist for metadata, saves it into the chapter itself for easy-importing and such.
 - New sites are just a .yaml with some html selectors (and maybe some javascript). No rust knowledge needed.
@@ -31,26 +78,52 @@ The plan is to use AniList as the metadata source, and to automatically* match m
 
 ### Minimum Viable Release
 
-- [ ] New Database/new user wizard
-    1. Ask to create a library directory (or skip if already set in env)
-    2. Ask user to select enabled/disabled providers
-    3. Ask user to select default monitor status (do we auto-download newly released chapters?)
-    4. Ask user to select download priority ordering (default Official > Named Scanlation Group > Unknown > Aggregator reupload)
-    3. Ask user select directoy full of old manga
-        - Match and import into DB.
-        - Moves, renames, matches files to chapters - exactly like sonarr bulk import
-        - Do this for each manga series, let user match and verify if it doesn't match automatically.
-- [ ] Automatic upgrade path
-    - We should re-download existing chapters if they're a new canonical one. (Upgrade from scan to official)
-    - Ignore/warn user of overrides
-- [ ] Provider Scores
-    - Use this to help decide which providers get used in the case of a conflict (Comix & LHTranslation having the same copy, lhtranslation should be preferred.)
-    - Global setting, acts on the entire app where the provider is used.
-    - Series setting, acts on the series
-    - This should NOT be able to make a trusted scan be more important than an official copy.
-- Populate ComicInfo.xml betterer. (https://github.com/anansi-project/comicinfo/blob/main/schema/v2.0/ComicInfo.xsd)
-    - Requires saving more details from anilist (Writer/Penciller/Inker/Colorist/Letterer/AgeRating/Community Rating)
-- [ ] I know nothing about frontend stuff - is tailwind something we should use?
+#### New Database/User Wizard
+First-run modal that shows on fresh install. Saves `wizard_completed` flag to settings table when complete. Users can revisit from settings if needed.
+
+Steps:
+1. **Library Setup**: Create first library or skip if configured via environment variables
+   - Select default monitor status for new series (monitored vs unmonitored by default)
+2. **Provider Configuration**: Enable/disable providers with suggested defaults
+   - Show recommended provider scores based on everythingmoe-style trust list
+   - User can adjust scores here
+3. **Download Priority**: Select preferred tier order (default: Official > Named Scanlation Group > Unknown > Aggregator)
+   - Allows filtering to specific scanlators or only official releases
+4. **Import Existing Library** (optional): "Do you have an existing rebarr library?" yes/no
+   - Scan all subdirectories recursively for .cbz files
+   - Process one by one: for each file, parse ComicInfo.xml for metadata
+   - Run AniList search with parsed title, show results to user
+   - User confirms correct match → runs RefreshMetadata
+   - User configures provider enables/disables and aliases
+   - Queue BuildFullChapterList and ScanDisk tasks
+   - Repeat until all directories processed
+5. **Quick Tutorial**: Brief overview of UI
+
+#### Chapter Importing
+- User selects a directory containing manga files
+- Recursively scan for all .cbz files in directory and subdirectories
+- Parse ComicInfo.xml from each cbz for metadata (anilist_id, title, etc)
+- Use parsed metadata for automatic series matching (or prompt user)
+- Move and rename files to standard library/series/ directory structure
+- Same naming scheme as downloaded chapters
+
+#### Automatic Upgrade Path
+- Automatically re-download chapters when they upgrade to a higher tier
+- Tier order: Official > Trusted Scanlator > Scanlator > Unknown > Aggregator
+- Same-tier upgrades (e.g., LHTranslation → Comix) are ignored
+- Log all upgrades to activity log - do not prompt user
+- User can disable auto-upgrade in settings if desired
+
+#### Extended ComicInfo.xml Support
+Populate more fields from AniList (https://github.com/anansi-project/comicinfo/blob/main/schema/v2.0/ComicInfo.xsd):
+- Writer, Penciller, Inker, Colorist, Letterer (from AniList staff/studio data)
+- AgeRating (map from AniList rating)
+- Community Rating (from AniList score)
+
+This enables constructing full Manga struct from ComicInfo.xml in:
+- Series directory (series-level metadata)
+- Individual cbz files (chapter-level metadata)
+- Greatly simplifies the import wizard - can skip AniList lookup if ComicInfo exists
 
 ### Maximum Viable Release (in order of importance)
 
@@ -98,6 +171,7 @@ This is in addition to the above.
 - [ ] Anti-scraping prevention
     - 'random' useragent (pick a random one from the `n` most common UA's)
 - [ ] Tachiyomi/Mihon backup importer (Add libraries)
+- [ ] Various site list scrape + importer
 - [ ] Fallback mode? use single provider as grand source of metadata?
     - This helps shit like Brainrot Girlfriend, which is only on mangadex?
     - Easier than manually adding and matching i guess.
@@ -124,7 +198,6 @@ Requires rust/cargo and whatever else i add
 for testing a provider, use
 
 `cargo run --bin scraper_test -- "mangasearchterm"`
-
 
 ## Thanks
 

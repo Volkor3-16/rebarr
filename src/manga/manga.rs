@@ -28,6 +28,8 @@ pub struct Manga {
     pub monitored: bool, // If true, new chapters are automatically downloaded.
     pub created_at: i64,  // When the manga was first added to the library
     pub metadata_updated_at: i64, // When the manga last metadata refresh
+    /// Timestamp of when we last checked for new chapters (null = never)
+    pub last_checked_at: Option<i64>,
 }
 
 /// Source of a synonym title
@@ -254,6 +256,7 @@ impl From<Media> for Manga {
             monitored: true,
             created_at: Utc::now().timestamp(),
             metadata_updated_at: Utc::now().timestamp(),
+            last_checked_at: None,
         }
     }
 }

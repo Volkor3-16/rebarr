@@ -5,6 +5,34 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>REBARR</title>
   <script src="https://code.iconify.design/iconify-icon/3.0.0/iconify-icon.min.js"></script>
+  
+  <!-- Tailwind CSS + daisyUI -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/daisyui@4.12.14/dist/full.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.14/dist/full.min.css" rel="stylesheet">
+  
+  <!-- Custom theme colors matching your existing palette -->
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'rebarr-accent': '#0066cc',
+            'rebarr-accent-hover': '#004499',
+            'rebarr-error': '#cc3333',
+            'rebarr-success': '#339933',
+            'rebarr-warning': '#cc7700',
+            'rebarr-st-missing': '#888888',
+            'rebarr-st-queued': '#aa8877',
+            'rebarr-st-downloading': '#ff8800',
+            'rebarr-st-downloaded': '#339933',
+            'rebarr-st-failed': '#cc3333',
+          }
+        }
+      }
+    }
+  </script>
+  
   <link rel="stylesheet" href="/web/css/main.css">
 </head>
 <body>
