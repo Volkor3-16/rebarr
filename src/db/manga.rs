@@ -5,7 +5,7 @@ use chrono::{DateTime, NaiveDateTime, Utc};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
-use crate::manga::manga::{Manga, MangaMetadata, MangaSource, PublishingStatus};
+use crate::manga::manga::{Manga, MangaMetadata, MangaSource, PublishingStatus, Synonym};
 
 // ---------------------------------------------------------------------------
 // Deterministic UUID
@@ -90,8 +90,8 @@ async fn fetch_tags_for_library(
     Ok(map)
 }
 
-/// Parse other_titles JSON string from DB into Option<Vec<String>>
-fn parse_other_titles(json: Option<String>) -> Option<Vec<String>> {
+/// Parse other_titles JSON string from DB into Option<Vec<Synonym>>
+fn parse_other_titles(json: Option<String>) -> Option<Vec<Synonym>> {
     json.and_then(|s| serde_json::from_str(&s).ok())
 }
 
@@ -164,7 +164,7 @@ fn metadata_source_str(s: &MangaSource) -> &'static str {
 // ---------------------------------------------------------------------------
 
 /// Serialize other_titles to JSON for storage in DB
-fn serialize_other_titles(titles: &Option<Vec<String>>) -> Option<String> {
+fn serialize_other_titles(titles: &Option<Vec<Synonym>>) -> Option<String> {
     titles.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default())
 }
 

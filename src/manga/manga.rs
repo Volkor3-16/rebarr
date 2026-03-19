@@ -30,11 +30,55 @@ pub struct Manga {
     pub metadata_updated_at: i64, // When the manga last metadata refresh
 }
 
+/// Source of a synonym title
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum SynonymSource {
+    /// Synonym fetched from AniList - can be hidden by user
+    AniList,
+    /// User manually added - always used for search
+    Manual,
+}
+
+/// A single alternative title with metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Synonym {
+    pub title: String,
+    pub source: SynonymSource,
+    /// If true, this synonym is hidden from provider searches
+    /// Used to hide AniList synonyms without losing them on refresh
+    pub hidden: bool,
+    /// Reason why this synonym is hidden: "manual" (user hid it) or "language" (matched filter)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filter_reason: Option<String>,
+}
+
+impl Synonym {
+    /// Create a new AniList synonym (visible by default)
+    pub fn anilist(title: &str) -> Self {
+        Self {
+            title: title.to_owned(),
+            source: SynonymSource::AniList,
+            hidden: false,
+            filter_reason: None,
+        }
+    }
+
+    /// Create a new manual synonym (always visible)
+    pub fn manual(title: &str) -> Self {
+        Self {
+            title: title.to_owned(),
+            source: SynonymSource::Manual,
+            hidden: false,
+            filter_reason: None,
+        }
+    }
+}
+
 /// Contains all the scraped metadata about a Manga
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MangaMetadata {
     pub title: String,       // Title in English (or default lang)
-    pub other_titles: Option<Vec<String>>, // List of alternative names
+    pub other_titles: Option<Vec<Synonym>>, // List of alternative names with metadata
     pub synopsis: Option<String>,
     pub publishing_status: PublishingStatus,
     pub tags: Vec<String>,       // Tags according to anilist
@@ -132,20 +176,30 @@ impl From<Media> for Manga {
                     .unwrap_or_default()
             });
         
-        // Start with synonyms
-        let mut other_titles: Vec<String> = media.synonyms.unwrap_or_default();
+        // Collect existing titles to avoid duplicates
+        let mut existing_titles: std::collections::HashSet<String> = std::collections::HashSet::new();
+        existing_titles.insert(title.clone());
 
-        // Add Romaji if it’s different from main title
+        // Start with synonyms from AniList
+        let mut other_titles: Vec<Synonym> = media
+            .synonyms
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|s| existing_titles.insert(s.clone()))
+            .map(|s| Synonym::anilist(&s))
+            .collect();
+
+        // Add Romaji if it's different from main title
         if let Some(romaji) = media.title.as_ref().and_then(|t| t.romaji.clone()) {
-            if romaji != title && !other_titles.contains(&romaji) {
-                other_titles.push(romaji);
+            if existing_titles.insert(romaji.clone()) {
+                other_titles.push(Synonym::anilist(&romaji));
             }
         }
 
-        // Add native if it’s different from main title and Romaji
+        // Add native if it's different from main title and Romaji
         if let Some(native) = media.title.as_ref().and_then(|t| t.native.clone()) {
-            if native != title && !other_titles.contains(&native) {
-                other_titles.push(native);
+            if existing_titles.insert(native.clone()) {
+                other_titles.push(Synonym::anilist(&native));
             }
         }
 

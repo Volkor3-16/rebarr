@@ -1,7 +1,7 @@
 use std::io::Read as _;
 use std::path::Path;
 
-use crate::manga::manga::{Chapter, Manga};
+use crate::manga::manga::{Chapter, Manga, Synonym, SynonymSource};
 
 // This file handles the creation of ComicInfo.xml using the various sources of info
 
@@ -13,7 +13,8 @@ use crate::manga::manga::{Chapter, Manga};
 #[derive(Debug, Default)]
 pub struct ParsedComicInfo {
     pub title: Option<String>,
-    pub other_titles: Option<Vec<String>>,
+    /// Parsed as Synonym with Manual source (user-added from ComicInfo.xml)
+    pub other_titles: Option<Vec<Synonym>>,
     pub synopsis: Option<String>,
     pub start_year: Option<i32>,
     pub tags: Vec<String>,
@@ -47,6 +48,12 @@ pub fn parse_comicinfo(xml: &str) -> ParsedComicInfo {
         s.split(';')
             .map(|p| p.trim().to_owned())
             .filter(|p| !p.is_empty())
+            .map(|title| Synonym {
+                title,
+                source: SynonymSource::Manual,
+                hidden: false,
+                filter_reason: None,
+            })
             .collect::<Vec<_>>()
     });
     if let Some(ref v) = info.other_titles {
@@ -152,8 +159,10 @@ fn opt_int_elem<T: std::fmt::Display>(tag: &str, value: Option<T>) -> String {
 pub fn generate_series_xml(manga: &Manga) -> String {
     let m = &manga.metadata;
 
-    // Alternate series: use other_titles (joined with semicolon for ComicInfo.xml)
-    let alt_series = m.other_titles.as_ref().filter(|v| !v.is_empty()).map(|v| v.join("; "));
+    // Alternate series: extract titles from Synonyms (joined with semicolon for ComicInfo.xml)
+    let alt_series = m.other_titles.as_ref()
+        .filter(|v| !v.is_empty())
+        .map(|synonyms| synonyms.iter().map(|s| s.title.as_str()).collect::<Vec<_>>().join("; "));
 
     let genre = if m.tags.is_empty() {
         None
@@ -199,8 +208,10 @@ pub fn generate_chapter_xml(
 ) -> String {
     let m = &manga.metadata;
 
-    // Alternate series: use other_titles (joined with semicolon for ComicInfo.xml)
-    let alt_series = m.other_titles.as_ref().filter(|v| !v.is_empty()).map(|v| v.join("; "));
+    // Alternate series: extract titles from Synonyms (joined with semicolon for ComicInfo.xml)
+    let alt_series = m.other_titles.as_ref()
+        .filter(|v| !v.is_empty())
+        .map(|synonyms| synonyms.iter().map(|s| s.title.as_str()).collect::<Vec<_>>().join("; "));
 
     let genre = if m.tags.is_empty() {
         None

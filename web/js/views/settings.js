@@ -22,6 +22,15 @@ export async function viewSettings() {
           </tr>
         `).join('');
 
+    // Parse filter languages for display (default to empty if not set)
+    const filterLangs = (appSettings.synonym_filter_languages || '')
+      .split(',')
+      .map(s => s.trim().toLowerCase())
+      .filter(s => s);
+    const filterLangsHtml = filterLangs.map(lang => 
+      `<span class="tag">${escape(lang)} <button class="synonym-remove" onclick="removeFilterLanguage('${escape(lang)}')" title="Remove">×</button></span>`
+    ).join('');
+
     render(`
       <h2>Settings</h2>
       
@@ -31,12 +40,19 @@ export async function viewSettings() {
         <label>Scan interval (hours):
           <input type="number" id="scan-interval" min="1" max="168" value="${escape(appSettings.scan_interval_hours)}" style="width:80px">
         </label>
-        <label>Preferred language (BCP 47, e.g. <code>en</code>):
-          <input type="text" id="preferred-language" value="${escape(appSettings.preferred_language || '')}" placeholder="Leave blank to accept any language" style="max-width:220px">
-        </label>
         <button type="submit">Save</button>
       </form>
       <div id="settings-status"></div>
+      
+      <hr>
+      <h3>Synonym Language Filter</h3>
+      <p><small>Synonyms in these languages are disabled from provider searches. <a href="https://github.com/greyblake/whatlang-rs/blob/master/SUPPORTED_LANGUAGES.md">Use whatlang codes.</a></small></p>
+      <div id="filter-languages-list">${filterLangsHtml || '<p><small>No languages configured.</small></p>'}</div>
+      <div class="mt-2 flex gap-1">
+        <input type="text" id="new-filter-language" placeholder="Language code (e.g. cmn)" style="width:120px">
+        <button onclick="addFilterLanguage()">Add</button>
+      </div>
+      <div id="filter-languages-status"></div>
       
       <hr>
       <h3>Providers</h3>
@@ -65,7 +81,6 @@ export async function viewSettings() {
     document.getElementById('settings-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const hours = parseInt(document.getElementById('scan-interval').value, 10);
-      const lang = document.getElementById('preferred-language').value.trim();
       const statusEl = document.getElementById('settings-status');
       
       if (!hours || hours < 1 || hours > 168) {
@@ -74,7 +89,7 @@ export async function viewSettings() {
       }
       
       try {
-        await settings.update({ scan_interval_hours: hours, preferred_language: lang });
+        await settings.update({ scan_interval_hours: hours });
         showToast('Settings saved');
       } catch(err) {
         statusEl.innerHTML = `<p class="error">Error: ${escape(err.message)}</p>`;
@@ -86,6 +101,53 @@ export async function viewSettings() {
     render(`<p class="error">Error: ${escape(e.message)}</p>`);
   }
 }
+
+window.addFilterLanguage = async function() {
+  const input = document.getElementById('new-filter-language');
+  const status = document.getElementById('filter-languages-status');
+  const code = input ? input.value.trim().toLowerCase() : '';
+  if (!code) { status.innerHTML = '<p class="error">Enter a language code.</p>'; return; }
+  if (code.length > 5) { status.innerHTML = '<p class="error">Invalid language code.</p>'; return; }
+  
+  try {
+    // Get current settings
+    const appSettings = await settings.get();
+    const currentLangs = (appSettings.synonym_filter_languages || '')
+      .split(',')
+      .map(s => s.trim().toLowerCase())
+      .filter(s => s);
+    
+    if (currentLangs.includes(code)) {
+      status.innerHTML = '<p class="error">Language already in list.</p>';
+      return;
+    }
+    
+    currentLangs.push(code);
+    await settings.update({ synonym_filter_languages: currentLangs.join(',') });
+    input.value = '';
+    showToast('Language added');
+    viewSettings(); // Reload to show updated list
+  } catch(e) {
+    status.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
+  }
+};
+
+window.removeFilterLanguage = async function(code) {
+  try {
+    const appSettings = await settings.get();
+    const currentLangs = (appSettings.synonym_filter_languages || '')
+      .split(',')
+      .map(s => s.trim().toLowerCase())
+      .filter(s => s);
+    
+    const newLangs = currentLangs.filter(l => l !== code);
+    await settings.update({ synonym_filter_languages: newLangs.join(',') });
+    showToast('Language removed');
+    viewSettings(); // Reload to show updated list
+  } catch(e) {
+    showToast('Error: ' + e.message, 'error');
+  }
+};
 
 async function loadTrustedGroups() {
   const el = document.getElementById('trusted-groups-list');

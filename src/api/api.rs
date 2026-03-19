@@ -2,13 +2,16 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use chrono::Utc;
+use log::debug;
 use rocket::{State, delete, get, http::Status, patch, post, put, routes, serde::json::Json};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
+use std::collections::HashSet;
+
 use crate::{
-    db::{self, task::{RecentTask, TaskType}}, http::anilist::ALClient, manga::{comicinfo, covers, manga::{DownloadStatus, Library, Manga, MangaMetadata, MangaSource, MangaType, PublishingStatus}, scoring::compute_tier}, scraper::ProviderRegistry, scheduler::worker::CancelMap,
+    db::{self, task::{RecentTask, TaskType}, settings as db_settings}, http::anilist::ALClient, manga::{comicinfo, covers, merge, manga::{DownloadStatus, Library, Manga, MangaMetadata, MangaSource, MangaType, PublishingStatus, Synonym, SynonymSource}, scoring::compute_tier}, scraper::ProviderRegistry, scheduler::worker::CancelMap,
 };
 
 
@@ -50,6 +53,7 @@ fn not_found(msg: impl ToString) -> (Status, Json<ApiError>) {
 
 #[get("/api/libraries")]
 async fn list_libraries(pool: &State<SqlitePool>) -> ApiResult<Vec<Library>> {
+    debug!("Listing Libraries (GET /api/libraries)");
     db::library::get_all(pool.inner())
         .await
         .map(Json)
@@ -71,6 +75,7 @@ async fn create_library(
     pool: &State<SqlitePool>,
     body: Json<NewLibraryRequest>,
 ) -> ApiResult<Library> {
+    debug!("Creating new library: {}", body.root_path);
     if body.root_path.trim().is_empty() {
         return Err(bad_request("root_path cannot be empty"));
     }
@@ -100,6 +105,7 @@ async fn create_library(
 #[get("/api/libraries/<id>")]
 async fn get_library(pool: &State<SqlitePool>, id: &str) -> ApiResult<Library> {
     let uuid = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    debug!("Getting library by id: {uuid}");
     db::library::get_by_id(pool.inner(), uuid)
         .await
         .map_err(internal)?
@@ -114,6 +120,7 @@ async fn get_library(pool: &State<SqlitePool>, id: &str) -> ApiResult<Library> {
 #[get("/api/libraries/<id>/manga")]
 async fn list_library_manga(pool: &State<SqlitePool>, id: &str) -> ApiResult<Vec<Manga>> {
     let uuid = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    debug!("Getting manga list by library id: {uuid}");
     db::manga::get_all_for_library(pool.inner(), uuid)
         .await
         .map(Json)
@@ -129,6 +136,7 @@ async fn search_manga(al: &State<ALClient>, q: &str) -> ApiResult<Vec<Manga>> {
     if q.trim().is_empty() {
         return Ok(Json(vec![]));
     }
+    debug!("Searching for manga: {q}");
     al.search_manga_as_manga(q.trim())
         .await
         .map(Json)
@@ -211,7 +219,24 @@ async fn add_manga(
             .or(Some(url));
     }
 
-    
+    // Apply language filters to synonyms before saving
+    // For new manga, existing_synonyms is empty (this is when adding)
+    let existing_synonyms: Vec<crate::manga::manga::Synonym> = vec![];
+    if let Some(ref mut synonyms) = manga.metadata.other_titles {
+        let filter_codes: HashSet<String> = db_settings::get(pool.inner(), "synonym_filter_languages", "")
+            .await
+            .map(|s| {
+                s.split(',')
+                    .map(|c| c.trim().to_lowercase())
+                    .filter(|c| !c.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !filter_codes.is_empty() {
+            merge::apply_language_filters_to_synonyms(&filter_codes, &existing_synonyms, synonyms);
+        }
+    }
+
     db::manga::insert(pool.inner(), &manga)
         .await
         .map_err(internal)?;
@@ -244,6 +269,7 @@ pub struct AddMangaManualRequest {
     library_id: String,
     relative_path: String,
     title: String,
+    /// Simple string titles that will be converted to Synonym with Manual source
     other_titles: Option<Vec<String>>,
     synopsis: Option<String>,
     publishing_status: Option<PublishingStatus>,
@@ -274,9 +300,23 @@ async fn add_manga_manual(
         .map_err(internal)?
         .ok_or_else(|| not_found("library not found"))?;
 
+    // Convert string titles to Synonym objects with Manual source
+    let other_titles = body.other_titles.as_ref().map(|titles| {
+        titles
+            .iter()
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| Synonym {
+                title: s.trim().to_owned(),
+                source: SynonymSource::Manual,
+                hidden: false,
+                filter_reason: None,
+            })
+            .collect()
+    });
+
     let metadata = MangaMetadata {
         title: body.title.trim().to_owned(),
-        other_titles: body.other_titles.clone(),
+        other_titles,
         synopsis: body.synopsis.as_deref().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()),
         publishing_status: body.publishing_status.clone().unwrap_or(PublishingStatus::Unknown),
         tags: body.tags.clone().unwrap_or_default(),
@@ -1053,6 +1093,8 @@ struct SettingsResponse {
     queue_paused: bool,
     /// BCP 47 language code to prefer when selecting a provider (e.g. "en"). `null` = accept any.
     preferred_language: Option<String>,
+    /// Comma-separated list of language codes to filter from synonym searches
+    synonym_filter_languages: String,
 }
 
 #[derive(Deserialize)]
@@ -1061,6 +1103,8 @@ struct UpdateSettingsRequest {
     queue_paused: Option<bool>,
     /// Set to a BCP 47 code (e.g. "en") to filter downloads to that language, or "" to clear.
     preferred_language: Option<String>,
+    /// Comma-separated list of language codes to filter from synonym searches (e.g. "zh,vi,ru")
+    synonym_filter_languages: Option<String>,
 }
 
 #[get("/api/settings")]
@@ -1078,10 +1122,15 @@ async fn get_settings(pool: &State<SqlitePool>) -> ApiResult<SettingsResponse> {
         .await
         .map_err(internal)?;
     let preferred_language = if lang_raw.is_empty() { None } else { Some(lang_raw) };
+    // Default to empty - user must explicitly configure filters
+    let filter_langs = db::settings::get(pool.inner(), "synonym_filter_languages", "")
+        .await
+        .map_err(internal)?;
     Ok(Json(SettingsResponse {
         scan_interval_hours: hours,
         queue_paused,
         preferred_language,
+        synonym_filter_languages: filter_langs,
     }))
 }
 
@@ -1105,6 +1154,11 @@ async fn update_settings(
     }
     if let Some(ref lang) = body.preferred_language {
         db::settings::set(pool.inner(), "preferred_language", lang.trim())
+            .await
+            .map_err(internal)?;
+    }
+    if let Some(ref langs) = body.synonym_filter_languages {
+        db::settings::set(pool.inner(), "synonym_filter_languages", langs.trim())
             .await
             .map_err(internal)?;
     }
@@ -1178,6 +1232,141 @@ async fn remove_trusted_group(
     Ok(Status::Ok)
 }
 
+// ---------------------------------------------------------------------------
+// PATCH /api/manga/<id>/synonyms
+// ---------------------------------------------------------------------------
+
+/// Request to add/remove/hide synonyms for a manga
+#[derive(Deserialize, Debug)]
+struct UpdateSynonymsRequest {
+    /// Synonyms to add (will be marked as Manual source)
+    add: Option<Vec<String>>,
+    /// Synonym titles to hide (AniList synonyms will be marked hidden)
+    hide: Option<Vec<String>>,
+    /// Synonym titles to remove (only Manual synonyms can be fully removed)
+    remove: Option<Vec<String>>,
+}
+
+/// Update synonyms for a manga - add new ones, hide existing AniList ones, or remove Manual ones
+#[patch("/api/manga/<id>/synonyms", data = "<body>")]
+async fn update_synonyms(
+    pool: &State<SqlitePool>,
+    id: &str,
+    body: Json<UpdateSynonymsRequest>,
+) -> ApiResult<Manga> {
+    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    
+    log::debug!("[synonyms] update_synonyms called for manga={}, body={:?}", manga_id, body);
+    
+    // Get existing manga
+    let mut manga = db::manga::get_by_id(pool.inner(), manga_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("manga not found"))?;
+
+    // Get current synonyms or create empty list
+    let mut synonyms = manga.metadata.other_titles.take().unwrap_or_default();
+    
+    log::debug!("[synonyms] current synonyms: {:?}", synonyms);
+    
+    // Process "add" - add new Manual synonyms
+    if let Some(ref add_titles) = body.add {
+        log::debug!("[synonyms] processing add: {:?}", add_titles);
+        for title in add_titles {
+            let title = title.trim().to_owned();
+            if title.is_empty() {
+                continue;
+            }
+            // Check if already exists
+            if !synonyms.iter().any(|s| s.title == title) {
+                synonyms.push(crate::manga::manga::Synonym {
+                    title,
+                    source: SynonymSource::Manual,
+                    hidden: false,
+                    filter_reason: None,
+                });
+            }
+        }
+    }
+    
+    // Process "hide" - hide AniList synonyms (mark as hidden with manual reason)
+    if let Some(ref hide_titles) = body.hide {
+        log::debug!("[synonyms] processing hide: {:?}", hide_titles);
+        for title in hide_titles {
+            let title = title.trim().to_owned();
+            if title.is_empty() {
+                continue;
+            }
+            // Find and hide AniList synonyms (compare both trimmed and untrimmed)
+            for syn in synonyms.iter_mut() {
+                if syn.source == SynonymSource::AniList {
+                    if syn.title == title || syn.title.trim() == title {
+                        log::debug!("[synonyms] hiding synonym: {} (source={:?})", syn.title, syn.source);
+                        syn.hidden = true;
+                        syn.filter_reason = Some("manual".to_owned());
+                    }
+                }
+            }
+        }
+    }
+    
+    // Process "remove" - remove Manual synonyms only (can't fully delete AniList ones)
+    if let Some(ref remove_titles) = body.remove {
+        log::debug!("[synonyms] processing remove: {:?}", remove_titles);
+        let titles_to_remove: std::collections::HashSet<_> = remove_titles
+            .iter()
+            .filter(|s| !s.trim().is_empty())
+            .collect();
+        
+        log::debug!("[synonyms] titles_to_remove: {:?}", titles_to_remove);
+        
+        // Build new list instead of using retain with mutation
+        let mut new_synonyms = Vec::new();
+        for s in &synonyms {
+            log::debug!("[synonyms] checking synonym: {} (source={:?}, hidden={})", s.title, s.source, s.hidden);
+        }
+        
+        for s in synonyms {
+            if titles_to_remove.contains(&s.title) {
+                if s.source == SynonymSource::AniList {
+                    // For AniList synonyms in remove list, just unhide them
+                    log::debug!("[synonyms] removing AniList synonym (will unhide): {}", s.title);
+                    let mut updated = s;
+                    updated.hidden = false;
+                    new_synonyms.push(updated);
+                } else {
+                    // Manual synonyms in remove list are dropped (removed)
+                    log::debug!("[synonyms] removing Manual synonym: {}", s.title);
+                }
+                // Manual synonyms in remove list are dropped (removed)
+            } else {
+                new_synonyms.push(s);
+            }
+        }
+        synonyms = new_synonyms;
+    }
+    
+    log::debug!("[synonyms] final synonyms: {:?}", synonyms);
+    
+    // Update manga with new synonyms
+    manga.metadata.other_titles = Some(synonyms);
+    manga.metadata_updated_at = Utc::now().timestamp();
+    
+    // Save to database
+    log::debug!("[synonyms] saving to database...");
+    db::manga::update_metadata(pool.inner(), &manga)
+        .await
+        .map_err(internal)?;
+    log::debug!("[synonyms] saved successfully");
+
+    // Re-fetch to get updated data
+    db::manga::get_by_id(pool.inner(), manga_id)
+        .await
+        .map_err(internal)?
+        .map(Json)
+        .ok_or_else(|| not_found("manga not found after update"))
+}
+
 /// All the routes be here
 pub fn routes() -> Vec<rocket::Route> {
     routes![
@@ -1216,5 +1405,6 @@ pub fn routes() -> Vec<rocket::Route> {
         list_trusted_groups,
         add_trusted_group,
         remove_trusted_group,
+        update_synonyms,
     ]
 }

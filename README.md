@@ -15,6 +15,7 @@ The plan is to use AniList as the metadata source, and to automatically* match m
 - Downloads aren't as good as I hoped
     - Downloaded chapters should make the whole row change colour a bit
     - Also we sorta just patch on downloaded state, it should listen to the downloaded cbz metadata and not just use the canonical chapter listed. (or do, idk, whatever looks the best, more thinking needs to go into this.)
+- Tags in search are [object Object]????!?
 
 ## Features
 
@@ -49,6 +50,7 @@ The plan is to use AniList as the metadata source, and to automatically* match m
     - This should NOT be able to make a trusted scan be more important than an official copy.
 - Populate ComicInfo.xml betterer. (https://github.com/anansi-project/comicinfo/blob/main/schema/v2.0/ComicInfo.xsd)
     - Requires saving more details from anilist (Writer/Penciller/Inker/Colorist/Letterer/AgeRating/Community Rating)
+- [ ] I know nothing about frontend stuff - is tailwind something we should use?
 
 ### Maximum Viable Release (in order of importance)
 

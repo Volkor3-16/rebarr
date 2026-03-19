@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS Settings (
 
 INSERT OR IGNORE INTO Settings (key, value) VALUES ('scan_interval_hours', '6');
 INSERT OR IGNORE INTO Settings (key, value) VALUES ('preferred_language', 'en');
+INSERT OR IGNORE INTO Settings (key, value) VALUES ('synonym_filter_languages', 'cmn,vie,rus,kor,tha,spa');
 
 
 CREATE INDEX idx_manga_library_id ON Manga(library_id);

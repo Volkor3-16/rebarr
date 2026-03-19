@@ -67,6 +67,7 @@ export const manga = {
   setCanonical: (id, base, variant, chapterId) => post(`/api/manga/${id}/chapters/${base}/${variant}/set-canonical`, { chapter_id: chapterId }),
   markDownloaded: (id, base, variant) => post(`/api/manga/${id}/chapters/${base}/${variant}/mark-downloaded`, null),
   optimise: (id, base, variant) => post(`/api/manga/${id}/chapters/${base}/${variant}/optimise`, null),
+  updateSynonyms: (id, data) => patch(`/api/manga/${id}/synonyms`, data),
 };
 
 // Search API

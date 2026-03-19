@@ -74,10 +74,16 @@ export async function viewSeries(id) {
             </div>
             ${(meta.other_titles || []).length > 0 ? `
             <div class="series-meta-item">
-              <span class="label">Other:</span>
-              <span class="value">${(meta.other_titles || []).map(t => `<span class="tag">${escape(t)}</span>`).join(' ')}</span>
+              <span class="label">Aliases:</span>
+              <span class="value synonyms-list" id="synonyms-list">${renderSynonyms(meta.other_titles || [])}</span>
+              <button class="btn-sm" onclick="addSynonym()" title="Add alias">+</button>
             </div>
-            ` : ''}
+            ` : `
+            <div class="series-meta-item">
+              <span class="label">Aliases:</span>
+              <button class="btn-sm" onclick="addSynonym()" title="Add alias">+ Add</button>
+            </div>
+            `}
           </div>
           
           <div class="series-synopsis" id="series-synopsis">
@@ -1110,4 +1116,108 @@ window.doDownloadAllMissing = async function(mangaId) {
   showToast('All missing chapters queued');
 };
 
+// ---------------------------------------------------------------------------
+// Synonym management functions
+// ---------------------------------------------------------------------------
+
+// Render synonyms with source indicators and remove buttons
+function renderSynonyms(synonyms) {
+  if (!synonyms || synonyms.length === 0) return '';
+  
+  return synonyms.map(syn => {
+    const isManual = syn.source === 'Manual';
+    const isHidden = syn.hidden;
+    
+    // Build tooltip based on hidden state and filter reason
+    let title;
+    if (isHidden) {
+      if (syn.filter_reason) {
+        title = `Hidden: ${syn.filter_reason}`;
+      } else {
+        title = 'Hidden from search';
+      }
+    } else {
+      title = isManual ? 'Manual synonym - always used for search' : 'AniList synonym - click to hide from search';
+    }
+    
+    const style = isHidden ? 'opacity: 0.5; text-decoration: line-through;' : '';
+    
+    const titleAttr = syn.title.replace(/'/g, "\\'");
+    return `<span class="tag synonym-tag" style="${style}" title="${title}">
+      <button class="synonym-remove" data-title="${escape(syn.title)}" data-manual="${isManual}" data-hidden="${isHidden}" title="${isHidden ? 'Show in search' : 'Hide from search'}">×</button>
+      ${escape(syn.title)}
+    </span>`;
+  }).join(' ');
+}
+
+// Add a new synonym
+window.addSynonym = async function() {
+  const title = prompt('Enter a new synonym title:');
+  if (!title || !title.trim()) return;
+  
+  try {
+    await mangaApi.updateSynonyms(currentMangaId, {
+      add: [title.trim()]
+    });
+    showToast('Synonym added');
+    // Reload the page to show updated synonyms
+    viewSeries(currentMangaId);
+  } catch(e) {
+    showToast('Error adding synonym: ' + e.message, 'error');
+  }
+};
+
+// Remove a synonym (unhide for AniList if hidden, delete for Manual)
+window.removeSynonym = async function(title, isManual, isHidden) {
+  if (isHidden) {
+    // Already hidden - unhide it (use remove action which un-hides AniList synonyms)
+    if (!confirm(`Show synonym "${title}" in search?`)) return;
+    try {
+      await mangaApi.updateSynonyms(currentMangaId, {
+        remove: [title]
+      });
+      showToast('Synonym shown in search');
+    } catch(e) {
+      showToast('Error showing synonym: ' + e.message, 'error');
+    }
+  } else {
+    // Not hidden - hide it
+    if (!confirm(`Hide synonym "${title}" from search?`)) return;
+    try {
+      if (isManual) {
+        // For manual synonyms, remove entirely
+        await mangaApi.updateSynonyms(currentMangaId, {
+          remove: [title]
+        });
+        showToast('Synonym removed');
+      } else {
+        // For AniList synonyms, just hide
+        await mangaApi.updateSynonyms(currentMangaId, {
+          hide: [title]
+        });
+        showToast('Synonym hidden from search');
+      }
+    } catch(e) {
+      showToast('Error hiding synonym: ' + e.message, 'error');
+    }
+  }
+  // Reload to show updated synonyms
+  viewSeries(currentMangaId);
+};
+
 window.viewSeries = viewSeries;
+
+// Event delegation for synonym buttons
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.synonym-remove');
+  if (!btn) return;
+  
+  e.stopPropagation();
+  const title = btn.dataset.title;
+  const isManual = btn.dataset.manual === 'true';
+  const isHidden = btn.dataset.hidden === 'true';
+  
+  if (title && currentMangaId) {
+    window.removeSynonym(title, isManual, isHidden);
+  }
+});

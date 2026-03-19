@@ -1,11 +1,12 @@
 use chrono::Utc;
+use log::trace;
 use sqlx::SqlitePool;
 use thiserror::Error;
 
 use crate::db::provider::MangaProvider;
 use crate::db::{chapter as db_chapter, provider as db_provider, task as db_task, settings as db_settings};
 use crate::db::task::TaskType;
-use crate::manga::manga::{DownloadStatus, Manga};
+use crate::manga::manga::{DownloadStatus, Manga, SynonymSource};
 use crate::scraper::{Provider, ProviderRegistry, ScraperCtx};
 
 /// Error for scary times
@@ -37,6 +38,99 @@ pub async fn check_new_chapters(
     scrape_known_providers(pool, registry, ctx, manga).await
 }
 
+/// Get the list of language codes to filter from synonym searches.
+/// Returns a set of lowercase ISO 639-3 codes (e.g., "cmn", "vie", "rus").
+async fn get_filter_languages(pool: &SqlitePool) -> std::collections::HashSet<String> {
+    // Default to empty - user must explicitly configure filters
+    let raw = db_settings::get(pool, "synonym_filter_languages", "")
+        .await
+        .unwrap_or_else(|_| "".to_string());
+    
+    trace!("Filtered languages: {raw:?}");
+    raw.split(',')
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// Apply language filters to synonyms - marks matching ones as hidden with filter_reason.
+/// This should be called when refreshing metadata from AniList to persist filter state.
+/// 
+/// `existing_synonyms` - the stored synonyms from DB (may be empty for new manga)
+/// `new_synonyms` - the fresh synonyms from AniList (to be filtered)
+pub fn apply_language_filters_to_synonyms(
+    filter_codes: &std::collections::HashSet<String>,
+    existing_synonyms: &[crate::manga::manga::Synonym],
+    new_synonyms: &mut Vec<crate::manga::manga::Synonym>,
+) {
+    if filter_codes.is_empty() {
+        return;
+    }
+    
+    // Build a lookup: title -> manual hide status from existing synonyms
+    let manual_hides: std::collections::HashSet<String> = existing_synonyms
+        .iter()
+        .filter(|s| s.hidden && s.filter_reason.as_deref() == Some("manual"))
+        .map(|s| s.title.clone())
+        .collect();
+    
+    for syn in new_synonyms.iter_mut() {
+        // Only filter AniList synonyms (not Manual ones user added)
+        if syn.source != crate::manga::manga::SynonymSource::AniList {
+            continue;
+        }
+        
+        // Check if user manually hid this synonym - preserve their choice
+        if manual_hides.contains(&syn.title) {
+            syn.hidden = true;
+            syn.filter_reason = Some("manual".to_string());
+            log::debug!("[filter] Preserved manual hide for synonym '{}'", syn.title);
+            continue;
+        }
+        
+        // Skip if already hidden with manual reason (don't override user preference)
+        if syn.hidden && syn.filter_reason.as_deref() == Some("manual") {
+            continue;
+        }
+        
+        // Apply language filter
+        if let Some(reason) = is_filtered_language(&syn.title, filter_codes) {
+            syn.hidden = true;
+            syn.filter_reason = Some(format!("language:{}", reason));
+            log::debug!("[filter] Marked synonym '{}' as hidden: {}", syn.title, syn.filter_reason.as_ref().unwrap());
+        }
+    }
+}
+
+/// Check if a title's detected language matches any in the filter list.
+/// Returns Some(filter_code) if filtered, None if not filtered.
+/// Used by RefreshAniList to flag synonyms as hidden.
+pub fn is_filtered_language(title: &str, filter_codes: &std::collections::HashSet<String>) -> Option<String> {
+    // Skip empty filter list - nothing to filter
+    if filter_codes.is_empty() {
+        return None;
+    }
+
+    trace!("Checking language filter for title: '{title}'");
+
+    // Use whatlang to detect the language
+    let detected = whatlang::detect(title)?;
+    let lang = detected.lang();
+    trace!("Detected language: {lang:?}");
+
+    // Convert detected lang to ISO 639-3 string (e.g., Lang::Cmn -> "cmn")
+    let detected_code = format!("{:?}", lang).to_lowercase();
+
+    // Check if it's in the filter list
+    if filter_codes.contains(&detected_code) {
+        trace!("Title filtered out due to language match: {detected_code}");
+        return Some(detected_code);
+    }
+
+    trace!("Title kept (not in filtered languages)");
+    None
+}
+
 /// Scan all providers for a manga:
 /// 1. Search for provider URLs not yet cached in `MangaProvider`.
 /// 2. Scrape chapter lists for every cached provider URL.
@@ -48,14 +142,41 @@ pub async fn scan_manga(
     ctx: &ScraperCtx,
     manga: &Manga,
 ) -> Result<ScanResult, ScanError> {
+    // Get filter languages from settings
+    let filter_languages = get_filter_languages(pool).await;
     // Fallback to the other titles in case of emergency.
     let mut search_titles: Vec<&str> = vec![manga.metadata.title.as_str()];
     
     // Add all other_titles (synonyms, romaji, native, etc.)
+    // Filter based on source and language
     if let Some(ref other) = manga.metadata.other_titles {
-        for title in other {
-            if !title.trim().is_empty() {
-                search_titles.push(title.as_str());
+        for synonym in other {
+            // Skip if hidden
+            if synonym.hidden {
+                continue;
+            }
+            
+            // Manual synonyms are always included (user explicitly added them)
+            if synonym.source == SynonymSource::Manual {
+                if !synonym.title.trim().is_empty() {
+                    search_titles.push(synonym.title.as_str());
+                }
+                continue;
+            }
+            
+            // For AniList synonyms, check if they're in a filtered language
+            if let Some(filter_reason) = is_filtered_language(&synonym.title, &filter_languages) {
+                log::debug!(
+                    "[scan] Skipping filtered synonym '{}' for '{}' (language: {})",
+                    synonym.title,
+                    manga.metadata.title,
+                    filter_reason
+                );
+                continue;
+            }
+            
+            if !synonym.title.trim().is_empty() {
+                search_titles.push(synonym.title.as_str());
             }
         }
     }
@@ -67,6 +188,12 @@ pub async fn scan_manga(
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
+    
+    log::debug!(
+        "[scan] Search titles for '{}': {:?}",
+        manga.metadata.title,
+        search_titles
+    );
 
     // For every provider...
     for provider in registry.all() {

@@ -26,6 +26,7 @@ urlencoding = "2"
 eoka = "0.3"
 strsim = "0.11"
 regex = "1"
+whatlang = "0.16"
 zip = "8.2.0"
 humantime = "2"
 image = { version = "0.25.10", features = ["webp"] }

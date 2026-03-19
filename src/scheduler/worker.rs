@@ -16,6 +16,7 @@ use crate::db::task::{Task, TaskType};
 use crate::db::{chapter as db_chapter, library as db_library, manga as db_manga, settings as db_settings, task as db_task};
 use crate::scraper::downloader;
 use crate::manga::merge;
+use std::collections::HashSet;
 use crate::http::anilist::ALClient;
 use crate::scraper::{ProviderRegistry, ScraperCtx};
 use crate::scheduler::optimiser;
@@ -269,6 +270,24 @@ async fn dispatch(
                     covers::download_cover(&ctx.http, &url, manga.id, &series_dir)
                         .await
                         .or(Some(url));
+            }
+
+            // Apply language filters to synonyms before saving
+            // Preserve any synonyms that the user manually hid
+            let existing_synonyms = manga.metadata.other_titles.unwrap_or_default();
+            if let Some(ref mut synonyms) = fresh.metadata.other_titles {
+                let filter_codes: HashSet<String> = db_settings::get(pool, "synonym_filter_languages", "")
+                    .await
+                    .map(|s| {
+                        s.split(',')
+                            .map(|c| c.trim().to_lowercase())
+                            .filter(|c| !c.is_empty())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if !filter_codes.is_empty() {
+                    merge::apply_language_filters_to_synonyms(&filter_codes, &existing_synonyms, synonyms);
+                }
             }
 
             db_manga::update_metadata(pool, &fresh)
