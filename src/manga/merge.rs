@@ -5,7 +5,7 @@ use thiserror::Error;
 use crate::db::provider::MangaProvider;
 use crate::db::{chapter as db_chapter, provider as db_provider, task as db_task, settings as db_settings};
 use crate::db::task::TaskType;
-use crate::manga::manga::Manga;
+use crate::manga::manga::{DownloadStatus, Manga};
 use crate::scraper::{Provider, ProviderRegistry, ScraperCtx};
 
 /// Error for scary times
@@ -278,6 +278,55 @@ async fn scrape_known_providers(
                 "[scan] Queued {enqueued} auto-download(s) for monitored manga '{}'.",
                 manga.metadata.title
             );
+        }
+    }
+
+    // --- Upgrade detection: queue downloads for chapters with a better source now available ---
+    if manga.monitored {
+        match db_chapter::find_upgrade_candidates(pool, manga.id, &trusted_groups).await {
+            Ok(candidates) if !candidates.is_empty() => {
+                let mut upgrade_count = 0usize;
+                for candidate in &candidates {
+                    // Skip if this chapter is already being downloaded or queued.
+                    let already_active = db_chapter::get_by_id(pool, candidate.new_canonical_id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|ch| matches!(
+                            ch.download_status,
+                            DownloadStatus::Queued | DownloadStatus::Downloading
+                        ))
+                        .unwrap_or(false);
+
+                    if already_active {
+                        continue;
+                    }
+
+                    match db_task::enqueue(
+                        pool,
+                        TaskType::DownloadChapter,
+                        Some(manga.id),
+                        Some(candidate.new_canonical_id),
+                        7,
+                    )
+                    .await
+                    {
+                        Ok(_) => upgrade_count += 1,
+                        Err(e) => log::warn!(
+                            "[scan] Failed to enqueue upgrade for {}: {e}",
+                            candidate.new_canonical_id
+                        ),
+                    }
+                }
+                if upgrade_count > 0 {
+                    log::info!(
+                        "[scan] Queued {upgrade_count} chapter upgrade(s) for '{}'.",
+                        manga.metadata.title
+                    );
+                }
+            }
+            Ok(_) => {}
+            Err(e) => log::warn!("[scan] Upgrade candidate check failed: {e}"),
         }
     }
 

@@ -19,6 +19,8 @@ pub struct ParsedComicInfo {
     pub tags: Vec<String>,
     /// AniList series ID, parsed from `<Web>` URL or `<Notes>rebarr:anilist_id=...</Notes>`.
     pub anilist_id: Option<u32>,
+    /// Provider name, parsed from `<Notes>rebarr:provider=...</Notes>`.
+    pub provider_name: Option<String>,
     // Chapter-level fields
     pub chapter_title: Option<String>,
     pub scanlator: Option<String>,
@@ -67,15 +69,21 @@ pub fn parse_comicinfo(xml: &str) -> ParsedComicInfo {
     info.anilist_id = extract_tag(xml, "Web").and_then(|url| {
         url.trim_end_matches('/').rsplit('/').next().and_then(|s| s.parse().ok())
     });
-    // Fallback: <Notes>rebarr:anilist_id=12345</Notes>
-    if info.anilist_id.is_none() {
-        info.anilist_id = extract_tag(xml, "Notes").and_then(|notes| {
-            notes
+    // Fallback / extended: <Notes>rebarr:anilist_id=12345 rebarr:provider=ProviderName</Notes>
+    if let Some(notes) = extract_tag(xml, "Notes") {
+        if info.anilist_id.is_none() {
+            info.anilist_id = notes
                 .split("rebarr:anilist_id=")
                 .nth(1)
                 .and_then(|s| s.split_whitespace().next())
-                .and_then(|s| s.parse().ok())
-        });
+                .and_then(|s| s.parse().ok());
+        }
+        info.provider_name = notes
+            .split("rebarr:provider=")
+            .nth(1)
+            .and_then(|s| s.split_whitespace().next())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_owned());
     }
 
     info.chapter_title = extract_tag(xml, "Title");
@@ -181,8 +189,14 @@ pub fn generate_series_xml(manga: &Manga) -> String {
 /// Generate a chapter-level ComicInfo.xml string for embedding inside a CBZ.
 ///
 /// Includes all series fields plus chapter-specific fields (number, title,
-/// volume, scanlator group, page count).
-pub fn generate_chapter_xml(manga: &Manga, chapter: &Chapter, page_count: usize) -> String {
+/// volume, scanlator group, page count). `provider_name` is embedded in Notes
+/// for round-trip re-import via the disk scanner.
+pub fn generate_chapter_xml(
+    manga: &Manga,
+    chapter: &Chapter,
+    page_count: usize,
+    provider_name: Option<&str>,
+) -> String {
     let m = &manga.metadata;
 
     // Alternate series: use other_titles (joined with semicolon for ComicInfo.xml)
@@ -223,8 +237,19 @@ pub fn generate_chapter_xml(manga: &Manga, chapter: &Chapter, page_count: usize)
         xml.push_str(&format!("  <PageCount>{page_count}</PageCount>\n"));
     }
     xml.push_str(&opt_str_elem("LanguageISO", Some(&chapter.language.to_uppercase())));
-    // Embed AniList ID for clean round-trip re-import
-    let notes = manga.anilist_id.map(|id| format!("rebarr:anilist_id={id}"));
+    // Embed AniList ID and provider for clean round-trip re-import
+    let notes = {
+        let mut parts = Vec::new();
+        if let Some(id) = manga.anilist_id {
+            parts.push(format!("rebarr:anilist_id={id}"));
+        }
+        if let Some(p) = provider_name {
+            if !p.is_empty() {
+                parts.push(format!("rebarr:provider={p}"));
+            }
+        }
+        if parts.is_empty() { None } else { Some(parts.join(" ")) }
+    };
     xml.push_str(&opt_str_elem("Notes", notes.as_deref()));
 
     xml.push_str("</ComicInfo>\n");

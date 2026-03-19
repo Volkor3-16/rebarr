@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 use crate::db::{chapter as db_chapter, provider as db_provider, settings as db_settings};
 use crate::manga::comicinfo;
 use crate::manga::manga::{Chapter, DownloadStatus, Manga};
-use crate::manga::scoring::{ChapterFilter, rank_entries};
+use crate::manga::scoring::{ChapterFilter, compute_tier, rank_entries};
 use crate::scraper::{ProviderRegistry, ScraperCtx};
 
 // ---------------------------------------------------------------------------
@@ -191,6 +191,15 @@ pub async fn download_chapter(
                     Some(Utc::now()),
                 )
                 .await?;
+
+                // Record file size (best-effort; ignore errors)
+                if let Ok(meta) = tokio::fs::metadata(&cbz_path).await {
+                    let _ = db_chapter::set_file_size(pool, chapter.id, meta.len() as i64).await;
+                }
+
+                // Remove any previously-downloaded lower-tier variants for this chapter slot.
+                cleanup_superseded_downloads(pool, manga, chapter, lib_root, &trusted_groups).await;
+
                 db_chapter::update_manga_counts(pool, manga.id).await?;
 
                 log::info!(
@@ -312,6 +321,78 @@ async fn download_pages(
     Ok(results)
 }
 
+/// After a successful download, remove any previously-downloaded lower-tier variants
+/// for the same (chapter_base, chapter_variant) slot.
+///
+/// Non-fatal: logs errors and continues. Only removes variants with a strictly worse
+/// tier than `chapter` — same-tier variants are left untouched.
+async fn cleanup_superseded_downloads(
+    pool: &sqlx::SqlitePool,
+    manga: &Manga,
+    chapter: &Chapter,
+    lib_root: &Path,
+    trusted_groups: &[String],
+) {
+    let all_variants = match db_chapter::get_all_for_chapter(
+        pool,
+        manga.id,
+        chapter.chapter_base,
+        chapter.chapter_variant,
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("[dl] cleanup: could not load chapter variants: {e}");
+            return;
+        }
+    };
+
+    let new_tier = compute_tier(chapter.scanlator_group.as_deref(), trusted_groups);
+    let series_dir = lib_root.join(&manga.relative_path);
+    let number_prefix = format!("Chapter {}", chapter.number_sort());
+
+    for variant in &all_variants {
+        if variant.id == chapter.id {
+            continue;
+        }
+        if variant.download_status != DownloadStatus::Downloaded {
+            continue;
+        }
+        let old_tier = compute_tier(variant.scanlator_group.as_deref(), trusted_groups);
+        if old_tier <= new_tier {
+            continue; // Same or better tier — don't touch
+        }
+
+        // Find the CBZ file: prefix-match "Chapter {number}*.cbz" in series dir.
+        let cbz_path = std::fs::read_dir(&series_dir)
+            .ok()
+            .and_then(|entries| {
+                entries.flatten().find_map(|e| {
+                    let fname = e.file_name();
+                    let name = fname.to_string_lossy();
+                    if name.starts_with(&number_prefix) && name.ends_with(".cbz") {
+                        Some(e.path())
+                    } else {
+                        None
+                    }
+                })
+            });
+
+        if let Some(path) = cbz_path {
+            if let Err(e) = std::fs::remove_file(&path) {
+                log::warn!("[dl] cleanup: failed to remove {}: {e}", path.display());
+            } else {
+                log::info!("[dl] cleanup: removed superseded {}", path.display());
+            }
+        }
+
+        if let Err(e) = db_chapter::set_status(pool, variant.id, DownloadStatus::Missing, None).await {
+            log::warn!("[dl] cleanup: failed to mark variant {} as Missing: {e}", variant.id);
+        }
+    }
+}
+
 /// Write image data as a CBZ (ZIP) file with a rich ComicInfo.xml.
 async fn write_cbz(
     path: &Path,
@@ -324,7 +405,7 @@ async fn write_cbz(
     }
 
     let path = path.to_owned();
-    let comic_info = comicinfo::generate_chapter_xml(manga, chapter, images.len());
+    let comic_info = comicinfo::generate_chapter_xml(manga, chapter, images.len(), chapter.provider_name.as_deref());
 
     tokio::task::spawn_blocking(move || {
         let file = std::fs::File::create(&path)?;

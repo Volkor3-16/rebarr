@@ -360,10 +360,10 @@ button.btn-primary:hover {
   color: #fff;
 }
 
-.ch-tier-1 { background: var(--tier-1); }
-.ch-tier-2 { background: var(--tier-2); }
-.ch-tier-3 { background: var(--tier-3); }
-.ch-tier-4 { background: var(--text-muted); }
+.ch-tier-1 { background: var(--tier-1); color: black; }
+.ch-tier-2 { background: var(--tier-2); color: black; }
+.ch-tier-3 { background: var(--tier-3); color: black; }
+.ch-tier-4 { background: var(--text-muted); color: black; }
 
 /* Status icons */
 .status-icon {
@@ -1357,6 +1357,14 @@ pre {
   font-size: 0.85rem;
   margin: 0;
   min-width: auto;
+}
+
+/* Filter separator between filter groups */
+.filter-separator {
+  color: var(--text-muted);
+  margin: 0 0.5rem;
+  font-size: 0.85rem;
+  user-select: none;
 }
 
 /* Table header sorting */

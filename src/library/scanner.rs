@@ -50,7 +50,10 @@ pub async fn scan_existing_chapters(pool: &SqlitePool, manga_id: Uuid) -> Result
         let Some(num_str) = rest.strip_suffix(".cbz") else {
             continue;
         };
-        let Ok(number_sort) = num_str.parse::<f32>() else {
+        // num_str may be "1", "1.5", "1 - Title [Group]", "1.5 - Title [Group]"
+        // Extract just the leading numeric token before any whitespace.
+        let number_part = num_str.split_whitespace().next().unwrap_or("");
+        let Ok(number_sort) = number_part.parse::<f32>() else {
             continue;
         };
 
@@ -59,9 +62,9 @@ pub async fn scan_existing_chapters(pool: &SqlitePool, manga_id: Uuid) -> Result
         let frac = (number_sort - number_sort.floor()).abs();
         let chapter_variant = (frac * 10.0).round() as i32;
 
-        let downloaded_at = entry
-            .metadata()
-            .ok()
+        let entry_meta = entry.metadata().ok();
+        let downloaded_at = entry_meta
+            .as_ref()
             .and_then(|m| m.modified().ok())
             .and_then(|t| {
                 let secs = t
@@ -70,6 +73,7 @@ pub async fn scan_existing_chapters(pool: &SqlitePool, manga_id: Uuid) -> Result
                     .as_secs();
                 chrono::DateTime::from_timestamp(secs as i64, 0)
             });
+        let file_size = entry_meta.as_ref().map(|m| m.len() as i64);
 
         let cbz_info = comicinfo::read_cbz_comicinfo(&entry.path());
 
@@ -88,6 +92,10 @@ pub async fn scan_existing_chapters(pool: &SqlitePool, manga_id: Uuid) -> Result
                     .map_err(|e| e.to_string())?;
                     found += 1;
                 }
+                // Always refresh file size (may not have been recorded before)
+                if let Some(size) = file_size {
+                    let _ = db_chapter::set_file_size(pool, ch.id, size).await;
+                }
             }
             Ok(None) => {
                 // No canonical entry — insert a row marked as Downloaded (provider_name = NULL),
@@ -98,24 +106,36 @@ pub async fn scan_existing_chapters(pool: &SqlitePool, manga_id: Uuid) -> Result
                     .and_then(|y| chrono::NaiveDate::from_ymd_opt(y, 1, 1))
                     .and_then(|d| d.and_hms_opt(0, 0, 0))
                     .map(|dt| dt.and_utc());
+                let language = cbz_info
+                    .as_ref()
+                    .and_then(|i| i.language.clone())
+                    .unwrap_or_else(|| "EN".to_owned());
+                let scanlator_group = cbz_info.as_ref().and_then(|i| i.scanlator.clone());
+                let provider_name = cbz_info.as_ref().and_then(|i| i.provider_name.clone());
                 let chapter = Chapter {
-                    id: Uuid::new_v4(),
+                    id: db_chapter::chapter_uuid(
+                        manga_id,
+                        chapter_base,
+                        chapter_variant,
+                        &language,
+                        scanlator_group.as_deref(),
+                        provider_name.as_deref(),
+                    ),
                     manga_id,
                     chapter_base,
                     chapter_variant,
                     is_extra: false,
                     title: cbz_info.as_ref().and_then(|i| i.chapter_title.clone()),
-                    language: cbz_info
-                        .as_ref()
-                        .and_then(|i| i.language.clone())
-                        .unwrap_or_else(|| "EN".to_owned()),
-                    scanlator_group: cbz_info.as_ref().and_then(|i| i.scanlator.clone()),
-                    provider_name: None,
+                    language,
+                    scanlator_group,
+                    // Recover provider from embedded ComicInfo Notes
+                    provider_name,
                     chapter_url: None,
                     download_status: DownloadStatus::Downloaded,
                     released_at,
                     downloaded_at,
                     scraped_at: None,
+                    file_size_bytes: file_size,
                 };
                 db_chapter::insert(pool, &chapter)
                     .await

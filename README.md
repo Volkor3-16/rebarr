@@ -9,17 +9,25 @@ The plan is to use AniList as the metadata source, and to automatically* match m
 
 ## Bugs / Dev TODO
 
-- Test out actual thingo downloading. yah I wanna know if it works automatically.
-- [ ] Local files management / local provider
-    - Scans existing FS for manga in the library directory, but not added (from previous installs)
-    - Allows the user to import them (adds into db, adds chapters, reads local info and adss to db.)
-    - Use embedded ComicInfo.xml to get metadata
-        - We should embed custom xml for more data.
-    - Ranks them, so allows for upgrades to go through normally.
-- Populate ComicInfo.xml betterer. (https://github.com/anansi-project/comicinfo/blob/main/schema/v2.0/ComicInfo.xsd)
-    - Requires saving more details from anilist (Writer/Penciller/Inker/Colorist/Letterer/AgeRating/Community Rating)
+- Test downloads for the love of god I need to find a chapter that releases so I can have a full workflow of a new chapter -> download
+- Chapter searching doesn't work on the frontend, what did claude even do here?
+- Filters don't really work 'downloaded' doesn't do anything
+- Downloads aren't as good as I hoped
+    - Downloaded chapters should make the whole row change colour a bit
+    - Also we sorta just patch on downloaded state, it should listen to the downloaded cbz metadata and not just use the canonical chapter listed. (or do, idk, whatever looks the best, more thinking needs to go into this.)
 
 ## Features
+
+- You can add series to your library and download them
+- We automatically look on **all**(available) sites and compare what they have
+- We automatically compare them, and download the best one (Official rip > Scanlator > unlabelled/unknown)
+- the ui works.
+- You can monitor/unmonitor series from automatic download. Good for when you've already got a full set and don't need them to download.
+- Uses anilist for metadata, saves it into the chapter itself for easy-importing and such.
+- New sites are just a .yaml with some html selectors (and maybe some javascript). No rust knowledge needed.
+    - Hell half the providers were just me giving chatgpt the yaml schema and an example.
+- REST API, so someone with a workable knowledge of frontend design can implement their own (PRs welcome!)
+
 ### Minimum Viable Release
 
 - [ ] New Database/new user wizard
@@ -34,14 +42,13 @@ The plan is to use AniList as the metadata source, and to automatically* match m
 - [ ] Automatic upgrade path
     - We should re-download existing chapters if they're a new canonical one. (Upgrade from scan to official)
     - Ignore/warn user of overrides
-- [ ] Docker builds
-    - [x] Dockerfile
-    - [x] Docker compose
-    - [ ] .gitlab-ci.yml
 - [ ] Provider Scores
     - Use this to help decide which providers get used in the case of a conflict (Comix & LHTranslation having the same copy, lhtranslation should be preferred.)
     - Global setting, acts on the entire app where the provider is used.
+    - Series setting, acts on the series
     - This should NOT be able to make a trusted scan be more important than an official copy.
+- Populate ComicInfo.xml betterer. (https://github.com/anansi-project/comicinfo/blob/main/schema/v2.0/ComicInfo.xsd)
+    - Requires saving more details from anilist (Writer/Penciller/Inker/Colorist/Letterer/AgeRating/Community Rating)
 
 ### Maximum Viable Release (in order of importance)
 
@@ -68,7 +75,7 @@ This is in addition to the above.
     - [ ] Detect Low Quality images
     - [ ] Detect and remove scanlator pages where they have 4 pages of random fucking memes seriously just have one at most.
 - [ ] Work with non-manga comics?
-- [ ] Komga server 'emulation' (for mihon/tachiyomi extensions)
+- [ ] Komga server 'emulation' (I just wanna read isekai-slop on my phone w/Mihon)
     - [ ] User system
     - [ ] read-list
     - [ ] Scrobbling to mal? (do we need this? most programs already have some form of support... BUT this would be better since automatic matching with mal ids we already use)
@@ -93,9 +100,8 @@ This is in addition to the above.
     - This helps shit like Brainrot Girlfriend, which is only on mangadex?
     - Easier than manually adding and matching i guess.
 - wtf even is rootless docker?
-- [ ] WebUI for viewing chapters - so we can have the user/automated bot:
-    - Detect/Select:
-        - FrontCover, InnerCover, Roundup, Story, Advertisment, Editorial, Letters, Preview, BackCover, Other, Deleted?
+- [ ] WebUI for viewing chapters - so we can have the user/automated flagging of pages:
+    - FrontCover, InnerCover, Roundup, Story, Advertisment, Editorial, Letters, Preview, BackCover, Other, Deleted?
 
 ## Installation
 

@@ -7,6 +7,31 @@ use uuid::Uuid;
 
 use crate::manga::manga::{Manga, MangaMetadata, MangaSource, PublishingStatus};
 
+// ---------------------------------------------------------------------------
+// Deterministic UUID
+// ---------------------------------------------------------------------------
+
+/// Fixed namespace for manga UUID v5 derivation.
+const MANGA_NAMESPACE: Uuid = Uuid::from_bytes([
+    0xc2, 0x7a, 0x5f, 0x91, 0x03, 0xe8, 0x4b, 0x20,
+    0xb1, 0x6d, 0x00, 0xd4, 0x8e, 0x2f, 0x73, 0xa1,
+]);
+
+/// Compute the deterministic UUID for a manga tracked via AniList.
+///
+/// Key: the AniList ID — globally unique, same UUID across all Rebarr installs.
+pub fn manga_uuid(anilist_id: u32) -> Uuid {
+    Uuid::new_v5(&MANGA_NAMESPACE, anilist_id.to_string().as_bytes())
+}
+
+/// Compute the deterministic UUID for a manually-added manga (no AniList ID).
+///
+/// Key: `relative_path` only — library-agnostic, so the UUID survives moving
+/// a manga between libraries.
+pub fn manual_manga_uuid(relative_path: &str) -> Uuid {
+    Uuid::new_v5(&MANGA_NAMESPACE, relative_path.as_bytes())
+}
+
 /// Flat DB row — matches Manga table columns exactly.
 #[derive(sqlx::FromRow)]
 struct MangaRow {
@@ -396,6 +421,106 @@ pub async fn update_metadata(pool: &SqlitePool, manga: &Manga) -> Result<(), sql
     }
 
     tx.commit().await
+}
+
+// ---------------------------------------------------------------------------
+// Data migration
+// ---------------------------------------------------------------------------
+
+#[derive(sqlx::FromRow)]
+struct MangaKeyRow {
+    uuid: String,
+    anilist_id: Option<i64>,
+    relative_path: String,
+}
+
+/// One-time startup migration: recompute all manga UUIDs deterministically.
+///
+/// Idempotent — skips if `DataMigrations` already records
+/// `deterministic_manga_uuids_v1`. Updates all FK tables that reference
+/// `Manga.uuid`: Chapters, CanonicalChapters, MangaTags, MangaProvider, Task.
+///
+/// Returns `true` if any UUIDs were changed (caller should re-run chapter
+/// backfill in that case).
+pub async fn backfill_deterministic_uuids(pool: &SqlitePool) -> Result<bool, sqlx::Error> {
+    let already_ran: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM DataMigrations WHERE name = 'deterministic_manga_uuids_v1'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    if already_ran > 0 {
+        return Ok(false);
+    }
+
+    let rows: Vec<MangaKeyRow> = sqlx::query_as::<_, MangaKeyRow>(
+        "SELECT uuid, anilist_id, relative_path FROM Manga",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut any_changed = false;
+    let mut tx = pool.begin().await?;
+
+    sqlx::query("PRAGMA foreign_keys = OFF").execute(&mut *tx).await?;
+
+    for row in &rows {
+        let new_id = if let Some(al_id) = row.anilist_id {
+            manga_uuid(al_id as u32)
+        } else {
+            manual_manga_uuid(&row.relative_path)
+        };
+
+        let new_id_str = new_id.to_string();
+
+        if new_id_str == row.uuid {
+            continue;
+        }
+
+        let collision: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM Manga WHERE uuid = ?")
+                .bind(&new_id_str)
+                .fetch_one(&mut *tx)
+                .await
+                .unwrap_or(0);
+
+        if collision > 0 {
+            log::warn!("[backfill] Manga UUID collision {} → {} — skipping.", row.uuid, new_id_str);
+            continue;
+        }
+
+        sqlx::query("UPDATE Manga SET uuid = ? WHERE uuid = ?")
+            .bind(&new_id_str).bind(&row.uuid).execute(&mut *tx).await?;
+        sqlx::query("UPDATE Chapters SET manga_id = ? WHERE manga_id = ?")
+            .bind(&new_id_str).bind(&row.uuid).execute(&mut *tx).await?;
+        sqlx::query("UPDATE CanonicalChapters SET manga_id = ? WHERE manga_id = ?")
+            .bind(&new_id_str).bind(&row.uuid).execute(&mut *tx).await?;
+        sqlx::query("UPDATE MangaTags SET manga_id = ? WHERE manga_id = ?")
+            .bind(&new_id_str).bind(&row.uuid).execute(&mut *tx).await?;
+        sqlx::query("UPDATE MangaProvider SET manga_id = ? WHERE manga_id = ?")
+            .bind(&new_id_str).bind(&row.uuid).execute(&mut *tx).await?;
+        sqlx::query("UPDATE Task SET manga_id = ? WHERE manga_id = ?")
+            .bind(&new_id_str).bind(&row.uuid).execute(&mut *tx).await?;
+
+        any_changed = true;
+    }
+
+    sqlx::query("PRAGMA foreign_keys = ON").execute(&mut *tx).await?;
+
+    sqlx::query(
+        "INSERT OR IGNORE INTO DataMigrations (name, ran_at) VALUES ('deterministic_manga_uuids_v1', unixepoch())",
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    if any_changed {
+        log::info!("[backfill] Backfilled deterministic UUIDs for {} manga.", rows.len());
+    }
+
+    Ok(any_changed)
 }
 
 /// Fetch all monitored manga across all libraries, each with their tags.

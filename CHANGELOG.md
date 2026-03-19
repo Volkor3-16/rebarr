@@ -2,6 +2,16 @@
 
 This a informal changelog so i can keep track of what im doing.
 
+## 2026-03-19
+
+- Scandisk actually now scans the disk and flags already-downloaded chapters as downloaded.
+- Also added a filesize thing we're not using yet
+- Changed UUID's to be deterministic, instead of random. Future us can share chapters and have everything match up
+    - ipfs backend!?!?!?!
+- Implemented chapter upgrades (for when a official release upgrades over a scanlator copy automatically)
+- Changed provider score colours a bit
+- Searching & Filtering works now!
+
 ## 2026-03-18
 - Fixed up docker builds with gitlab-ci.
 - Truncation of long titles

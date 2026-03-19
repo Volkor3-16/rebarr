@@ -37,6 +37,7 @@ async fn main() -> Result<(), rocket::Error> {
         Ok(n) => log::warn!("Reset {n} stuck Running task(s) to Pending."),
         Err(e) => log::error!("Failed to reset running tasks: {e}"),
     }
+
     let al_client = ALClient::new();
     let http_client = reqwest::Client::new();
 

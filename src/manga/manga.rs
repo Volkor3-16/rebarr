@@ -230,6 +230,8 @@ pub struct Chapter {
     pub downloaded_at: Option<DateTime<Utc>>,
     /// Last time we scraped this row from the provider.
     pub scraped_at: Option<DateTime<Utc>>,
+    /// Size of the CBZ file on disk in bytes, populated after download or disk scan.
+    pub file_size_bytes: Option<i64>,
 }
 
 impl Chapter {

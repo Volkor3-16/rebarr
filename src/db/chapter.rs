@@ -26,6 +26,7 @@ struct ChapterRow {
     released_at: Option<i64>,
     downloaded_at: Option<i64>,
     scraped_at: Option<i64>,
+    file_size_bytes: Option<i64>,
 }
 
 /// Converts unix timestamp to datetime object
@@ -63,7 +64,46 @@ fn chapter_from_row(row: ChapterRow) -> Result<Chapter, sqlx::Error> {
         released_at: ts_to_dt(row.released_at),
         downloaded_at: ts_to_dt(row.downloaded_at),
         scraped_at: ts_to_dt(row.scraped_at),
+        file_size_bytes: row.file_size_bytes,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Deterministic UUID
+// ---------------------------------------------------------------------------
+
+/// Fixed namespace for chapter UUID v5 derivation. Must never change after
+/// first deployment — changing it would invalidate all existing chapter IDs.
+const CHAPTER_NAMESPACE: Uuid = Uuid::from_bytes([
+    0x7a, 0x2f, 0x4e, 0x10, 0xc1, 0x3b, 0x5a, 0x80,
+    0xb4, 0xe2, 0x00, 0xc0, 0x9d, 0x1a, 0x77, 0xf3,
+]);
+
+/// Compute the deterministic UUID v5 for a chapter row.
+///
+/// The key mirrors the UNIQUE INDEX on Chapters exactly:
+/// `manga_id : chapter_base : chapter_variant : LANGUAGE : scanlator_group : provider_name`
+///
+/// `None` values use `""` to match the DB convention (NULLs are stored as
+/// empty strings in the unique constraint columns).
+pub fn chapter_uuid(
+    manga_id: Uuid,
+    chapter_base: i32,
+    chapter_variant: i32,
+    language: &str,
+    scanlator_group: Option<&str>,
+    provider_name: Option<&str>,
+) -> Uuid {
+    let key = format!(
+        "{}:{}:{}:{}:{}:{}",
+        manga_id,
+        chapter_base,
+        chapter_variant,
+        language.to_uppercase(),
+        scanlator_group.unwrap_or(""),
+        provider_name.unwrap_or(""),
+    );
+    Uuid::new_v5(&CHAPTER_NAMESPACE, key.as_bytes())
 }
 
 // ---------------------------------------------------------------------------
@@ -85,7 +125,6 @@ pub async fn upsert_from_scrape(
     let mut new_ids = Vec::new();
 
     for info in infos {
-        let new_id = Uuid::new_v4();
         let language = info.language.as_deref().unwrap_or("EN").to_uppercase();
         let released_at = info.date_released;
 
@@ -96,7 +135,26 @@ pub async fn upsert_from_scrape(
         let scanlator_group = info.scanlator_group.as_deref().unwrap_or("");
         let title = info.title.as_deref().unwrap_or("");
 
-        let result = sqlx::query(
+        let det_id = chapter_uuid(
+            manga_id,
+            info.chapter_base as i32,
+            info.chapter_variant as i32,
+            &language,
+            info.scanlator_group.as_deref(),
+            Some(provider_name),
+        );
+
+        // Pre-insert existence check: deterministic IDs mean the same row would
+        // produce the same UUID on conflict, so we can't use the old
+        // post-insert "did our new_v4 survive?" heuristic.
+        let pre_exists: bool = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM Chapters WHERE uuid = ?",
+        )
+        .bind(det_id.to_string())
+        .fetch_one(pool)
+        .await? > 0;
+
+        sqlx::query(
             "INSERT INTO Chapters
                 (uuid, manga_id, chapter_base, chapter_variant, is_extra, title, language,
                  scanlator_group, provider_name, chapter_url, download_status, released_at, scraped_at)
@@ -109,7 +167,7 @@ pub async fn upsert_from_scrape(
                  scanlator_group  = COALESCE(Chapters.scanlator_group, excluded.scanlator_group),
                  is_extra         = CASE WHEN Chapters.is_extra = 0 THEN excluded.is_extra ELSE Chapters.is_extra END",
         )
-        .bind(new_id.to_string())
+        .bind(det_id.to_string())
         .bind(&manga_id_str)
         .bind(info.chapter_base as i64)
         .bind(info.chapter_variant as i64)
@@ -124,20 +182,8 @@ pub async fn upsert_from_scrape(
         .execute(pool)
         .await?;
 
-        // rows_affected > 1 means an update happened; == 1 means a new insert
-        if result.rows_affected() == 1 {
-            // Check if the row we just touched is the new_id we generated
-            // (i.e., it was a fresh insert, not an update of existing row)
-            let exists: Option<String> = sqlx::query_scalar(
-                "SELECT uuid FROM Chapters WHERE uuid = ?",
-            )
-            .bind(new_id.to_string())
-            .fetch_optional(pool)
-            .await?;
-
-            if exists.is_some() {
-                new_ids.push(new_id);
-            }
+        if !pre_exists {
+            new_ids.push(det_id);
         }
     }
 
@@ -152,7 +198,7 @@ pub async fn get_all_for_manga(
     let rows = sqlx::query_as::<_, ChapterRow>(
         "SELECT uuid, manga_id, chapter_base, chapter_variant, is_extra, title, language,
                 scanlator_group, provider_name, chapter_url, download_status,
-                released_at, downloaded_at, scraped_at
+                released_at, downloaded_at, scraped_at, file_size_bytes
          FROM Chapters
          WHERE manga_id = ?
          ORDER BY chapter_base ASC, chapter_variant ASC",
@@ -174,7 +220,7 @@ pub async fn get_all_for_chapter(
     let rows = sqlx::query_as::<_, ChapterRow>(
         "SELECT uuid, manga_id, chapter_base, chapter_variant, is_extra, title, language,
                 scanlator_group, provider_name, chapter_url, download_status,
-                released_at, downloaded_at, scraped_at
+                released_at, downloaded_at, scraped_at, file_size_bytes
          FROM Chapters
          WHERE manga_id = ? AND chapter_base = ? AND chapter_variant = ?",
     )
@@ -192,7 +238,7 @@ pub async fn get_by_id(pool: &SqlitePool, id: Uuid) -> Result<Option<Chapter>, s
     let row = sqlx::query_as::<_, ChapterRow>(
         "SELECT uuid, manga_id, chapter_base, chapter_variant, is_extra, title, language,
                 scanlator_group, provider_name, chapter_url, download_status,
-                released_at, downloaded_at, scraped_at
+                released_at, downloaded_at, scraped_at, file_size_bytes
          FROM Chapters WHERE uuid = ?",
     )
     .bind(id.to_string())
@@ -236,7 +282,7 @@ pub async fn get_canonical_for_manga(
     let sql = format!(
         "SELECT uuid, manga_id, chapter_base, chapter_variant, is_extra, title, language,
                 scanlator_group, provider_name, chapter_url, download_status,
-                released_at, downloaded_at, scraped_at
+                released_at, downloaded_at, scraped_at, file_size_bytes
          FROM Chapters
          WHERE uuid IN ({placeholders})
          ORDER BY chapter_base ASC, chapter_variant ASC"
@@ -266,7 +312,7 @@ pub async fn get_canonical_by_number(
     let sql = format!(
         "SELECT uuid, manga_id, chapter_base, chapter_variant, is_extra, title, language,
                 scanlator_group, provider_name, chapter_url, download_status,
-                released_at, downloaded_at, scraped_at
+                released_at, downloaded_at, scraped_at, file_size_bytes
          FROM Chapters
          WHERE uuid IN ({placeholders})
            AND chapter_base = ?
@@ -298,6 +344,16 @@ pub async fn set_status(
     .bind(chapter_id.to_string())
     .execute(pool)
     .await?;
+    Ok(())
+}
+
+/// Update the on-disk file size for a chapter (bytes).
+pub async fn set_file_size(pool: &SqlitePool, chapter_id: Uuid, bytes: i64) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE Chapters SET file_size_bytes = ? WHERE uuid = ?")
+        .bind(bytes)
+        .bind(chapter_id.to_string())
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -520,8 +576,8 @@ pub async fn insert(pool: &SqlitePool, chapter: &Chapter) -> Result<(), sqlx::Er
         "INSERT OR IGNORE INTO Chapters
             (uuid, manga_id, chapter_base, chapter_variant, is_extra, title, language,
              scanlator_group, provider_name, chapter_url, download_status,
-             released_at, downloaded_at, scraped_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             released_at, downloaded_at, scraped_at, file_size_bytes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(chapter.id.to_string())
     .bind(chapter.manga_id.to_string())
@@ -537,6 +593,7 @@ pub async fn insert(pool: &SqlitePool, chapter: &Chapter) -> Result<(), sqlx::Er
     .bind(dt_to_ts(chapter.released_at))
     .bind(dt_to_ts(chapter.downloaded_at))
     .bind(dt_to_ts(chapter.scraped_at))
+    .bind(chapter.file_size_bytes)
     .execute(pool)
     .await?;
     Ok(())
@@ -590,12 +647,227 @@ pub async fn delete_all_for_manga(pool: &SqlitePool, manga_id: Uuid) -> Result<(
         .bind(manga_id.to_string())
         .execute(pool)
         .await?;
-    
+
     // Delete canonical chapters entry
     sqlx::query("DELETE FROM CanonicalChapters WHERE manga_id = ?")
         .bind(manga_id.to_string())
         .execute(pool)
         .await?;
-    
+
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Data migration: backfill deterministic UUIDs
+// ---------------------------------------------------------------------------
+
+#[derive(sqlx::FromRow)]
+struct ChapterKeyRow {
+    uuid: String,
+    manga_id: String,
+    chapter_base: i64,
+    chapter_variant: i64,
+    language: String,
+    scanlator_group: Option<String>,
+    provider_name: Option<String>,
+}
+
+/// One-time startup migration: recompute all chapter UUIDs deterministically.
+///
+/// Idempotent — skips if `DataMigrations` already records `deterministic_chapter_uuids_v2`.
+/// Also updates any `Task.chapter_id` references and rebuilds `CanonicalChapters`
+/// for every affected manga.
+pub async fn backfill_deterministic_uuids(
+    pool: &SqlitePool,
+    trusted_groups: &[String],
+    preferred_language: &str,
+) -> Result<(), sqlx::Error> {
+    // Idempotency guard
+    let already_ran: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM DataMigrations WHERE name = 'deterministic_chapter_uuids_v2'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    if already_ran > 0 {
+        return Ok(());
+    }
+
+    let rows: Vec<ChapterKeyRow> = sqlx::query_as::<_, ChapterKeyRow>(
+        "SELECT uuid, manga_id, chapter_base, chapter_variant, language, scanlator_group, provider_name
+         FROM Chapters",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    if rows.is_empty() {
+        // Nothing to migrate; mark as done and return.
+        sqlx::query("INSERT OR IGNORE INTO DataMigrations (name, ran_at) VALUES ('deterministic_chapter_uuids_v2', unixepoch())")
+            .execute(pool)
+            .await?;
+        return Ok(());
+    }
+
+    let mut changed_manga_ids: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+
+    let mut tx = pool.begin().await?;
+
+    for row in &rows {
+        let manga_id = match Uuid::parse_str(&row.manga_id) {
+            Ok(id) => id,
+            Err(_) => {
+                log::warn!("[backfill] Could not parse manga_id '{}' — skipping row.", row.manga_id);
+                continue;
+            }
+        };
+
+        let new_id = chapter_uuid(
+            manga_id,
+            row.chapter_base as i32,
+            row.chapter_variant as i32,
+            &row.language,
+            row.scanlator_group.as_deref(),
+            row.provider_name.as_deref(),
+        );
+        let new_id_str = new_id.to_string();
+
+        if new_id_str == row.uuid {
+            continue; // Already correct
+        }
+
+        // Collision guard: if new_id already exists, skip (shouldn't happen given UNIQUE constraint).
+        let collision: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM Chapters WHERE uuid = ?")
+                .bind(&new_id_str)
+                .fetch_one(&mut *tx)
+                .await
+                .unwrap_or(0);
+
+        if collision > 0 {
+            log::warn!(
+                "[backfill] UUID collision for row {} → {} — skipping.",
+                row.uuid, new_id_str
+            );
+            continue;
+        }
+
+        sqlx::query("UPDATE Chapters SET uuid = ? WHERE uuid = ?")
+            .bind(&new_id_str)
+            .bind(&row.uuid)
+            .execute(&mut *tx)
+            .await?;
+
+        sqlx::query("UPDATE Task SET chapter_id = ? WHERE chapter_id = ?")
+            .bind(&new_id_str)
+            .bind(&row.uuid)
+            .execute(&mut *tx)
+            .await?;
+
+        changed_manga_ids.insert(row.manga_id.clone());
+    }
+
+    sqlx::query("INSERT OR IGNORE INTO DataMigrations (name, ran_at) VALUES ('deterministic_chapter_uuids_v2', unixepoch())")
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+
+    // Rebuild canonical chapter lists for every affected manga.
+    for manga_id_str in &changed_manga_ids {
+        if let Ok(manga_id) = Uuid::parse_str(manga_id_str) {
+            if let Err(e) = update_canonical(pool, manga_id, trusted_groups, preferred_language).await {
+                log::warn!("[backfill] update_canonical failed for {manga_id_str}: {e}");
+            }
+        }
+    }
+
+    let changed = changed_manga_ids.len();
+    if changed > 0 {
+        log::info!("[backfill] Backfilled deterministic UUIDs for {changed} manga.");
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Upgrade candidate detection
+// ---------------------------------------------------------------------------
+
+/// A chapter slot where the current canonical has a better tier than what is
+/// already Downloaded.
+pub struct UpgradeCandidate {
+    pub chapter_base: i32,
+    pub chapter_variant: i32,
+    /// New canonical UUID (better tier, currently Missing/Failed).
+    pub new_canonical_id: Uuid,
+    /// Currently-downloaded UUID (worse tier).
+    pub old_downloaded_id: Uuid,
+}
+
+/// Find chapters where a better-ranked source is now canonical but an
+/// inferior source is already Downloaded.
+///
+/// Only fires when `tier(canonical) < tier(downloaded)` (strictly better).
+/// Same-tier differences do not trigger upgrades to avoid churn.
+pub async fn find_upgrade_candidates(
+    pool: &SqlitePool,
+    manga_id: Uuid,
+    trusted_groups: &[String],
+) -> Result<Vec<UpgradeCandidate>, sqlx::Error> {
+    let all = get_all_for_manga(pool, manga_id).await?;
+    let canonical_set: std::collections::HashSet<String> =
+        get_canonical_uuids(pool, manga_id)
+            .await?
+            .into_iter()
+            .collect();
+
+    // Group by (chapter_base, chapter_variant)
+    let mut groups: std::collections::HashMap<(i32, i32), Vec<Chapter>> =
+        std::collections::HashMap::new();
+    for ch in all {
+        groups
+            .entry((ch.chapter_base, ch.chapter_variant))
+            .or_default()
+            .push(ch);
+    }
+
+    let mut candidates = Vec::new();
+
+    for ((base, variant), entries) in groups {
+        // Find the canonical entry for this slot.
+        let canonical = match entries
+            .iter()
+            .find(|e| canonical_set.contains(&e.id.to_string()))
+        {
+            Some(c) => c,
+            None => continue,
+        };
+
+        let canon_tier = compute_tier(canonical.scanlator_group.as_deref(), trusted_groups);
+
+        // Find Downloaded entries that are worse tier than the canonical.
+        for entry in &entries {
+            if entry.id == canonical.id {
+                continue;
+            }
+            if entry.download_status != DownloadStatus::Downloaded {
+                continue;
+            }
+            let entry_tier = compute_tier(entry.scanlator_group.as_deref(), trusted_groups);
+            if canon_tier < entry_tier {
+                candidates.push(UpgradeCandidate {
+                    chapter_base: base,
+                    chapter_variant: variant,
+                    new_canonical_id: canonical.id,
+                    old_downloaded_id: entry.id,
+                });
+                // One candidate per slot is enough (take the first worse-tier Downloaded).
+                break;
+            }
+        }
+    }
+
+    Ok(candidates)
 }

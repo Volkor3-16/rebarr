@@ -7,8 +7,9 @@ import { escape, relTime, statusBadge, taskBadge, tierBadgeHtml, skeleton, showT
 let currentMangaId = null;
 let trustedGroupsCache = [];
 let chapterDataCache = [];
+let providersCache = []; // Cache provider names for filtering
 let currentSort = { field: 'chapter', direction: 'desc' };
-let currentFilter = { search: '', status: '' };
+let currentFilter = { search: '', status: '', provider: '' };
 
 export async function viewSeries(id) {
   currentMangaId = id;
@@ -386,13 +387,19 @@ function filterAndSortChapters(chapters) {
       const chNum = `Chapter ${ch.chapter_base}${ch.chapter_variant > 0 ? '.' + ch.chapter_variant : ''}`;
       return chNum.toLowerCase().includes(search) || 
              (ch.title && ch.title.toLowerCase().includes(search)) ||
-             (ch.scanlator_group && ch.scanlator_group.toLowerCase().includes(search));
+             (ch.scanlator_group && ch.scanlator_group.toLowerCase().includes(search)) ||
+             (ch.provider_name && ch.provider_name.toLowerCase().includes(search));
     });
   }
   
   // Filter by status
   if (currentFilter.status) {
     filtered = filtered.filter(ch => ch.download_status === currentFilter.status);
+  }
+  
+  // Filter by provider
+  if (currentFilter.provider) {
+    filtered = filtered.filter(ch => ch.provider_name === currentFilter.provider);
   }
   
   // Sort
@@ -517,6 +524,10 @@ export async function loadChapters(mangaId) {
       return currentSort.direction === 'desc' ? '↓' : '↑';
     };
 
+    // Get unique providers for filter chips
+    const uniqueProviders = getUniqueProviders();
+    const providerFilterHtml = buildProviderChipsHtml(uniqueProviders);
+
     el.innerHTML = `
       <div class="table-filter-bar">
         <input type="text" class="search-input" placeholder="Search chapters..." value="${escape(currentFilter.search)}" oninput="filterChapters(this.value)">
@@ -534,6 +545,7 @@ export async function loadChapters(mangaId) {
           <span class="filter-chip ${currentFilter.status === 'Queued' ? 'active' : ''}" onclick="filterByStatus('Queued')">Queued</span>
           <span class="filter-chip ${currentFilter.status === 'Failed' ? 'active' : ''}" onclick="filterByStatus('Failed')">Failed</span>
         </div>
+        ${providerFilterHtml}
       </div>
       ${buildChapterOverview(chapters)}
       <div class="chapters-table">
@@ -579,6 +591,17 @@ window.filterByStatus = function(status) {
   renderFilteredChapters(filtered);
 };
 
+window.filterByProvider = function(provider) {
+  // Toggle off if already selected
+  if (currentFilter.provider === provider) {
+    currentFilter.provider = '';
+  } else {
+    currentFilter.provider = provider;
+  }
+  const filtered = filterAndSortChapters(chapterDataCache);
+  renderFilteredChapters(filtered);
+};
+
 window.sortChapters = function(value) {
   const [field, direction] = value.split('-');
   currentSort = { field, direction };
@@ -586,43 +609,234 @@ window.sortChapters = function(value) {
   renderFilteredChapters(filtered);
 };
 
+// Get unique providers from chapter data for filter chips
+function getUniqueProviders() {
+  const providers = new Set();
+  for (const ch of chapterDataCache) {
+    if (ch.provider_name) {
+      providers.add(ch.provider_name);
+    }
+  }
+  return [...providers].sort();
+}
+
+// Build the filter chips HTML for providers
+function buildProviderChipsHtml(uniqueProviders) {
+  if (uniqueProviders.length === 0) return '';
+  return `<span class="filter-separator">|</span>
+          <span class="filter-chip ${currentFilter.provider === '' ? 'active' : ''}" onclick="filterByProvider('')">All</span>
+          ${uniqueProviders.map(p => `<span class="filter-chip ${currentFilter.provider === p ? 'active' : ''}" onclick="filterByProvider('${escape(p)}')">${escape(p)}</span>`).join('')}`;
+}
+
 function renderFilteredChapters(filteredChapters) {
   const el = document.getElementById('chapters-list');
   if (!el || !currentMangaId) return;
   
-  // Always show filter bar, even when no results
-  const sortIndicator = (field) => {
-    if (currentSort.field !== field) return '↕';
-    return currentSort.direction === 'desc' ? '↓' : '↑';
-  };
+  // Get unique providers for filter chips
+  const uniqueProviders = getUniqueProviders();
   
-  const filterBarHtml = `
-    <div class="table-filter-bar">
-      <input type="text" class="search-input" placeholder="Search chapters..." value="${escape(currentFilter.search)}" oninput="filterChapters(this.value)">
-      <select class="sort-select" onchange="sortChapters(this.value)">
-        <option value="chapter-desc" ${currentSort.field === 'chapter' && currentSort.direction === 'desc' ? 'selected' : ''}>Newest first</option>
-        <option value="chapter-asc" ${currentSort.field === 'chapter' && currentSort.direction === 'asc' ? 'selected' : ''}>Oldest first</option>
-        <option value="released-desc" ${currentSort.field === 'released' && currentSort.direction === 'desc' ? 'selected' : ''}>Recently released</option>
-        <option value="released-asc" ${currentSort.field === 'released' && currentSort.direction === 'asc' ? 'selected' : ''}>Oldest released</option>
-        <option value="tier-asc" ${currentSort.field === 'tier' ? 'selected' : ''}>Best score first</option>
-      </select>
-      <div class="filter-chips">
-        <span class="filter-chip ${currentFilter.status === '' ? 'active' : ''}" onclick="filterByStatus('')">All</span>
-        <span class="filter-chip ${currentFilter.status === 'Missing' ? 'active' : ''}" onclick="filterByStatus('Missing')">Missing</span>
-        <span class="filter-chip ${currentFilter.status === 'Downloaded' ? 'active' : ''}" onclick="filterByStatus('Downloaded')">Downloaded</span>
-        <span class="filter-chip ${currentFilter.status === 'Queued' ? 'active' : ''}" onclick="filterByStatus('Queued')">Queued</span>
-        <span class="filter-chip ${currentFilter.status === 'Failed' ? 'active' : ''}" onclick="filterByStatus('Failed')">Failed</span>
-      </div>
-    </div>`;
+  // Check if filter bar already exists in DOM
+  const existingFilterBar = el.querySelector('.table-filter-bar');
   
   if (filteredChapters.length === 0) {
-    el.innerHTML = filterBarHtml + '<p style="padding:1rem;text-align:center;color:var(--text-muted)">No chapters match your filters.</p>';
+    // Update existing filter bar or create new one
+    if (existingFilterBar) {
+      // Update the chips and input without destroying them
+      const searchInput = existingFilterBar.querySelector('.search-input');
+      const sortSelect = existingFilterBar.querySelector('.sort-select');
+      const statusChips = existingFilterBar.querySelectorAll('.filter-chip');
+      
+      if (searchInput) searchInput.value = currentFilter.search;
+      if (sortSelect) sortSelect.value = `${currentSort.field}-${currentSort.direction}`;
+      
+      // Update status chips
+      statusChips.forEach((chip, idx) => {
+        const statuses = ['', 'Missing', 'Downloaded', 'Queued', 'Failed'];
+        chip.classList.toggle('active', chip.textContent === (currentFilter.status || 'All') || 
+          (currentFilter.status === '' && chip.textContent === 'All'));
+      });
+      
+      // Check if provider filter already exists
+      const existingSeparator = existingFilterBar.querySelector('.filter-separator');
+      if (!existingSeparator && uniqueProviders.length > 0) {
+        // Add provider chips after status chips
+        const providerHtml = buildProviderChipsHtml(uniqueProviders);
+        const filterChipsDivs = existingFilterBar.querySelectorAll('.filter-chips');
+        const lastFilterChips = filterChipsDivs[filterChipsDivs.length - 1];
+        if (lastFilterChips) {
+          lastFilterChips.insertAdjacentHTML('afterend', providerHtml);
+        }
+      }
+    }
+    
+    // Show empty message
+    let emptyMsg = el.querySelector('.empty-message');
+    if (!emptyMsg) {
+      emptyMsg = document.createElement('p');
+      emptyMsg.className = 'empty-message';
+      emptyMsg.style.cssText = 'padding:1rem;text-align:center;color:var(--text-muted)';
+      emptyMsg.textContent = 'No chapters match your filters.';
+      el.appendChild(emptyMsg);
+    }
+    
+    // Hide table
+    const tableContainer = el.querySelector('.chapters-table');
+    if (tableContainer) tableContainer.style.display = 'none';
+    
+    const overview = el.querySelector('.ch-overview');
+    if (overview) overview.style.display = 'none';
+    
     return;
   }
   
-  // For now, just reload the full list to keep it simple
-  // A proper implementation would rebuild the table from filtered data
-  loadChapters(currentMangaId);
+  // We have results - build the table body from filtered data
+  const baseMap = new Map();
+  for (const ch of filteredChapters) {
+    if (!baseMap.has(ch.chapter_base)) baseMap.set(ch.chapter_base, new Map());
+    const varMap = baseMap.get(ch.chapter_base);
+    if (!varMap.has(ch.chapter_variant)) varMap.set(ch.chapter_variant, []);
+    varMap.get(ch.chapter_variant).push(ch);
+  }
+
+  const sortedBases = [...baseMap.keys()].sort((a, b) => b - a);
+  let rows = '';
+
+  for (const base of sortedBases) {
+    const varMap = baseMap.get(base);
+
+    const extras = [];
+    for (const [variant, chs] of varMap) {
+      for (const ch of chs) {
+        if (ch.is_extra) extras.push(ch);
+      }
+    }
+    extras.sort((a, b) => (b.chapter_variant || 0) - (a.chapter_variant || 0));
+
+    const v0rows = (varMap.get(0) || []).filter(ch => !ch.is_extra);
+    const v0canonical = v0rows.find(ch => ch.is_canonical) || null;
+    const v0alts = v0rows.filter(ch => !ch.is_canonical).sort((a, b) => (a.tier || 4) - (b.tier || 4));
+
+    const splitParts = [...varMap.keys()]
+      .filter(v => v > 0)
+      .sort((a, b) => b - a)
+      .map(v => {
+        const vrows = varMap.get(v).filter(ch => !ch.is_extra);
+        return {
+          canonical: vrows.find(ch => ch.is_canonical) || null,
+          alts: vrows.filter(ch => !ch.is_canonical).sort((a, b) => (a.tier || 4) - (b.tier || 4)),
+        };
+      });
+
+    let mainCh = v0canonical;
+    let effectiveV0alts = v0alts;
+    if (!mainCh) {
+      if (v0alts.length > 0) {
+        mainCh = v0alts[0];
+        effectiveV0alts = v0alts.slice(1);
+      }
+    }
+
+    for (const extra of extras) {
+      rows += chapterRow(currentMangaId, extra, false, '').row;
+    }
+
+    if (mainCh) {
+      rows += chapterGroupHtml(currentMangaId, base, mainCh, effectiveV0alts, splitParts);
+    } else {
+      for (const sp of splitParts) {
+        const spMain = sp.canonical || sp.alts[0];
+        if (spMain) {
+          const spAlts = sp.canonical ? sp.alts : sp.alts.slice(1);
+          rows += chapterGroupHtml(currentMangaId, base, spMain, spAlts, []);
+        }
+      }
+    }
+  }
+
+  // Update existing filter bar to preserve focus
+  if (existingFilterBar) {
+    const searchInput = existingFilterBar.querySelector('.search-input');
+    const sortSelect = existingFilterBar.querySelector('.sort-select');
+    
+    if (searchInput) searchInput.value = currentFilter.search;
+    if (sortSelect) sortSelect.value = `${currentSort.field}-${currentSort.direction}`;
+    
+    // Update status chips
+    const statusChips = existingFilterBar.querySelectorAll('.filter-chip');
+    const statuses = ['', 'Missing', 'Downloaded', 'Queued', 'Failed'];
+    statusChips.forEach((chip, idx) => {
+      const status = statuses[idx];
+      chip.classList.toggle('active', currentFilter.status === status || (status === '' && chip.textContent === 'All'));
+    });
+    
+    // Check if provider filter already exists (from initial load)
+    const existingSeparator = existingFilterBar.querySelector('.filter-separator');
+    if (!existingSeparator && uniqueProviders.length > 0) {
+      // Add provider chips after status chips
+      const providerHtml = buildProviderChipsHtml(uniqueProviders);
+      // Find the last filter-chips div and add provider chips after it
+      const filterChipsDivs = existingFilterBar.querySelectorAll('.filter-chips');
+      const lastFilterChips = filterChipsDivs[filterChipsDivs.length - 1];
+      if (lastFilterChips) {
+        lastFilterChips.insertAdjacentHTML('afterend', providerHtml);
+      }
+    } else if (existingSeparator) {
+      // Update active state for provider chips - they're siblings with status chips
+      const allChips = existingFilterBar.querySelectorAll('.filter-chip');
+      allChips.forEach(chip => {
+        if (chip.classList.contains('filter-separator')) return;
+        if (chip.textContent === 'All' && chip.previousElementSibling?.classList.contains('filter-separator')) {
+          // This is the "All" provider chip
+          chip.classList.toggle('active', currentFilter.provider === '');
+        } else if (chip.previousElementSibling?.classList.contains('filter-separator') || 
+                   chip.previousElementSibling?.textContent === 'All') {
+          // This is a provider chip
+          chip.classList.toggle('active', chip.textContent === currentFilter.provider);
+        }
+      });
+    }
+  }
+  
+  // Update table body only
+  const tbody = el.querySelector('.chapters-table tbody');
+  if (tbody) {
+    tbody.innerHTML = rows;
+    el.querySelector('.chapters-table').style.display = '';
+  } else {
+    // Table doesn't exist, create it
+    const tableHtml = `
+      <div class="chapters-table">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:30px"><input type="checkbox" title="Select all" onchange="toggleSelectAll(this.checked)"></th>
+              <th>Chapter </th>
+              <th>Scanlator</th>
+              <th>Score</th>
+              <th>Provider</th>
+              <th><iconify-icon icon="mdi:tray-download" width="24" height="24"></iconify-icon></th>
+              <th>Released</th>
+              <th>Scraped</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+    
+    // Append table after filter bar
+    if (existingFilterBar) {
+      existingFilterBar.insertAdjacentHTML('afterend', tableHtml);
+    }
+  }
+  
+  // Show/hide overview
+  const overview = el.querySelector('.ch-overview');
+  if (overview) overview.style.display = '';
+  
+  // Remove empty message if present
+  const emptyMsg = el.querySelector('.empty-message');
+  if (emptyMsg) emptyMsg.remove();
 }
 
 export async function loadProviders(mangaId) {

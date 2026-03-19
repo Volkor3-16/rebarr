@@ -80,10 +80,11 @@ async fn create_library(
         _ => MangaType::Manga,
     };
 
+    let root_path = PathBuf::from(body.root_path.trim());
     let lib = Library {
-        uuid: Uuid::new_v4(),
+        uuid: db::library::library_uuid(body.library_type.as_str(), root_path.to_string_lossy().as_ref()),
         r#type,
-        root_path: PathBuf::from(body.root_path.trim()),
+        root_path,
     };
 
     db::library::insert(pool.inner(), &lib)
@@ -194,7 +195,9 @@ async fn add_manga(
         ));
     }
 
-    manga.id = Uuid::new_v4();
+    manga.id = manga.anilist_id
+        .map(db::manga::manga_uuid)
+        .unwrap_or_else(|| db::manga::manual_manga_uuid(body.relative_path.trim()));
     manga.library_id = library_id;
     manga.relative_path = PathBuf::from(body.relative_path.trim());
     manga.created_at = Utc::now().timestamp();
@@ -282,7 +285,7 @@ async fn add_manga_manual(
     };
 
     let mut manga = Manga {
-        id: uuid::Uuid::new_v4(),
+        id: db::manga::manual_manga_uuid(body.relative_path.trim()),
         library_id,
         anilist_id: None,
         mal_id: None,
@@ -560,6 +563,8 @@ struct ChapterListItem {
     is_canonical: bool,
     /// Scanlation tier: 1=Official, 2=Known Scanner, 3=Unknown Scanner, 4=No Group.
     tier: u8,
+    /// Size of the CBZ file on disk in bytes (None if not yet downloaded or not measured).
+    file_size_bytes: Option<i64>,
 }
 
 #[get("/api/manga/<id>/chapters")]
@@ -607,6 +612,7 @@ async fn list_chapters(pool: &State<SqlitePool>, id: &str) -> ApiResult<Vec<Chap
                 is_extra: ch.is_extra,
                 is_canonical,
                 tier,
+                file_size_bytes: ch.file_size_bytes,
             }
         })
         .collect();
