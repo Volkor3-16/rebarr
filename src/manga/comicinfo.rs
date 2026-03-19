@@ -36,7 +36,11 @@ fn extract_tag(xml: &str, tag: &str) -> Option<String> {
     let start = xml.find(&open)? + open.len();
     let end = xml[start..].find(&close)?;
     let val = xml[start..start + end].trim();
-    if val.is_empty() { None } else { Some(val.to_owned()) }
+    if val.is_empty() {
+        None
+    } else {
+        Some(val.to_owned())
+    }
 }
 
 /// Parse a ComicInfo.xml string into a `ParsedComicInfo`.
@@ -74,7 +78,10 @@ pub fn parse_comicinfo(xml: &str) -> ParsedComicInfo {
 
     // AniList ID from <Web>https://anilist.co/manga/12345</Web>
     info.anilist_id = extract_tag(xml, "Web").and_then(|url| {
-        url.trim_end_matches('/').rsplit('/').next().and_then(|s| s.parse().ok())
+        url.trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .and_then(|s| s.parse().ok())
     });
     // Fallback / extended: <Notes>rebarr:anilist_id=12345 rebarr:provider=ProviderName</Notes>
     if let Some(notes) = extract_tag(xml, "Notes") {
@@ -160,9 +167,17 @@ pub fn generate_series_xml(manga: &Manga) -> String {
     let m = &manga.metadata;
 
     // Alternate series: extract titles from Synonyms (joined with semicolon for ComicInfo.xml)
-    let alt_series = m.other_titles.as_ref()
+    let alt_series = m
+        .other_titles
+        .as_ref()
         .filter(|v| !v.is_empty())
-        .map(|synonyms| synonyms.iter().map(|s| s.title.as_str()).collect::<Vec<_>>().join("; "));
+        .map(|synonyms| {
+            synonyms
+                .iter()
+                .map(|s| s.title.as_str())
+                .collect::<Vec<_>>()
+                .join("; ")
+        });
 
     let genre = if m.tags.is_empty() {
         None
@@ -209,9 +224,17 @@ pub fn generate_chapter_xml(
     let m = &manga.metadata;
 
     // Alternate series: extract titles from Synonyms (joined with semicolon for ComicInfo.xml)
-    let alt_series = m.other_titles.as_ref()
+    let alt_series = m
+        .other_titles
+        .as_ref()
         .filter(|v| !v.is_empty())
-        .map(|synonyms| synonyms.iter().map(|s| s.title.as_str()).collect::<Vec<_>>().join("; "));
+        .map(|synonyms| {
+            synonyms
+                .iter()
+                .map(|s| s.title.as_str())
+                .collect::<Vec<_>>()
+                .join("; ")
+        });
 
     let genre = if m.tags.is_empty() {
         None
@@ -243,11 +266,17 @@ pub fn generate_chapter_xml(
     xml.push_str(&opt_str_elem("Web", web.as_deref()));
 
     // Scanlator / page count / language
-    xml.push_str(&opt_str_elem("ScanInformation", chapter.scanlator_group.as_deref()));
+    xml.push_str(&opt_str_elem(
+        "ScanInformation",
+        chapter.scanlator_group.as_deref(),
+    ));
     if page_count > 0 {
         xml.push_str(&format!("  <PageCount>{page_count}</PageCount>\n"));
     }
-    xml.push_str(&opt_str_elem("LanguageISO", Some(&chapter.language.to_uppercase())));
+    xml.push_str(&opt_str_elem(
+        "LanguageISO",
+        Some(&chapter.language.to_uppercase()),
+    ));
     // Embed AniList ID and provider for clean round-trip re-import
     let notes = {
         let mut parts = Vec::new();
@@ -259,7 +288,11 @@ pub fn generate_chapter_xml(
                 parts.push(format!("rebarr:provider={p}"));
             }
         }
-        if parts.is_empty() { None } else { Some(parts.join(" ")) }
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join(" "))
+        }
     };
     xml.push_str(&opt_str_elem("Notes", notes.as_deref()));
 

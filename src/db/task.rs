@@ -193,7 +193,7 @@ pub async fn enqueue_with_queue(
     let id = Uuid::new_v4();
     let now = Utc::now();
     let queue = queue.unwrap_or_else(|| task_queue(&task_type).to_string());
-    
+
     sqlx::query(
         "INSERT INTO Task
             (uuid, task_type, status, queue, manga_id, chapter_id, priority,
@@ -215,7 +215,10 @@ pub async fn enqueue_with_queue(
 }
 
 /// Claim the next task from a specific queue.
-pub async fn claim_next_for_queue(pool: &SqlitePool, queue: &str) -> Result<Option<Task>, sqlx::Error> {
+pub async fn claim_next_for_queue(
+    pool: &SqlitePool,
+    queue: &str,
+) -> Result<Option<Task>, sqlx::Error> {
     let now = Utc::now();
     let mut tx = pool.begin().await?;
 
@@ -370,14 +373,20 @@ pub async fn cancel(pool: &SqlitePool, task_id: Uuid) -> Result<(), sqlx::Error>
 }
 
 /// Get UUIDs of all Running DownloadChapter tasks for a specific chapter (for cancellation signalling).
-pub async fn get_running_for_chapter(pool: &SqlitePool, chapter_id: Uuid) -> Result<Vec<Uuid>, sqlx::Error> {
+pub async fn get_running_for_chapter(
+    pool: &SqlitePool,
+    chapter_id: Uuid,
+) -> Result<Vec<Uuid>, sqlx::Error> {
     let rows: Vec<String> = sqlx::query_scalar(
         "SELECT uuid FROM Task WHERE chapter_id = ? AND task_type = 'DownloadChapter' AND status = 'Running'",
     )
     .bind(chapter_id.to_string())
     .fetch_all(pool)
     .await?;
-    Ok(rows.into_iter().filter_map(|s| Uuid::parse_str(&s).ok()).collect())
+    Ok(rows
+        .into_iter()
+        .filter_map(|s| Uuid::parse_str(&s).ok())
+        .collect())
 }
 
 /// Cancel all Pending or Running DownloadChapter tasks for a specific chapter.

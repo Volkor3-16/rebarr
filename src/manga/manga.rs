@@ -15,9 +15,9 @@ pub struct Library {
 /// Contains all the important data about a Manga
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manga {
-    pub id: Uuid,                           // internal, canonical
-    pub library_id: Uuid,                   // The Library the manga belongs to
-    pub anilist_id: Option<u32>,            // external identity
+    pub id: Uuid,                      // internal, canonical
+    pub library_id: Uuid,              // The Library the manga belongs to
+    pub anilist_id: Option<u32>,       // external identity
     pub mal_id: Option<u32>, // MAL cross-reference ID (sourced from AniList's id_mal field)
     pub metadata: MangaMetadata, // Stores all the metadata for the series
     pub relative_path: PathBuf, // Relative (to the library root) path of the manga files.
@@ -25,9 +25,9 @@ pub struct Manga {
     pub chapter_count: Option<u32>, // anilist doesn't support chapter counts in any sane way, we need to build this from providers @ scrape time.
     pub metadata_source: MangaSource, // The source of the metadata, not where we download it from.
     pub thumbnail_url: Option<String>, // Cached cover image URL from metadata source.
-    pub monitored: bool, // If true, new chapters are automatically downloaded.
-    pub created_at: i64,  // When the manga was first added to the library
-    pub metadata_updated_at: i64, // When the manga last metadata refresh
+    pub monitored: bool,            // If true, new chapters are automatically downloaded.
+    pub created_at: i64,            // When the manga was first added to the library
+    pub metadata_updated_at: i64,   // When the manga last metadata refresh
     /// Timestamp of when we last checked for new chapters (null = never)
     pub last_checked_at: Option<i64>,
 }
@@ -79,7 +79,7 @@ impl Synonym {
 /// Contains all the scraped metadata about a Manga
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MangaMetadata {
-    pub title: String,       // Title in English (or default lang)
+    pub title: String,                      // Title in English (or default lang)
     pub other_titles: Option<Vec<Synonym>>, // List of alternative names with metadata
     pub synopsis: Option<String>,
     pub publishing_status: PublishingStatus,
@@ -177,9 +177,10 @@ impl From<Media> for Manga {
                     .and_then(|t| t.romaji.clone())
                     .unwrap_or_default()
             });
-        
+
         // Collect existing titles to avoid duplicates
-        let mut existing_titles: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut existing_titles: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         existing_titles.insert(title.clone());
 
         // Start with synonyms from AniList

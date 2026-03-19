@@ -1,3 +1,4 @@
+use log::{info, warn};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
@@ -29,7 +30,7 @@ pub async fn scan_existing_chapters(pool: &SqlitePool, manga_id: Uuid) -> Result
     let entries = match std::fs::read_dir(&series_dir) {
         Ok(e) => e,
         Err(e) => {
-            log::info!(
+            info!(
                 "[scanner] Series directory does not exist for '{}': {e}",
                 manga.metadata.title
             );
@@ -82,14 +83,9 @@ pub async fn scan_existing_chapters(pool: &SqlitePool, manga_id: Uuid) -> Result
         {
             Ok(Some(ch)) => {
                 if ch.download_status != DownloadStatus::Downloaded {
-                    db_chapter::set_status(
-                        pool,
-                        ch.id,
-                        DownloadStatus::Downloaded,
-                        downloaded_at,
-                    )
-                    .await
-                    .map_err(|e| e.to_string())?;
+                    db_chapter::set_status(pool, ch.id, DownloadStatus::Downloaded, downloaded_at)
+                        .await
+                        .map_err(|e| e.to_string())?;
                     found += 1;
                 }
                 // Always refresh file size (may not have been recorded before)
@@ -143,7 +139,7 @@ pub async fn scan_existing_chapters(pool: &SqlitePool, manga_id: Uuid) -> Result
                 found += 1;
             }
             Err(e) => {
-                log::warn!("[scanner] DB error for chapter {num_str}: {e}");
+                warn!("[scanner] DB error for chapter {num_str}: {e}");
             }
         }
     }
@@ -153,7 +149,7 @@ pub async fn scan_existing_chapters(pool: &SqlitePool, manga_id: Uuid) -> Result
         .await
         .map_err(|e| e.to_string())?;
 
-    log::info!(
+    info!(
         "[scanner] Disk scan for '{}': {found} chapter(s) marked as downloaded.",
         manga.metadata.title
     );

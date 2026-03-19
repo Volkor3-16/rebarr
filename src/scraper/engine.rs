@@ -6,6 +6,7 @@ use chrono::{Datelike, NaiveDate, NaiveDateTime, TimeZone, Utc};
 
 static DUMP_COUNTER: AtomicU32 = AtomicU32::new(0);
 
+use log::{debug, info, warn};
 use scraper::{ElementRef, Html, Selector};
 
 use crate::scraper::{
@@ -162,7 +163,7 @@ impl YamlProvider {
     ) -> Result<ActionResult, ScraperError> {
         match self.run_action(ctx, action, input_vars.clone()).await {
             Err(ref e) if is_transport_error(e) => {
-                log::warn!(
+                warn!(
                     "provider '{}': CDP transport error — resetting browser and retrying: {e}",
                     self.def.name
                 );
@@ -195,7 +196,7 @@ impl YamlProvider {
             match step {
                 StepDef::Open { open: url_tmpl } => {
                     let url = self.expand(url_tmpl, &vars);
-                    log::debug!("open: {url}");
+                    debug!("open: {url}");
 
                     if let Some(ref p) = page {
                         // Subsequent navigation on the same page.
@@ -246,9 +247,9 @@ impl YamlProvider {
                             let n = DUMP_COUNTER.fetch_add(1, Ordering::Relaxed);
                             let fname = format!("scraper_dump_{n}.html");
                             if let Err(e) = std::fs::write(&fname, html.as_bytes()) {
-                                log::warn!("dump_html: failed to write {fname}: {e}");
+                                warn!("dump_html: failed to write {fname}: {e}");
                             } else {
-                                log::info!("dump_html: wrote {fname} ({} bytes)", html.len());
+                                info!("dump_html: wrote {fname} ({} bytes)", html.len());
                             }
                         }
                     }
@@ -269,10 +270,9 @@ impl YamlProvider {
                                 vars.insert(intercept.var.clone(), val);
                             }
                             None => {
-                                log::warn!(
+                                warn!(
                                     "provider '{}': intercept for '{}' timed out",
-                                    self.def.name,
-                                    intercept.url_contains
+                                    self.def.name, intercept.url_contains
                                 );
                                 if ctx.verbose {
                                     eprintln!(
@@ -365,10 +365,9 @@ impl YamlProvider {
                             vars.insert(def.var.clone(), s);
                         }
                         Err(e) => {
-                            log::warn!(
+                            warn!(
                                 "provider '{}': extract_js '{}' failed: {e}",
-                                self.def.name,
-                                def.var
+                                self.def.name, def.var
                             );
                             if ctx.verbose {
                                 eprintln!("[step] extract_js '{}' → FAILED: {e}", def.var);
@@ -403,10 +402,9 @@ impl YamlProvider {
                                 vars.insert(intercept_def.var.clone(), val);
                             }
                             None => {
-                                log::warn!(
+                                warn!(
                                     "provider '{}': intercept for '{}' timed out",
-                                    self.def.name,
-                                    intercept_def.url_contains
+                                    self.def.name, intercept_def.url_contains
                                 );
                                 if ctx.verbose {
                                     eprintln!(
@@ -724,8 +722,14 @@ fn infer_is_extra(title: Option<&str>) -> bool {
     let Some(t) = title else { return false };
     let lower = t.to_lowercase();
     const KEYWORDS: &[&str] = &[
-        "extra", "omake", "special", "bonus",
-        "side story", "side chapter", "interlude", "gaiden",
+        "extra",
+        "omake",
+        "special",
+        "bonus",
+        "side story",
+        "side chapter",
+        "interlude",
+        "gaiden",
     ];
     KEYWORDS.iter().any(|kw| lower.contains(kw))
 }
@@ -796,9 +800,9 @@ fn records_to_chapters(records: Vec<HashMap<String, String>>) -> Vec<ProviderCha
         .into_iter()
         .filter_map(|mut r| {
             let raw_number = r.remove("number_raw")?;
-            let (number, chapter_base, chapter_variant) =
-                parse_chapter_number(&raw_number);
-            let title = r.remove("title")
+            let (number, chapter_base, chapter_variant) = parse_chapter_number(&raw_number);
+            let title = r
+                .remove("title")
                 .filter(|s| !s.is_empty())
                 .filter(|s| !is_fake_chapter_title(s));
             let is_extra = infer_is_extra(title.as_deref());
@@ -813,7 +817,10 @@ fn records_to_chapters(records: Vec<HashMap<String, String>>) -> Vec<ProviderCha
                 volume: r.remove("volume").and_then(|s| s.parse().ok()),
                 scanlator_group: r.remove("scanlator_group").filter(|s| !s.is_empty()),
                 language: r.remove("language").filter(|s| !s.is_empty()),
-                date_released: r.remove("date").filter(|s| !s.is_empty()).and_then(|s| s.parse::<i64>().ok()),
+                date_released: r
+                    .remove("date")
+                    .filter(|s| !s.is_empty())
+                    .and_then(|s| s.parse::<i64>().ok()),
             })
         })
         .collect();

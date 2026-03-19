@@ -1,10 +1,10 @@
-use rocket::{State, get, post, http::Status, serde::json::Json};
+use rocket::{State, get, http::Status, post, serde::json::Json};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::{db, db::task::RecentTask, scheduler::worker::CancelMap};
 
-use super::errors::{bad_request, internal, ApiError, ApiResult};
+use super::errors::{ApiError, ApiResult, bad_request, internal};
 
 // ---------------------------------------------------------------------------
 // GET /api/tasks
@@ -51,8 +51,5 @@ pub async fn cancel_task(
 // ---------------------------------------------------------------------------
 
 pub fn routes() -> Vec<rocket::Route> {
-    rocket::routes![
-        list_tasks,
-        cancel_task,
-    ]
+    rocket::routes![list_tasks, cancel_task,]
 }

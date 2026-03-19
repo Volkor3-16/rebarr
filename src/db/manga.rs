@@ -1,6 +1,6 @@
+use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::manga::manga::{Manga, MangaMetadata, MangaSource, PublishingStatus, Synonym};
@@ -11,8 +11,7 @@ use crate::manga::manga::{Manga, MangaMetadata, MangaSource, PublishingStatus, S
 
 /// Fixed namespace for manga UUID v5 derivation.
 const MANGA_NAMESPACE: Uuid = Uuid::from_bytes([
-    0xc2, 0x7a, 0x5f, 0x91, 0x03, 0xe8, 0x4b, 0x20,
-    0xb1, 0x6d, 0x00, 0xd4, 0x8e, 0x2f, 0x73, 0xa1,
+    0xc2, 0x7a, 0x5f, 0x91, 0x03, 0xe8, 0x4b, 0x20, 0xb1, 0x6d, 0x00, 0xd4, 0x8e, 0x2f, 0x73, 0xa1,
 ]);
 
 /// Compute the deterministic UUID for a manga tracked via AniList.
@@ -165,7 +164,9 @@ fn metadata_source_str(s: &MangaSource) -> &'static str {
 
 /// Serialize other_titles to JSON for storage in DB
 fn serialize_other_titles(titles: &Option<Vec<Synonym>>) -> Option<String> {
-    titles.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default())
+    titles
+        .as_ref()
+        .map(|v| serde_json::to_string(v).unwrap_or_default())
 }
 
 /// Insert a manga and all its tags in a single transaction.
@@ -327,43 +328,47 @@ pub async fn exists_by_external_ids(
 
 pub async fn delete(pool: &SqlitePool, id: Uuid) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
-    
+
     // Delete all chapters for this manga (also cleans up CanonicalChapters)
     sqlx::query("DELETE FROM Chapters WHERE manga_id = ?")
         .bind(id.to_string())
         .execute(&mut *tx)
         .await?;
-    
+
     // Delete canonical chapters entry
     sqlx::query("DELETE FROM CanonicalChapters WHERE manga_id = ?")
         .bind(id.to_string())
         .execute(&mut *tx)
         .await?;
-    
+
     // Delete all tags for this manga
     sqlx::query("DELETE FROM MangaTags WHERE manga_id = ?")
         .bind(id.to_string())
         .execute(&mut *tx)
         .await?;
-    
+
     // Delete all provider records for this manga
     sqlx::query("DELETE FROM MangaProvider WHERE manga_id = ?")
         .bind(id.to_string())
         .execute(&mut *tx)
         .await?;
-    
+
     // Delete the manga itself
     sqlx::query("DELETE FROM Manga WHERE uuid = ?")
         .bind(id.to_string())
         .execute(&mut *tx)
         .await?;
-    
+
     tx.commit().await?;
     Ok(())
 }
 
 /// Update the monitored flag for a manga.
-pub async fn set_monitored(pool: &SqlitePool, id: Uuid, monitored: bool) -> Result<(), sqlx::Error> {
+pub async fn set_monitored(
+    pool: &SqlitePool,
+    id: Uuid,
+    monitored: bool,
+) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE Manga SET monitored = ? WHERE uuid = ?")
         .bind(monitored as i64)
         .bind(id.to_string())
@@ -386,9 +391,12 @@ pub async fn update_last_checked(pool: &SqlitePool, id: Uuid) -> Result<(), sqlx
 
 /// Get manga that are due for a chapter check.
 /// Returns manga where monitored = 1 AND (last_checked_at IS NULL OR now - last_checked_at > interval_hours)
-pub async fn get_due_for_check(pool: &SqlitePool, interval_hours: i64) -> Result<Vec<Manga>, sqlx::Error> {
+pub async fn get_due_for_check(
+    pool: &SqlitePool,
+    interval_hours: i64,
+) -> Result<Vec<Manga>, sqlx::Error> {
     let cutoff = chrono::Utc::now().timestamp() - (interval_hours * 3600);
-    
+
     let rows = sqlx::query_as::<_, MangaRow>(
         r#"SELECT
             uuid, library_id, anilist_id, mal_id, relative_path,

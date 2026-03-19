@@ -1,8 +1,8 @@
 pub mod browser;
 pub mod def;
+pub mod downloader;
 pub mod engine;
 pub mod error;
-pub mod downloader;
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -12,6 +12,7 @@ use browser::BrowserPool;
 use def::ProviderDef;
 use engine::YamlProvider;
 use error::ScraperError;
+use log::{info, warn};
 
 // ---------------------------------------------------------------------------
 // Output types (runtime only — never persisted to DB)
@@ -28,11 +29,11 @@ pub struct ProviderSearchResult {
 /// Info about a single chapter as returned by a provider's chapter list.
 #[derive(Debug, Clone)]
 pub struct ProviderChapterInfo {
-    pub raw_number: String,    // Raw value as scraped (e.g. "12.5", "12a")
-    pub number: f32,           // Parsed chapter number for ordering (e.g. 12.5, 12.1)
-    pub chapter_base: f32,     // Integer part of the chapter number (e.g. 12.0)
-    pub chapter_variant: u8,   // Sub-part index: 0=full, 1-9=split part index
-    pub is_extra: bool,        // True if this is a bonus/extra chapter (inferred from title keywords)
+    pub raw_number: String,  // Raw value as scraped (e.g. "12.5", "12a")
+    pub number: f32,         // Parsed chapter number for ordering (e.g. 12.5, 12.1)
+    pub chapter_base: f32,   // Integer part of the chapter number (e.g. 12.0)
+    pub chapter_variant: u8, // Sub-part index: 0=full, 1-9=split part index
+    pub is_extra: bool,      // True if this is a bonus/extra chapter (inferred from title keywords)
     pub title: Option<String>,
     pub url: Option<String>,
     pub volume: Option<u32>,
@@ -166,7 +167,7 @@ impl ProviderRegistry {
         let mut providers: Vec<Arc<dyn Provider>> = Vec::new();
 
         if !dir.exists() {
-            log::info!(
+            info!(
                 "Provider directory '{}' does not exist — no providers loaded. \
                  Create the directory and add YAML files to enable scraping.",
                 dir.display()
@@ -184,16 +185,16 @@ impl ProviderRegistry {
             let content = tokio::fs::read_to_string(&path).await?;
             match serde_yaml::from_str::<ProviderDef>(&content) {
                 Ok(def) => {
-                    log::info!("Loaded provider '{}' from {}", def.name, path.display());
+                    info!("Loaded provider '{}' from {}", def.name, path.display());
                     providers.push(Arc::new(YamlProvider::new(def)));
                 }
                 Err(e) => {
-                    log::warn!("Skipping invalid provider config '{}': {e}", path.display());
+                    warn!("Skipping invalid provider config '{}': {e}", path.display());
                 }
             }
         }
 
-        log::info!("Loaded {} provider(s) total.", providers.len());
+        info!("Loaded {} provider(s) total.", providers.len());
         Ok(Self { providers })
     }
 

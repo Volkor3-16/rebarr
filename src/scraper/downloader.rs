@@ -3,6 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use chrono::Utc;
+use log::{debug, info, warn};
 use thiserror::Error;
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
@@ -53,7 +54,7 @@ pub async fn download_chapter(
     lib_root: &Path,
     cancel_token: CancellationToken,
 ) -> Result<(), DownloadError> {
-    log::info!(
+    info!(
         "[dl] Starting download: manga='{}', ch={}.{}, canonical_id={}",
         manga.metadata.title, chapter.chapter_base, chapter.chapter_variant, chapter.id
     );
@@ -63,9 +64,13 @@ pub async fn download_chapter(
     let trusted_groups = db_provider::get_trusted_groups(pool).await?;
 
     // Get all Chapters rows for this chapter number (all providers = all alternatives)
-    let all_entries =
-        db_chapter::get_all_for_chapter(pool, manga.id, chapter.chapter_base, chapter.chapter_variant)
-            .await?;
+    let all_entries = db_chapter::get_all_for_chapter(
+        pool,
+        manga.id,
+        chapter.chapter_base,
+        chapter.chapter_variant,
+    )
+    .await?;
 
     if all_entries.is_empty() {
         db_chapter::set_status(pool, chapter.id, DownloadStatus::Failed, None).await?;
@@ -77,7 +82,11 @@ pub async fn download_chapter(
     let ranked = rank_entries(
         all_entries,
         &ChapterFilter {
-            language: if lang_raw.is_empty() { None } else { Some(lang_raw) },
+            language: if lang_raw.is_empty() {
+                None
+            } else {
+                Some(lang_raw)
+            },
         },
         &trusted_groups,
     );
@@ -115,11 +124,11 @@ pub async fn download_chapter(
         };
 
         let Some(provider) = provider_map.get(provider_name) else {
-            log::warn!("[dl] Provider '{provider_name}' is in DB but not loaded.");
+            warn!("[dl] Provider '{provider_name}' is in DB but not loaded.");
             continue;
         };
 
-        log::info!(
+        info!(
             "[dl] Trying {} for chapter {} of '{}'…",
             provider.name(),
             chapter.number_sort(),
@@ -129,8 +138,16 @@ pub async fn download_chapter(
         let chapter_url = match ensure_chapter_url(pool, ctx, provider, manga.id, entry).await {
             Some(url) => url,
             None => {
-                log::warn!("[dl] Chapter {} not found on {}.", chapter.number_sort(), provider.name());
-                last_err = format!("chapter {} not found on {}", chapter.number_sort(), provider.name());
+                warn!(
+                    "[dl] Chapter {} not found on {}.",
+                    chapter.number_sort(),
+                    provider.name()
+                );
+                last_err = format!(
+                    "chapter {} not found on {}",
+                    chapter.number_sort(),
+                    provider.name()
+                );
                 continue;
             }
         };
@@ -138,14 +155,14 @@ pub async fn download_chapter(
         let pages = match provider.pages(ctx, &chapter_url).await {
             Ok(p) => p,
             Err(e) => {
-                log::warn!("[dl] pages() failed on {}: {e}", provider.name());
+                warn!("[dl] pages() failed on {}: {e}", provider.name());
                 last_err = e.to_string();
                 continue;
             }
         };
 
         if pages.is_empty() {
-            log::warn!(
+            warn!(
                 "[dl] {} returned 0 pages for chapter {}.",
                 provider.name(),
                 chapter.number_sort()
@@ -179,7 +196,7 @@ pub async fn download_chapter(
                     .join(format!("{cbz_name}.cbz"));
 
                 if let Err(e) = write_cbz(&cbz_path, manga, chapter, image_data).await {
-                    log::warn!("[dl] CBZ write failed: {e}");
+                    warn!("[dl] CBZ write failed: {e}");
                     last_err = e.to_string();
                     continue;
                 }
@@ -202,7 +219,7 @@ pub async fn download_chapter(
 
                 db_chapter::update_manga_counts(pool, manga.id).await?;
 
-                log::info!(
+                info!(
                     "[dl] Chapter {} of '{}' saved to {}",
                     chapter.number_sort(),
                     manga.metadata.title,
@@ -215,7 +232,7 @@ pub async fn download_chapter(
                 return Err(DownloadError::Cancelled);
             }
             Err(e) => {
-                log::warn!("[dl] Image download failed on {}: {e}", provider.name());
+                warn!("[dl] Image download failed on {}: {e}", provider.name());
                 last_err = e.to_string();
                 continue;
             }
@@ -240,7 +257,7 @@ async fn ensure_chapter_url(
 ) -> Option<String> {
     if let Some(url) = &entry.chapter_url {
         if !url.is_empty() {
-            log::debug!(
+            debug!(
                 "[dl] Using cached URL for chapter {} from {}.",
                 entry.number_sort(),
                 provider.name()
@@ -256,7 +273,7 @@ async fn ensure_chapter_url(
             .ok()??;
     let manga_url = manga_provider.provider_url.as_deref()?;
 
-    log::debug!(
+    debug!(
         "[dl] Cache miss for chapter {} on {}; re-scraping.",
         entry.number_sort(),
         provider.name()
@@ -343,7 +360,7 @@ async fn cleanup_superseded_downloads(
     {
         Ok(v) => v,
         Err(e) => {
-            log::warn!("[dl] cleanup: could not load chapter variants: {e}");
+            warn!("[dl] cleanup: could not load chapter variants: {e}");
             return;
         }
     };
@@ -365,30 +382,33 @@ async fn cleanup_superseded_downloads(
         }
 
         // Find the CBZ file: prefix-match "Chapter {number}*.cbz" in series dir.
-        let cbz_path = std::fs::read_dir(&series_dir)
-            .ok()
-            .and_then(|entries| {
-                entries.flatten().find_map(|e| {
-                    let fname = e.file_name();
-                    let name = fname.to_string_lossy();
-                    if name.starts_with(&number_prefix) && name.ends_with(".cbz") {
-                        Some(e.path())
-                    } else {
-                        None
-                    }
-                })
-            });
+        let cbz_path = std::fs::read_dir(&series_dir).ok().and_then(|entries| {
+            entries.flatten().find_map(|e| {
+                let fname = e.file_name();
+                let name = fname.to_string_lossy();
+                if name.starts_with(&number_prefix) && name.ends_with(".cbz") {
+                    Some(e.path())
+                } else {
+                    None
+                }
+            })
+        });
 
         if let Some(path) = cbz_path {
             if let Err(e) = std::fs::remove_file(&path) {
-                log::warn!("[dl] cleanup: failed to remove {}: {e}", path.display());
+                warn!("[dl] cleanup: failed to remove {}: {e}", path.display());
             } else {
-                log::info!("[dl] cleanup: removed superseded {}", path.display());
+                info!("[dl] cleanup: removed superseded {}", path.display());
             }
         }
 
-        if let Err(e) = db_chapter::set_status(pool, variant.id, DownloadStatus::Missing, None).await {
-            log::warn!("[dl] cleanup: failed to mark variant {} as Missing: {e}", variant.id);
+        if let Err(e) =
+            db_chapter::set_status(pool, variant.id, DownloadStatus::Missing, None).await
+        {
+            warn!(
+                "[dl] cleanup: failed to mark variant {} as Missing: {e}",
+                variant.id
+            );
         }
     }
 }
@@ -405,7 +425,12 @@ async fn write_cbz(
     }
 
     let path = path.to_owned();
-    let comic_info = comicinfo::generate_chapter_xml(manga, chapter, images.len(), chapter.provider_name.as_deref());
+    let comic_info = comicinfo::generate_chapter_xml(
+        manga,
+        chapter,
+        images.len(),
+        chapter.provider_name.as_deref(),
+    );
 
     tokio::task::spawn_blocking(move || {
         let file = std::fs::File::create(&path)?;

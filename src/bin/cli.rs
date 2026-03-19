@@ -20,11 +20,12 @@
 ///   3. Takes the first result, lists all chapters
 ///   4. Fetches pages for the first chapter
 ///   5. (With -d) Downloads all pages to ./test_dl/ch_<number>/
-/// 
+///
 /// TODO: Make this a more generalised production-level cli tool for scraping/downloading.
 /// TODO: We should also leave the default testing stuff here, so we can use this for cli-automated downloads, and developer testing of providers.
 use std::process;
 
+use log::info;
 use rebarr::scraper::{ProviderRegistry, ScraperCtx, browser::BrowserPool};
 use strsim::jaro_winkler;
 
@@ -87,9 +88,8 @@ async fn main() {
     ctx.dump_html = dump_html;
     ctx.verbose = true;
 
-
     // Load providers from disk
-    log::info!("Loading providers...");
+    info!("Loading providers...");
     let registry = ProviderRegistry::load().await.unwrap_or_else(|e| {
         eprintln!("Failed to load providers: {e}");
         process::exit(1);
@@ -109,7 +109,7 @@ async fn main() {
     }
     println!();
 
-    // Match called provider from 
+    // Match called provider from
     let provider = if let Some(ref name) = provider_name {
         all.into_iter()
             .find(|p| p.name().eq_ignore_ascii_case(name))
@@ -127,7 +127,7 @@ async fn main() {
     println!("Using provider: {}\n", provider.name());
 
     // Search for the user-entered query
-    log::info!("Searching {:?} for {query:?}...", provider.name());
+    info!("Searching {:?} for {query:?}...", provider.name());
     let results = provider.search(&ctx, &query).await.unwrap_or_else(|e| {
         eprintln!("Search failed: {e}");
         process::exit(1);
@@ -187,7 +187,7 @@ async fn main() {
     // Now that we've done the search, lets grab the chapter list!
     // TODO: We should have an option to let users select which chapters they want to download. same matching algo as above for chapter names?
     //       use chapter matching from rebarr stock? (would that need db stuffs?)
-    log::info!("Fetching chapter list...");
+    info!("Fetching chapter list...");
     let chapters = provider
         .chapters(&ctx, &manga.url)
         .await
@@ -204,10 +204,16 @@ async fn main() {
         let language = ch.language.as_deref().unwrap_or("no lang");
         let date_str;
         let date = match ch.date_released {
-            Some(ts) => { date_str = ts.to_string(); date_str.as_str() }
+            Some(ts) => {
+                date_str = ts.to_string();
+                date_str.as_str()
+            }
             None => "no date",
         };
-        println!(" [{}] Ch.{} — {} [{}] ({}) {}", language, ch.number, title, scanlator, date, url);
+        println!(
+            " [{}] Ch.{} — {} [{}] ({}) {}",
+            language, ch.number, title, scanlator, date, url
+        );
     }
     if chapters.len() > 1000 {
         println!("  ... and {} more", chapters.len() - 10);
@@ -221,7 +227,7 @@ async fn main() {
     });
 
     println!("\nFetching pages for chapter {}...", ch1.number);
-    log::info!("Calling pages() with URL: {chapter_url}");
+    info!("Calling pages() with URL: {chapter_url}");
 
     let pages = provider.pages(&ctx, chapter_url).await.unwrap_or_else(|e| {
         eprintln!("pages() failed: {e}");
@@ -275,7 +281,7 @@ async fn main() {
                     tokio::fs::write(&path, &bytes)
                         .await
                         .expect("failed to write page file");
-                    log::info!(
+                    info!(
                         "  [{}/{}] {} → {}",
                         page.index,
                         pages.len(),

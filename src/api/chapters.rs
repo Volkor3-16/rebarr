@@ -1,5 +1,6 @@
 use chrono::Utc;
-use rocket::{State, delete, get, post, http::Status, serde::json::Json};
+use log::{info, warn};
+use rocket::{State, delete, get, http::Status, post, serde::json::Json};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -10,7 +11,7 @@ use crate::{
     scheduler::worker::CancelMap,
 };
 
-use super::errors::{bad_request, internal, not_found, ApiError, ApiResult};
+use super::errors::{ApiError, ApiResult, bad_request, internal, not_found};
 
 // ---------------------------------------------------------------------------
 // Request/Response types
@@ -130,7 +131,10 @@ pub async fn download_chapter_api(
         .map_err(internal)?
         .ok_or_else(|| not_found("chapter not found"))?;
 
-    log::info!("[api] Enqueuing download: manga={manga_id}, ch={base}.{variant}, canonical={}", chapter.id);
+    info!(
+        "[api] Enqueuing download: manga={manga_id}, ch={base}.{variant}, canonical={}",
+        chapter.id
+    );
 
     db::task::enqueue(
         pool.inner(),
@@ -161,43 +165,46 @@ pub async fn delete_chapter_api(
     variant: i32,
 ) -> Result<Status, (Status, Json<ApiError>)> {
     let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
-    
+
     // Verify manga exists
     let manga = db::manga::get_by_id(pool.inner(), manga_id)
         .await
         .map_err(internal)?
         .ok_or_else(|| not_found("manga not found"))?;
-    
+
     // Find the canonical chapter
     let chapter = db::chapter::get_canonical_by_number(pool.inner(), manga_id, base, variant)
         .await
         .map_err(internal)?
         .ok_or_else(|| not_found("chapter not found"))?;
-    
+
     // Delete the downloaded files from disk if they exist
     if chapter.download_status == DownloadStatus::Downloaded {
         let library = db::library::get_by_id(pool.inner(), manga.library_id)
             .await
             .map_err(internal)?
             .ok_or_else(|| not_found("library not found"))?;
-        
+
         // Chapter file naming: "Chapter XX" or "Chapter XX.Y" + optional title + optional group
         let mut cbz_name = if chapter.chapter_variant == 0 {
             format!("Chapter {}", chapter.chapter_base)
         } else {
-            format!("Chapter {}.{}", chapter.chapter_base, chapter.chapter_variant)
+            format!(
+                "Chapter {}.{}",
+                chapter.chapter_base, chapter.chapter_variant
+            )
         };
-        
+
         // Add title if present
         if let Some(ref title) = chapter.title {
             cbz_name.push_str(&format!(" - {title}"));
         }
-        
+
         // Add scanlator group if present
         if let Some(ref group) = chapter.scanlator_group {
             cbz_name.push_str(&format!(" [{group}]"));
         }
-        
+
         // Sanitize filename
         let cbz_name: String = cbz_name
             .chars()
@@ -209,21 +216,28 @@ pub async fn delete_chapter_api(
                 }
             })
             .collect();
-        
-        let chapter_path = library.root_path.join(&manga.relative_path).join(format!("{cbz_name}.cbz"));
-        
+
+        let chapter_path = library
+            .root_path
+            .join(&manga.relative_path)
+            .join(format!("{cbz_name}.cbz"));
+
         if chapter_path.exists() {
             if let Err(e) = std::fs::remove_file(&chapter_path) {
-                log::warn!("[api] Failed to delete chapter file '{}': {}", chapter_path.display(), e);
+                warn!(
+                    "[api] Failed to delete chapter file '{}': {}",
+                    chapter_path.display(),
+                    e
+                );
             }
         }
     }
-    
+
     // Delete from database
     db::chapter::delete(pool.inner(), chapter.id)
         .await
         .map_err(internal)?;
-    
+
     Ok(Status::NoContent)
 }
 
@@ -382,7 +396,10 @@ pub async fn optimise_chapter_api(
 // POST /api/manga/<id>/chapters/<base>/<variant>/set-canonical
 // ---------------------------------------------------------------------------
 
-#[post("/api/manga/<id>/chapters/<base>/<variant>/set-canonical", data = "<body>")]
+#[post(
+    "/api/manga/<id>/chapters/<base>/<variant>/set-canonical",
+    data = "<body>"
+)]
 pub async fn set_canonical_api(
     pool: &State<SqlitePool>,
     id: &str,
@@ -391,7 +408,8 @@ pub async fn set_canonical_api(
     body: Json<SetCanonicalRequest>,
 ) -> Result<Status, (Status, Json<ApiError>)> {
     let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
-    let chapter_id = Uuid::parse_str(&body.chapter_id).map_err(|_| bad_request("invalid chapter UUID"))?;
+    let chapter_id =
+        Uuid::parse_str(&body.chapter_id).map_err(|_| bad_request("invalid chapter UUID"))?;
 
     let chapter = db::chapter::get_by_id(pool.inner(), chapter_id)
         .await
@@ -409,7 +427,7 @@ pub async fn set_canonical_api(
         .await
         .map_err(internal)?;
 
-    log::info!("[api] Canonical override set: manga={manga_id}, ch={base}.{variant} → {chapter_id}");
+    info!("[api] Canonical override set: manga={manga_id}, ch={base}.{variant} → {chapter_id}");
 
     Ok(Status::NoContent)
 }

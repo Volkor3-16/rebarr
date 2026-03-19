@@ -5,20 +5,24 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use log::{debug, error, info, warn};
 use sqlx::SqlitePool;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use crate::db::task::{Task, TaskType};
+use crate::db::{
+    chapter as db_chapter, library as db_library, manga as db_manga, settings as db_settings,
+    task as db_task,
+};
+use crate::http::anilist::ALClient;
 use crate::library::scanner::scan_existing_chapters;
 use crate::manga::covers;
-use crate::db::task::{Task, TaskType};
-use crate::db::{chapter as db_chapter, library as db_library, manga as db_manga, settings as db_settings, task as db_task};
-use crate::scraper::downloader;
 use crate::manga::merge;
-use crate::http::anilist::ALClient;
-use crate::scraper::{ProviderRegistry, ScraperCtx};
 use crate::scheduler::optimiser;
+use crate::scraper::downloader;
+use crate::scraper::{ProviderRegistry, ScraperCtx};
 
 /// Shared map of task UUID → CancellationToken for in-flight tasks.
 /// The cancel API endpoint signals the token; the running task checks it.
@@ -30,7 +34,12 @@ pub type CancelMap = Arc<Mutex<HashMap<Uuid, CancellationToken>>>;
 /// Spawn the background worker as a detached tokio task.
 /// The worker loops indefinitely, polling for pending tasks every 5 seconds.
 /// Also spawns a separate scheduler task that enqueues periodic chapter checks.
-pub fn start(pool: SqlitePool, registry: Arc<ProviderRegistry>, ctx: ScraperCtx, cancel_map: CancelMap) -> JoinHandle<()> {
+pub fn start(
+    pool: SqlitePool,
+    registry: Arc<ProviderRegistry>,
+    ctx: ScraperCtx,
+    cancel_map: CancelMap,
+) -> JoinHandle<()> {
     // Spawn the periodic scheduler as a separate task
     let scheduler_pool = pool.clone();
     tokio::spawn(async move {
@@ -52,10 +61,9 @@ pub fn start(pool: SqlitePool, registry: Arc<ProviderRegistry>, ctx: ScraperCtx,
 
             match db_task::claim_next(&pool).await {
                 Ok(Some(task)) => {
-                    log::info!(
+                    info!(
                         "[worker] Claimed task {:?} (id={})",
-                        task.task_type,
-                        task.id
+                        task.task_type, task.id
                     );
 
                     // Throttle based on provider(s) involved
@@ -73,18 +81,18 @@ pub fn start(pool: SqlitePool, registry: Arc<ProviderRegistry>, ctx: ScraperCtx,
                     match result {
                         Ok(()) => {
                             if let Err(e) = db_task::complete(&pool, task.id).await {
-                                log::error!("[worker] Failed to mark task complete: {e}");
+                                error!("[worker] Failed to mark task complete: {e}");
                             }
-                            log::info!("[worker] Task {} completed.", task.id);
+                            info!("[worker] Task {} completed.", task.id);
                         }
                         Err(e) if e == "cancelled" => {
-                            log::info!("[worker] Task {} was cancelled.", task.id);
+                            info!("[worker] Task {} was cancelled.", task.id);
                             // Status already set to Cancelled by the cancel endpoint
                         }
                         Err(e) => {
-                            log::warn!("[worker] Task {} failed: {e}", task.id);
+                            warn!("[worker] Task {} failed: {e}", task.id);
                             if let Err(db_err) = db_task::fail(&pool, task.id, &e).await {
-                                log::error!("[worker] Failed to record task failure: {db_err}");
+                                error!("[worker] Failed to record task failure: {db_err}");
                             }
                         }
                     }
@@ -94,7 +102,7 @@ pub fn start(pool: SqlitePool, registry: Arc<ProviderRegistry>, ctx: ScraperCtx,
                     tokio::time::sleep(Duration::from_secs(5)).await;
                 }
                 Err(e) => {
-                    log::error!("[worker] Error polling task queue: {e}");
+                    error!("[worker] Error polling task queue: {e}");
                     tokio::time::sleep(Duration::from_secs(10)).await;
                 }
             }
@@ -122,7 +130,9 @@ async fn run_scheduler(pool: SqlitePool) {
             Ok(manga_list) => {
                 for manga in manga_list {
                     // Dedupe: skip if already pending/running
-                    match db_task::is_pending_for_manga(&pool, manga.id, TaskType::CheckNewChapter).await {
+                    match db_task::is_pending_for_manga(&pool, manga.id, TaskType::CheckNewChapter)
+                        .await
+                    {
                         Ok(false) => {
                             if let Err(e) = db_task::enqueue(
                                 &pool,
@@ -133,12 +143,12 @@ async fn run_scheduler(pool: SqlitePool) {
                             )
                             .await
                             {
-                                log::error!(
+                                error!(
                                     "[scheduler] Failed to enqueue CheckNewChapter for '{}': {e}",
                                     manga.metadata.title
                                 );
                             } else {
-                                log::debug!(
+                                debug!(
                                     "[scheduler] Enqueued CheckNewChapter for '{}'",
                                     manga.metadata.title
                                 );
@@ -146,13 +156,13 @@ async fn run_scheduler(pool: SqlitePool) {
                         }
                         Ok(true) => {} // already queued — skip
                         Err(e) => {
-                            log::error!("[scheduler] Error checking pending tasks: {e}");
+                            error!("[scheduler] Error checking pending tasks: {e}");
                         }
                     }
                 }
             }
             Err(e) => {
-                log::error!("[scheduler] Failed to fetch manga due for check: {e}");
+                error!("[scheduler] Failed to fetch manga due for check: {e}");
             }
         }
 
@@ -171,7 +181,9 @@ async fn dispatch(
 ) -> Result<(), String> {
     match task.task_type {
         TaskType::BuildFullChapterList => {
-            let manga_id = task.manga_id.ok_or("BuildFullChapterList task missing manga_id")?;
+            let manga_id = task
+                .manga_id
+                .ok_or("BuildFullChapterList task missing manga_id")?;
             let manga = db_manga::get_by_id(pool, manga_id)
                 .await
                 .map_err(|e| e.to_string())?
@@ -181,18 +193,18 @@ async fn dispatch(
                 .await
                 .map_err(|e| e.to_string())?;
 
-            log::info!(
+            info!(
                 "[worker] Full scan complete for '{}': {} providers, {} new chapters.",
-                manga.metadata.title,
-                result.providers_found,
-                result.new_chapters
+                manga.metadata.title, result.providers_found, result.new_chapters
             );
 
             Ok(())
         }
 
         TaskType::CheckNewChapter => {
-            let manga_id = task.manga_id.ok_or("CheckNewChapter task missing manga_id")?;
+            let manga_id = task
+                .manga_id
+                .ok_or("CheckNewChapter task missing manga_id")?;
             let manga = db_manga::get_by_id(pool, manga_id)
                 .await
                 .map_err(|e| e.to_string())?
@@ -204,13 +216,12 @@ async fn dispatch(
 
             // Update last_checked_at to spread out future checks
             if let Err(e) = db_manga::update_last_checked(pool, manga_id).await {
-                log::warn!("[worker] Failed to update last_checked_at: {e}");
+                warn!("[worker] Failed to update last_checked_at: {e}");
             }
 
-            log::info!(
+            info!(
                 "[worker] Chapter check complete for '{}': {} new chapters.",
-                manga.metadata.title,
-                result.new_chapters
+                manga.metadata.title, result.new_chapters
             );
 
             Ok(())
@@ -236,13 +247,23 @@ async fn dispatch(
                 .map_err(|e| e.to_string())?
                 .ok_or_else(|| format!("library {} not found", manga.library_id))?;
 
-            downloader::download_chapter(pool, registry, ctx, &manga, &chapter, &library.root_path, cancel_token)
-                .await
-                .map_err(|e| e.to_string())
+            downloader::download_chapter(
+                pool,
+                registry,
+                ctx,
+                &manga,
+                &chapter,
+                &library.root_path,
+                cancel_token,
+            )
+            .await
+            .map_err(|e| e.to_string())
         }
 
         TaskType::RefreshMetadata => {
-            let manga_id = task.manga_id.ok_or("RefreshMetadata task missing manga_id")?;
+            let manga_id = task
+                .manga_id
+                .ok_or("RefreshMetadata task missing manga_id")?;
             let manga = db_manga::get_by_id(pool, manga_id)
                 .await
                 .map_err(|e| e.to_string())?
@@ -252,7 +273,10 @@ async fn dispatch(
             match manga.metadata_source {
                 crate::manga::manga::MangaSource::AniList => {
                     let Some(anilist_id) = manga.anilist_id else {
-                        log::info!("[worker] Manga '{}' has no AniList ID — skipping refresh.", manga.metadata.title);
+                        info!(
+                            "[worker] Manga '{}' has no AniList ID — skipping refresh.",
+                            manga.metadata.title
+                        );
                         return Ok(());
                     };
 
@@ -289,10 +313,16 @@ async fn dispatch(
                         .await
                         .map_err(|e| e.to_string())?;
 
-                    log::info!("[worker] Refreshed AniList metadata for '{}'.", fresh.metadata.title);
+                    info!(
+                        "[worker] Refreshed AniList metadata for '{}'.",
+                        fresh.metadata.title
+                    );
                 }
                 crate::manga::manga::MangaSource::Local => {
-                    log::info!("[worker] Manga '{}' has Local metadata source — nothing to refresh.", manga.metadata.title);
+                    info!(
+                        "[worker] Manga '{}' has Local metadata source — nothing to refresh.",
+                        manga.metadata.title
+                    );
                 }
             }
 
@@ -305,13 +335,15 @@ async fn dispatch(
         }
 
         TaskType::OptimiseChapter => {
-            let chapter_id = task.chapter_id.ok_or("OptimiseChapter task missing chapter_id")?;
+            let chapter_id = task
+                .chapter_id
+                .ok_or("OptimiseChapter task missing chapter_id")?;
             optimiser::optimise_chapter(pool, chapter_id).await
         }
 
         // Not yet implemented task types — log and succeed silently
         TaskType::Backup => {
-            log::info!(
+            info!(
                 "[worker] Task type {:?} not yet implemented, skipping.",
                 task.task_type
             );

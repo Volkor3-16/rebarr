@@ -7,6 +7,7 @@
 use std::io::{Cursor, Read, Write};
 use std::path::Path;
 
+use log::{info, warn};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
@@ -45,7 +46,7 @@ pub async fn optimise_chapter(pool: &SqlitePool, chapter_id: Uuid) -> Result<(),
         .await
         .map_err(|e| format!("optimise task panicked: {e}"))??;
 
-    log::info!(
+    info!(
         "[optimizer] Optimised '{}' Ch.{} → WebP",
         manga.metadata.title,
         chapter.number_sort()
@@ -59,28 +60,29 @@ fn repack_cbz_webp(path: &Path) -> Result<(), String> {
     let original = std::fs::read(path).map_err(|e| format!("read CBZ: {e}"))?;
 
     let cursor = Cursor::new(&original);
-    let mut zip_in =
-        zip::ZipArchive::new(cursor).map_err(|e| format!("open zip: {e}"))?;
+    let mut zip_in = zip::ZipArchive::new(cursor).map_err(|e| format!("open zip: {e}"))?;
 
     let mut out_buf = Vec::with_capacity(original.len());
     let out_cursor = Cursor::new(&mut out_buf);
     let mut zip_out = zip::ZipWriter::new(out_cursor);
 
-    let opts = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored);
+    let opts =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
     let mut any_converted = false;
     for i in 0..zip_in.len() {
-        let mut entry = zip_in.by_index(i).map_err(|e| format!("zip entry {i}: {e}"))?;
+        let mut entry = zip_in
+            .by_index(i)
+            .map_err(|e| format!("zip entry {i}: {e}"))?;
         let name = entry.name().to_owned();
 
-        let is_image = name.ends_with(".jpg")
-            || name.ends_with(".jpeg")
-            || name.ends_with(".png");
+        let is_image = name.ends_with(".jpg") || name.ends_with(".jpeg") || name.ends_with(".png");
 
         if is_image {
             let mut raw = Vec::new();
-            entry.read_to_end(&mut raw).map_err(|e| format!("read entry '{name}': {e}"))?;
+            entry
+                .read_to_end(&mut raw)
+                .map_err(|e| format!("read entry '{name}': {e}"))?;
 
             match convert_to_webp(&raw) {
                 Ok(webp_bytes) => {
@@ -104,7 +106,7 @@ fn repack_cbz_webp(path: &Path) -> Result<(), String> {
                 }
                 Err(e) => {
                     // Fall back to original bytes if conversion fails
-                    log::warn!("[optimizer] Skipping '{name}' (convert failed: {e})");
+                    warn!("[optimizer] Skipping '{name}' (convert failed: {e})");
                     zip_out
                         .start_file(&name, opts)
                         .map_err(|e| format!("write entry '{name}': {e}"))?;
@@ -116,7 +118,9 @@ fn repack_cbz_webp(path: &Path) -> Result<(), String> {
         } else {
             // Non-image entry (e.g. ComicInfo.xml): copy verbatim
             let mut raw = Vec::new();
-            entry.read_to_end(&mut raw).map_err(|e| format!("read entry '{name}': {e}"))?;
+            entry
+                .read_to_end(&mut raw)
+                .map_err(|e| format!("read entry '{name}': {e}"))?;
             zip_out
                 .start_file(&name, opts)
                 .map_err(|e| format!("write entry '{name}': {e}"))?;

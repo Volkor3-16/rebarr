@@ -1,9 +1,9 @@
-use rocket::{State, get, put, http::Status, serde::json::Json};
+use rocket::{State, get, http::Status, put, serde::json::Json};
 use serde::{Deserialize, Serialize};
 
 use crate::db;
 
-use super::errors::{bad_request, internal, ApiError, ApiResult};
+use super::errors::{ApiError, ApiResult, bad_request, internal};
 
 // ---------------------------------------------------------------------------
 // Request/Response types
@@ -47,7 +47,11 @@ pub async fn get_settings(pool: &State<sqlx::SqlitePool>) -> ApiResult<SettingsR
     let lang_raw = db::settings::get(pool.inner(), "preferred_language", "")
         .await
         .map_err(internal)?;
-    let preferred_language = if lang_raw.is_empty() { None } else { Some(lang_raw) };
+    let preferred_language = if lang_raw.is_empty() {
+        None
+    } else {
+        Some(lang_raw)
+    };
     // Default to empty - user must explicitly configure filters
     let filter_langs = db::settings::get(pool.inner(), "synonym_filter_languages", "")
         .await
@@ -78,9 +82,13 @@ pub async fn update_settings(
             .map_err(internal)?;
     }
     if let Some(paused) = body.queue_paused {
-        db::settings::set(pool.inner(), "queue_paused", if paused { "true" } else { "false" })
-            .await
-            .map_err(internal)?;
+        db::settings::set(
+            pool.inner(),
+            "queue_paused",
+            if paused { "true" } else { "false" },
+        )
+        .await
+        .map_err(internal)?;
     }
     if let Some(ref lang) = body.preferred_language {
         db::settings::set(pool.inner(), "preferred_language", lang.trim())
@@ -100,8 +108,5 @@ pub async fn update_settings(
 // ---------------------------------------------------------------------------
 
 pub fn routes() -> Vec<rocket::Route> {
-    rocket::routes![
-        get_settings,
-        update_settings,
-    ]
+    rocket::routes![get_settings, update_settings,]
 }

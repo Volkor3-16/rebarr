@@ -1,10 +1,13 @@
 use chrono::Utc;
+use log::{debug, info, warn};
 use sqlx::SqlitePool;
 use thiserror::Error;
 
 use crate::db::provider::MangaProvider;
-use crate::db::{chapter as db_chapter, provider as db_provider, task as db_task, settings as db_settings};
 use crate::db::task::TaskType;
+use crate::db::{
+    chapter as db_chapter, provider as db_provider, settings as db_settings, task as db_task,
+};
 use crate::manga::manga::{DownloadStatus, Manga};
 use crate::scraper::{Provider, ProviderRegistry, ScraperCtx};
 
@@ -50,7 +53,7 @@ pub async fn scan_manga(
 ) -> Result<ScanResult, ScanError> {
     // Fallback to the other titles in case of emergency.
     let mut search_titles: Vec<&str> = vec![manga.metadata.title.as_str()];
-    
+
     // Add all other_titles (synonyms, romaji, native, etc.)
     if let Some(ref other) = manga.metadata.other_titles {
         for synonym in other {
@@ -58,13 +61,13 @@ pub async fn scan_manga(
             if synonym.hidden {
                 continue;
             }
-            
+
             if !synonym.title.trim().is_empty() {
                 search_titles.push(synonym.title.as_str());
             }
         }
     }
-    
+
     // Deduplicate using HashSet
     search_titles = search_titles
         .into_iter()
@@ -72,18 +75,17 @@ pub async fn scan_manga(
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
-    
-    log::debug!(
+
+    debug!(
         "[scan] Search titles for '{}': {:?}",
-        manga.metadata.title,
-        search_titles
+        manga.metadata.title, search_titles
     );
 
     // For every provider...
     for provider in registry.all() {
         // Skip providers that have already searched for the series.
         if db_provider::has_url(pool, manga.id, provider.name()).await? {
-            log::debug!(
+            debug!(
                 "[scan] {} already has a URL for '{}', skipping search.",
                 provider.name(),
                 manga.metadata.title
@@ -91,7 +93,7 @@ pub async fn scan_manga(
             continue;
         }
 
-        log::info!(
+        info!(
             "[scan] Searching '{}' for '{}'…",
             provider.name(),
             manga.metadata.title
@@ -110,7 +112,12 @@ pub async fn scan_manga(
                         .map(|res| {
                             let score = search_titles
                                 .iter()
-                                .map(|t| strsim::jaro_winkler(&res.title.to_lowercase(), &t.to_lowercase()))
+                                .map(|t| {
+                                    strsim::jaro_winkler(
+                                        &res.title.to_lowercase(),
+                                        &t.to_lowercase(),
+                                    )
+                                })
                                 .fold(0.0f64, f64::max);
                             (score, res)
                         })
@@ -123,7 +130,7 @@ pub async fn scan_manga(
                             break;
                         }
                         // Below threshold - continue to next synonym
-                        log::debug!(
+                        debug!(
                             "[scan] Search for '{}' on {} returned results but best score ({:.2}) below threshold, trying next synonym.",
                             title,
                             provider.name(),
@@ -134,7 +141,7 @@ pub async fn scan_manga(
                 }
                 Ok(_) => continue,
                 Err(e) => {
-                    log::warn!("[scan] Search error on {}: {e}", provider.name());
+                    warn!("[scan] Search error on {}: {e}", provider.name());
                     break;
                 }
             }
@@ -142,7 +149,7 @@ pub async fn scan_manga(
 
         // If theres no good results after scanning all synonyms, give up!
         if results.is_empty() {
-            log::info!("[scan] No results on {} for this manga.", provider.name());
+            info!("[scan] No results on {} for this manga.", provider.name());
             db_provider::upsert_not_found(pool, manga.id, provider.name()).await?;
             continue;
         }
@@ -160,7 +167,7 @@ pub async fn scan_manga(
             .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
         if let Some((score, result)) = best {
-            log::info!(
+            info!(
                 "[scan] Matched '{}' → '{}' on {} (score {:.2})",
                 manga.metadata.title,
                 result.title,
@@ -200,27 +207,23 @@ async fn scrape_known_providers(
     // UUIDs of newly inserted Chapters rows (for auto-download candidates).
     let mut all_new_ids: std::collections::HashSet<uuid::Uuid> = std::collections::HashSet::new();
 
-    let provider_map: std::collections::HashMap<&str, &std::sync::Arc<dyn Provider>> = registry
-        .all()
-        .into_iter()
-        .map(|p| (p.name(), p))
-        .collect();
+    let provider_map: std::collections::HashMap<&str, &std::sync::Arc<dyn Provider>> =
+        registry.all().into_iter().map(|p| (p.name(), p)).collect();
 
     for entry in &provider_entries {
         let was_previously_synced = entry.last_synced_at.is_some();
 
         let Some(provider) = provider_map.get(entry.provider_name.as_str()) else {
-            log::warn!(
+            warn!(
                 "[scan] Provider '{}' is in DB but not loaded — skipping.",
                 entry.provider_name
             );
             continue;
         };
 
-        log::info!(
+        info!(
             "[scan] Fetching chapters from {} for '{}'…",
-            entry.provider_name,
-            manga.metadata.title
+            entry.provider_name, manga.metadata.title
         );
 
         let provider_url = entry.provider_url.as_deref().unwrap();
@@ -231,7 +234,7 @@ async fn scrape_known_providers(
                         .await?;
                 let inserted = new_ids.len();
                 total_new += inserted;
-                log::info!(
+                info!(
                     "[scan] {} returned {} chapters ({inserted} new).",
                     entry.provider_name,
                     infos.len()
@@ -255,7 +258,7 @@ async fn scrape_known_providers(
                 .await?;
             }
             Err(e) => {
-                log::warn!(
+                warn!(
                     "[scan] Chapter fetch failed on {}: {e}",
                     entry.provider_name
                 );
@@ -274,18 +277,26 @@ async fn scrape_known_providers(
         let mut enqueued = 0usize;
         for ch in &canonical {
             if all_new_ids.contains(&ch.id) {
-                if let Err(e) =
-                    db_task::enqueue(pool, TaskType::DownloadChapter, Some(manga.id), Some(ch.id), 8)
-                        .await
+                if let Err(e) = db_task::enqueue(
+                    pool,
+                    TaskType::DownloadChapter,
+                    Some(manga.id),
+                    Some(ch.id),
+                    8,
+                )
+                .await
                 {
-                    log::warn!("[scan] Failed to enqueue auto-download for chapter {}: {e}", ch.id);
+                    warn!(
+                        "[scan] Failed to enqueue auto-download for chapter {}: {e}",
+                        ch.id
+                    );
                 } else {
                     enqueued += 1;
                 }
             }
         }
         if enqueued > 0 {
-            log::info!(
+            info!(
                 "[scan] Queued {enqueued} auto-download(s) for monitored manga '{}'.",
                 manga.metadata.title
             );
@@ -303,10 +314,12 @@ async fn scrape_known_providers(
                         .await
                         .ok()
                         .flatten()
-                        .map(|ch| matches!(
-                            ch.download_status,
-                            DownloadStatus::Queued | DownloadStatus::Downloading
-                        ))
+                        .map(|ch| {
+                            matches!(
+                                ch.download_status,
+                                DownloadStatus::Queued | DownloadStatus::Downloading
+                            )
+                        })
                         .unwrap_or(false);
 
                     if already_active {
@@ -323,21 +336,21 @@ async fn scrape_known_providers(
                     .await
                     {
                         Ok(_) => upgrade_count += 1,
-                        Err(e) => log::warn!(
+                        Err(e) => warn!(
                             "[scan] Failed to enqueue upgrade for {}: {e}",
                             candidate.new_canonical_id
                         ),
                     }
                 }
                 if upgrade_count > 0 {
-                    log::info!(
+                    info!(
                         "[scan] Queued {upgrade_count} chapter upgrade(s) for '{}'.",
                         manga.metadata.title
                     );
                 }
             }
             Ok(_) => {}
-            Err(e) => log::warn!("[scan] Upgrade candidate check failed: {e}"),
+            Err(e) => warn!("[scan] Upgrade candidate check failed: {e}"),
         }
     }
 

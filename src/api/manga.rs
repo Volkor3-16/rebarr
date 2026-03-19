@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use chrono::Utc;
-use log::{debug, trace};
-use rocket::{State, delete, get, patch, post, http::Status, serde::json::Json};
+use log::{debug, trace, warn};
+use rocket::{State, delete, get, http::Status, patch, post, serde::json::Json};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -12,15 +12,12 @@ use crate::{
     http::anilist::ALClient,
     manga::{
         comicinfo, covers,
-        manga::{
-            Manga, MangaMetadata, MangaSource, PublishingStatus,
-            Synonym, SynonymSource,
-        },
+        manga::{Manga, MangaMetadata, MangaSource, PublishingStatus, Synonym, SynonymSource},
     },
     scraper::ProviderRegistry,
 };
 
-use super::errors::{bad_request, err, internal, not_found, ApiError, ApiResult};
+use super::errors::{ApiError, ApiResult, bad_request, err, internal, not_found};
 
 // ---------------------------------------------------------------------------
 // Request/Response types
@@ -129,14 +126,10 @@ pub async fn add_manga(
     trace!("Full Manga Object: {manga:?}");
 
     // Check for duplicates in this library
-    if let Some(existing) = db::manga::exists_by_external_ids(
-        pool.inner(),
-        library_id,
-        manga.anilist_id,
-        manga.mal_id,
-    )
-    .await
-    .map_err(internal)?
+    if let Some(existing) =
+        db::manga::exists_by_external_ids(pool.inner(), library_id, manga.anilist_id, manga.mal_id)
+            .await
+            .map_err(internal)?
     {
         return Err((
             Status::Conflict,
@@ -149,7 +142,8 @@ pub async fn add_manga(
         ));
     }
 
-    manga.id = manga.anilist_id
+    manga.id = manga
+        .anilist_id
         .map(db::manga::manga_uuid)
         .unwrap_or_else(|| db::manga::manual_manga_uuid(body.relative_path.trim()));
     manga.library_id = library_id;
@@ -172,13 +166,22 @@ pub async fn add_manga(
     // Write series-level ComicInfo.xml into the series folder
     let series_dir = library.root_path.join(&manga.relative_path);
     if let Err(e) = comicinfo::write_series_comicinfo(&series_dir, &manga).await {
-        log::warn!("[api] Failed to write ComicInfo.xml for '{}': {e}", manga.metadata.title);
+        warn!(
+            "[api] Failed to write ComicInfo.xml for '{}': {e}",
+            manga.metadata.title
+        );
     }
 
     // Only queue RefreshMetadata - user must configure providers/aliases before scanning
-    db::task::enqueue(pool.inner(), crate::db::task::TaskType::RefreshMetadata, Some(manga.id), None, 5)
-        .await
-        .map_err(internal)?;
+    db::task::enqueue(
+        pool.inner(),
+        crate::db::task::TaskType::RefreshMetadata,
+        Some(manga.id),
+        None,
+        5,
+    )
+    .await
+    .map_err(internal)?;
 
     Ok(Json(manga))
 }
@@ -225,8 +228,15 @@ pub async fn add_manga_manual(
     let metadata = MangaMetadata {
         title: body.title.trim().to_owned(),
         other_titles,
-        synopsis: body.synopsis.as_deref().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()),
-        publishing_status: body.publishing_status.clone().unwrap_or(PublishingStatus::Unknown),
+        synopsis: body
+            .synopsis
+            .as_deref()
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty()),
+        publishing_status: body
+            .publishing_status
+            .clone()
+            .unwrap_or(PublishingStatus::Unknown),
         tags: body.tags.clone().unwrap_or_default(),
         start_year: body.start_year,
         end_year: body.end_year,
@@ -264,14 +274,23 @@ pub async fn add_manga_manual(
     // Write series-level ComicInfo.xml
     let series_dir = library.root_path.join(&manga.relative_path);
     if let Err(e) = comicinfo::write_series_comicinfo(&series_dir, &manga).await {
-        log::warn!("[api] Failed to write ComicInfo.xml for '{}': {e}", manga.metadata.title);
+        warn!(
+            "[api] Failed to write ComicInfo.xml for '{}': {e}",
+            manga.metadata.title
+        );
     }
 
     // For manual manga, queue RefreshMetadata (checks local source) and BuildFullChapterList
     // but only after user configures providers/aliases
-    db::task::enqueue(pool.inner(), crate::db::task::TaskType::RefreshMetadata, Some(manga.id), None, 5)
-        .await
-        .map_err(internal)?;
+    db::task::enqueue(
+        pool.inner(),
+        crate::db::task::TaskType::RefreshMetadata,
+        Some(manga.id),
+        None,
+        5,
+    )
+    .await
+    .map_err(internal)?;
 
     Ok(Json(manga))
 }
@@ -334,7 +353,9 @@ pub async fn patch_manga(
 // ---------------------------------------------------------------------------
 
 #[get("/api/providers")]
-pub async fn list_providers(registry: &State<std::sync::Arc<ProviderRegistry>>) -> Json<Vec<ProviderInfo>> {
+pub async fn list_providers(
+    registry: &State<std::sync::Arc<ProviderRegistry>>,
+) -> Json<Vec<ProviderInfo>> {
     let providers = registry
         .all()
         .into_iter()
@@ -361,9 +382,15 @@ pub async fn scan_manga_api(
         .map_err(internal)?
         .ok_or_else(|| not_found("manga not found"))?;
 
-    db::task::enqueue(pool.inner(), crate::db::task::TaskType::BuildFullChapterList, Some(manga_id), None, 5)
-        .await
-        .map_err(internal)?;
+    db::task::enqueue(
+        pool.inner(),
+        crate::db::task::TaskType::BuildFullChapterList,
+        Some(manga_id),
+        None,
+        5,
+    )
+    .await
+    .map_err(internal)?;
 
     Ok(Status::Accepted)
 }
@@ -383,9 +410,15 @@ pub async fn check_new_chapters_api(
         .map_err(internal)?
         .ok_or_else(|| not_found("manga not found"))?;
 
-    db::task::enqueue(pool.inner(), crate::db::task::TaskType::CheckNewChapter, Some(manga_id), None, 5)
-        .await
-        .map_err(internal)?;
+    db::task::enqueue(
+        pool.inner(),
+        crate::db::task::TaskType::CheckNewChapter,
+        Some(manga_id),
+        None,
+        5,
+    )
+    .await
+    .map_err(internal)?;
 
     Ok(Status::Accepted)
 }
@@ -434,9 +467,15 @@ pub async fn refresh_manga_api(
         .map_err(internal)?
         .ok_or_else(|| not_found("manga not found"))?;
 
-    db::task::enqueue(pool.inner(), crate::db::task::TaskType::RefreshMetadata, Some(manga_id), None, 5)
-        .await
-        .map_err(internal)?;
+    db::task::enqueue(
+        pool.inner(),
+        crate::db::task::TaskType::RefreshMetadata,
+        Some(manga_id),
+        None,
+        5,
+    )
+    .await
+    .map_err(internal)?;
 
     Ok(Status::Accepted)
 }
@@ -456,9 +495,15 @@ pub async fn scan_disk_api(
         .map_err(internal)?
         .ok_or_else(|| not_found("manga not found"))?;
 
-    db::task::enqueue(pool.inner(), crate::db::task::TaskType::ScanDisk, Some(manga_id), None, 5)
-        .await
-        .map_err(internal)?;
+    db::task::enqueue(
+        pool.inner(),
+        crate::db::task::TaskType::ScanDisk,
+        Some(manga_id),
+        None,
+        5,
+    )
+    .await
+    .map_err(internal)?;
 
     Ok(Status::Accepted)
 }
@@ -469,13 +514,12 @@ pub async fn scan_disk_api(
 // ---------------------------------------------------------------------------
 
 #[get("/api/manga/<id>/cover")]
-pub async fn serve_cover(
-    pool: &State<SqlitePool>,
-    id: &str,
-) -> Option<rocket::fs::NamedFile> {
+pub async fn serve_cover(pool: &State<SqlitePool>, id: &str) -> Option<rocket::fs::NamedFile> {
     let manga_id = Uuid::parse_str(id).ok()?;
     let manga = db::manga::get_by_id(pool.inner(), manga_id).await.ok()??;
-    let library = db::library::get_by_id(pool.inner(), manga.library_id).await.ok()??;
+    let library = db::library::get_by_id(pool.inner(), manga.library_id)
+        .await
+        .ok()??;
     let series_dir = library.root_path.join(&manga.relative_path);
 
     for ext in &["jpg", "jpeg", "png", "webp", "avif"] {
@@ -499,9 +543,9 @@ pub async fn update_synonyms(
     body: Json<UpdateSynonymsRequest>,
 ) -> ApiResult<Manga> {
     let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
-    
-    log::debug!("[synonyms] update_synonyms called for manga={manga_id}, body={body:?}");
-    
+
+    debug!("[synonyms] update_synonyms called for manga={manga_id}, body={body:?}");
+
     // Get existing manga
     let mut manga = db::manga::get_by_id(pool.inner(), manga_id)
         .await
@@ -510,12 +554,12 @@ pub async fn update_synonyms(
 
     // Get current synonyms or create empty list
     let mut synonyms = manga.metadata.other_titles.take().unwrap_or_default();
-    
-    log::debug!("[synonyms] current synonyms: {synonyms:?}");
-    
+
+    debug!("[synonyms] current synonyms: {synonyms:?}");
+
     // Process "add" - add new Manual synonyms
     if let Some(ref add_titles) = body.add {
-        log::debug!("[synonyms] processing add: {add_titles:?}");
+        debug!("[synonyms] processing add: {add_titles:?}");
         for title in add_titles {
             let title = title.trim().to_owned();
             if title.is_empty() {
@@ -532,10 +576,10 @@ pub async fn update_synonyms(
             }
         }
     }
-    
+
     // Process "hide" - hide AniList synonyms (mark as hidden with manual reason)
     if let Some(ref hide_titles) = body.hide {
-        log::debug!("[synonyms] processing hide: {hide_titles:?}");
+        debug!("[synonyms] processing hide: {hide_titles:?}");
         for title in hide_titles {
             let title = title.trim().to_owned();
             if title.is_empty() {
@@ -544,42 +588,52 @@ pub async fn update_synonyms(
             // Find and hide AniList synonyms (compare both trimmed and untrimmed)
             for syn in synonyms.iter_mut() {
                 if syn.source == SynonymSource::AniList
-                    && (syn.title == title || syn.title.trim() == title) {
-                        log::debug!("[synonyms] hiding synonym: {} (source={:?})", syn.title, syn.source);
-                        syn.hidden = true;
-                        syn.filter_reason = Some("manual".to_owned());
-                    }
+                    && (syn.title == title || syn.title.trim() == title)
+                {
+                    debug!(
+                        "[synonyms] hiding synonym: {} (source={:?})",
+                        syn.title, syn.source
+                    );
+                    syn.hidden = true;
+                    syn.filter_reason = Some("manual".to_owned());
+                }
             }
         }
     }
-    
+
     // Process "remove" - remove Manual synonyms only (can't fully delete AniList ones)
     if let Some(ref remove_titles) = body.remove {
-        log::debug!("[synonyms] processing remove: {remove_titles:?}");
+        debug!("[synonyms] processing remove: {remove_titles:?}");
         let titles_to_remove: std::collections::HashSet<_> = remove_titles
             .iter()
             .filter(|s| !s.trim().is_empty())
             .collect();
-        
-        log::debug!("[synonyms] titles_to_remove: {titles_to_remove:?}");
-        
+
+        debug!("[synonyms] titles_to_remove: {titles_to_remove:?}");
+
         // Build new list instead of using retain with mutation
         let mut new_synonyms = Vec::new();
         for s in &synonyms {
-            log::debug!("[synonyms] checking synonym: {} (source={:?}, hidden={})", s.title, s.source, s.hidden);
+            debug!(
+                "[synonyms] checking synonym: {} (source={:?}, hidden={})",
+                s.title, s.source, s.hidden
+            );
         }
-        
+
         for s in synonyms {
             if titles_to_remove.contains(&s.title) {
                 if s.source == SynonymSource::AniList {
                     // For AniList synonyms in remove list, just unhide them
-                    log::debug!("[synonyms] removing AniList synonym (will unhide): {}", s.title);
+                    debug!(
+                        "[synonyms] removing AniList synonym (will unhide): {}",
+                        s.title
+                    );
                     let mut updated = s;
                     updated.hidden = false;
                     new_synonyms.push(updated);
                 } else {
                     // Manual synonyms in remove list are dropped (removed)
-                    log::debug!("[synonyms] removing Manual synonym: {}", s.title);
+                    debug!("[synonyms] removing Manual synonym: {}", s.title);
                 }
                 // Manual synonyms in remove list are dropped (removed)
             } else {
@@ -588,19 +642,19 @@ pub async fn update_synonyms(
         }
         synonyms = new_synonyms;
     }
-    
-    log::debug!("[synonyms] final synonyms: {synonyms:?}");
-    
+
+    debug!("[synonyms] final synonyms: {synonyms:?}");
+
     // Update manga with new synonyms
     manga.metadata.other_titles = Some(synonyms);
     manga.metadata_updated_at = Utc::now().timestamp();
-    
+
     // Save to database
-    log::debug!("[synonyms] saving to database...");
+    debug!("[synonyms] saving to database...");
     db::manga::update_metadata(pool.inner(), &manga)
         .await
         .map_err(internal)?;
-    log::debug!("[synonyms] saved successfully");
+    debug!("[synonyms] saved successfully");
 
     // Re-fetch to get updated data
     db::manga::get_by_id(pool.inner(), manga_id)

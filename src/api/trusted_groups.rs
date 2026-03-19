@@ -1,10 +1,10 @@
-use rocket::{State, delete, get, post, http::Status, serde::json::Json};
+use rocket::{State, delete, get, http::Status, post, serde::json::Json};
 use serde::Deserialize;
 use sqlx::SqlitePool;
 
 use crate::db;
 
-use super::errors::{bad_request, internal, ApiError, ApiResult};
+use super::errors::{ApiError, ApiResult, bad_request, internal};
 
 // ---------------------------------------------------------------------------
 // Request types
@@ -66,9 +66,5 @@ pub async fn remove_trusted_group(
 // ---------------------------------------------------------------------------
 
 pub fn routes() -> Vec<rocket::Route> {
-    rocket::routes![
-        list_trusted_groups,
-        add_trusted_group,
-        remove_trusted_group,
-    ]
+    rocket::routes![list_trusted_groups, add_trusted_group, remove_trusted_group,]
 }

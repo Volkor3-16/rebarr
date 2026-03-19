@@ -2,15 +2,16 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use dotenvy::dotenv;
+use log::{error, info, warn};
 use rocket::fs::FileServer;
 
 mod api;
 mod db;
-mod manga;
 mod http;
-mod scraper;
-mod scheduler;
 mod library;
+mod manga;
+mod scheduler;
+mod scraper;
 
 use crate::api::{api_routes, frontend_routes};
 use crate::http::anilist::ALClient;
@@ -20,22 +21,20 @@ use crate::scraper::{
     {ProviderRegistry, ScraperCtx},
 };
 
-
 #[rocket::main]
 async fn main() -> Result<(), rocket::Error> {
     dotenv().ok();
     env_logger::init();
 
     // Setup DB and API Client
-    let db_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "sqlite:rebarr.db".to_string());
+    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:rebarr.db".to_string());
     let pool = db::init(&db_url).await.expect("DB init failed");
 
     // Reset any tasks that were stuck Running when the server last stopped
     match db::task::reset_running_tasks(&pool).await {
         Ok(0) => {}
-        Ok(n) => log::warn!("Reset {n} stuck Running task(s) to Pending."),
-        Err(e) => log::error!("Failed to reset running tasks: {e}"),
+        Ok(n) => warn!("Reset {n} stuck Running task(s) to Pending."),
+        Err(e) => error!("Failed to reset running tasks: {e}"),
     }
 
     let al_client = ALClient::new();
@@ -52,10 +51,10 @@ async fn main() -> Result<(), rocket::Error> {
     // Pre-warm Chromium if any provider needs it, so errors surface at
     // startup rather than on the first scrape request.
     if registry.browser_providers().next().is_some() {
-        log::info!("Pre-warming headless browser for JS-capable providers...");
+        info!("Pre-warming headless browser for JS-capable providers...");
         match browser_pool.get().await {
-            Ok(_) => log::info!("Browser ready."),
-            Err(e) => log::warn!("Browser pre-warm failed (will retry on first request): {e}"),
+            Ok(_) => info!("Browser ready."),
+            Err(e) => warn!("Browser pre-warm failed (will retry on first request): {e}"),
         }
     }
 
@@ -64,8 +63,13 @@ async fn main() -> Result<(), rocket::Error> {
 
     // Background Task Handler start
     let cancel_map: CancelMap = Arc::new(Mutex::new(HashMap::new()));
-    let _worker = worker::start(pool.clone(), Arc::clone(&registry), scraper_ctx.clone(), Arc::clone(&cancel_map));
-    log::info!("Background task worker started.");
+    let _worker = worker::start(
+        pool.clone(),
+        Arc::clone(&registry),
+        scraper_ctx.clone(),
+        Arc::clone(&cancel_map),
+    );
+    info!("Background task worker started.");
 
     rocket::build()
         .manage(pool)

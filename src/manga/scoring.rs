@@ -4,6 +4,8 @@
 // 3 = Scanlator groups not on the list
 // 4 = No scanlator group listed
 
+use log::warn;
+
 use crate::manga::manga::Chapter;
 
 /// Criteria applied when selecting which provider entries to try for a download.
@@ -29,7 +31,7 @@ pub fn rank_entries(
         if !filtered.is_empty() {
             entries = filtered;
         } else {
-            log::warn!("[scoring] No entries match language '{lang}'; falling back to all languages.");
+            warn!("[scoring] No entries match language '{lang}'; falling back to all languages.");
         }
     }
 

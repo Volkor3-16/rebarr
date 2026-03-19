@@ -6,9 +6,12 @@ use serde::Deserialize;
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
-use crate::{db, manga::manga::{Manga, MangaType}};
+use crate::{
+    db,
+    manga::manga::{Manga, MangaType},
+};
 
-use super::errors::{bad_request, internal, not_found, ApiResult};
+use super::errors::{ApiResult, bad_request, internal, not_found};
 
 // ---------------------------------------------------------------------------
 // Request/Response types
@@ -30,7 +33,9 @@ pub struct UpdateLibraryRequest {
 // ---------------------------------------------------------------------------
 
 #[get("/api/libraries")]
-pub async fn list_libraries(pool: &State<SqlitePool>) -> ApiResult<Vec<crate::manga::manga::Library>> {
+pub async fn list_libraries(
+    pool: &State<SqlitePool>,
+) -> ApiResult<Vec<crate::manga::manga::Library>> {
     debug!("Listing Libraries (GET /api/libraries)");
     db::library::get_all(pool.inner())
         .await
@@ -59,7 +64,10 @@ pub async fn create_library(
 
     let root_path = PathBuf::from(body.root_path.trim());
     let lib = crate::manga::manga::Library {
-        uuid: db::library::library_uuid(body.library_type.as_str(), root_path.to_string_lossy().as_ref()),
+        uuid: db::library::library_uuid(
+            body.library_type.as_str(),
+            root_path.to_string_lossy().as_ref(),
+        ),
         r#type,
         root_path,
     };
@@ -75,7 +83,10 @@ pub async fn create_library(
 // ---------------------------------------------------------------------------
 
 #[get("/api/libraries/<id>")]
-pub async fn get_library(pool: &State<SqlitePool>, id: &str) -> ApiResult<crate::manga::manga::Library> {
+pub async fn get_library(
+    pool: &State<SqlitePool>,
+    id: &str,
+) -> ApiResult<crate::manga::manga::Library> {
     let uuid = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
     debug!("Getting library by id: {uuid}");
     db::library::get_by_id(pool.inner(), uuid)
