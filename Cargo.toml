@@ -29,3 +29,4 @@ regex = "1"
 zip = "8.2.0"
 humantime = "2"
 image = { version = "0.25.10", features = ["webp"] }
+base64 = "0.22.1"

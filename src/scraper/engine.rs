@@ -10,7 +10,10 @@ use log::{debug, info, warn};
 use scraper::{ElementRef, Html, Selector};
 
 use crate::scraper::{
-    def::{ActionDef, ContentKind, FieldDef, ForeachDef, InterceptDef, ProviderDef, StepDef},
+    def::{
+        ActionDef, ContentKind, FetchDef, FieldDef, ForeachDef, FromJsonDef, GraphqlDef,
+        InterceptDef, ProviderDef, StepDef,
+    },
     error::ScraperError,
     {PageUrl, Provider, ProviderChapterInfo, ProviderSearchResult, ScraperCtx},
 };
@@ -37,18 +40,67 @@ impl YamlProvider {
     // Template expansion
     // ------------------------------------------------------------------
 
+    /// Recursively expand `{key}` placeholders in all string values within a JSON value.
+    fn expand_json_value(&self, value: &serde_json::Value, vars: &HashMap<String, String>) -> serde_json::Value {
+        match value {
+            serde_json::Value::String(s) => serde_json::Value::String(self.expand(s, vars)),
+            serde_json::Value::Object(map) => serde_json::Value::Object(
+                map.iter().map(|(k, v)| (k.clone(), self.expand_json_value(v, vars))).collect()
+            ),
+            serde_json::Value::Array(arr) => serde_json::Value::Array(
+                arr.iter().map(|v| self.expand_json_value(v, vars)).collect()
+            ),
+            other => other.clone(),
+        }
+    }
+
     /// Replace `{key}` placeholders. Relative paths get base_url prepended.
     fn expand(&self, template: &str, vars: &HashMap<String, String>) -> String {
         let mut s = template.replace("{base_url}", &self.def.base_url);
+        
+        // Process all {var} placeholders first (no modifiers)
         for (k, v) in vars {
             s = s.replace(&format!("{{{k}}}"), v);
-            // {var|strip_last_segment}: remove the last /segment from a URL path.
-            let stripped = v
-                .rfind('/')
-                .filter(|&i| i > 0)
-                .map_or(v.as_str(), |i| &v[..i]);
-            s = s.replace(&format!("{{{k}|strip_last_segment}}"), stripped);
         }
+        
+        // Process modifiers: {var|modifier1|modifier2|...}
+        // Capture all patterns and replace them iteratively until none remain
+        let mut changed = true;
+        while changed {
+            changed = false;
+            // Find patterns like {varname|modifier}
+            let re = regex::Regex::new(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\|([^}]+)\}").unwrap();
+            while let Some(caps) = re.captures(&s) {
+                let full_match = caps.get(0).unwrap().as_str();
+                let var_name = caps.get(1).unwrap().as_str();
+                let modifiers = caps.get(2).unwrap().as_str();
+                
+                // Get base value
+                let base_val = vars.get(var_name).cloned().unwrap_or_default();
+                
+                // Apply modifiers in order
+                let mut result = base_val;
+                for mod_name in modifiers.split('|') {
+                    result = match mod_name {
+                        "strip_last_segment" => {
+                            result.rfind('/')
+                                .filter(|&i| i > 0)
+                                .map_or(result.clone(), |i| result[..i].to_string())
+                        }
+                        "basename" => {
+                            result.rfind('/')
+                                .map(|i| result[i+1..].to_string())
+                                .unwrap_or(result)
+                        }
+                        _ => result,
+                    };
+                }
+                
+                s = s.replace(full_match, &result);
+                changed = true;
+            }
+        }
+        
         if s.starts_with('/') {
             format!("{}{}", self.def.base_url.trim_end_matches('/'), s)
         } else {
@@ -491,6 +543,182 @@ impl YamlProvider {
                     };
                     let _ = p.execute(&js).await;
                 }
+
+                StepDef::Fetch { fetch: fetch_def } => {
+                    if ctx.verbose {
+                        eprintln!("[step] fetch → url={}", fetch_def.url);
+                    }
+                    let p = require_page(&page, "fetch")?;
+                    
+                    let url = self.expand(&fetch_def.url, &vars);
+                    let method = fetch_def.method.to_uppercase();
+                    
+                    // Build headers object
+                    let mut headers_js = String::new();
+                    for (key, val) in &fetch_def.headers {
+                        let expanded_val = self.expand(val, &vars);
+                        headers_js.push_str(&format!("'{}': '{}',", key, expanded_val.replace('\'', "\\\'")));
+                    }
+                    
+                    // Build body if present - pass as raw string
+                    let body_js = fetch_def.body.as_ref()
+                        .map(|b| self.expand(b, &vars))
+                        .map(|b| format!(", body: `{}`", b.replace('`', "\\`")))
+                        .unwrap_or_default();
+                    
+                    let js = format!(r#"
+                        (async () => {{
+                            const headers = {{{}}};
+                            const opts = {{
+                                method: '{}',
+                                headers: headers{}
+                            }};
+                            try {{
+                                const resp = await fetch('{}', opts);
+                                return await resp.text();
+                            }} catch(e) {{
+                                return 'ERROR:' + e.message;
+                            }}
+                        }})()
+                    "#, 
+                        headers_js, 
+                        method, 
+                        body_js,
+                        url.replace('\'', "\\\'")
+                    );
+                    
+                    match p.evaluate::<String>(&js).await {
+                        Ok(response) => {
+                            if response.starts_with("ERROR:") {
+                                warn!("[step] fetch failed: {}", response);
+                            } else {
+                                let value = if let Some(ref path) = fetch_def.json_path {
+                                    parse_json_path(&response, path)
+                                } else {
+                                    response
+                                };
+                                if ctx.verbose {
+                                    let preview = &value[..value.len().min(120)];
+                                    eprintln!("[step] fetch stored in '{}': {}", fetch_def.var, preview);
+                                }
+                                vars.insert(fetch_def.var.clone(), value);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("[step] fetch execute failed: {e}");
+                        }
+                    }
+                }
+
+                StepDef::Graphql { graphql: graphql_def } => {
+                    if ctx.verbose {
+                        eprintln!("[step] graphql → url={}", graphql_def.url);
+                    }
+                    let p = require_page(&page, "graphql")?;
+                    
+                    let url = self.expand(&graphql_def.url, &vars);
+
+                    // Expand templates in variables, then serialize as JSON.
+                    // JSON is valid JS syntax so we can inline it directly as a literal.
+                    let expanded_variables: serde_json::Map<String, serde_json::Value> =
+                        graphql_def.variables.iter()
+                            .map(|(k, v)| (k.clone(), self.expand_json_value(v, &vars)))
+                            .collect();
+                    let vars_json = serde_json::to_string(&expanded_variables)
+                        .unwrap_or_else(|_| "{}".to_string());
+
+                    // Escape the query for embedding in a JS single-quoted string.
+                    let query_escaped = graphql_def.query
+                        .replace('\\', "\\\\")
+                        .replace('\'', "\\'")
+                        .replace('\n', "\\n")
+                        .replace('\r', "");
+
+                    let js = format!(r#"
+                        (async () => {{
+                            const opts = {{
+                                method: 'POST',
+                                headers: {{ 'Content-Type': 'application/json' }},
+                                body: JSON.stringify({{
+                                    query: '{}',
+                                    variables: {}
+                                }})
+                            }};
+                            try {{
+                                const resp = await fetch('{}', opts);
+                                return await resp.text();
+                            }} catch(e) {{
+                                return 'ERROR:' + e.message;
+                            }}
+                        }})()
+                    "#,
+                        query_escaped,
+                        vars_json,
+                        url.replace('\'', "\\'")
+                    );
+                    
+                    match p.evaluate::<String>(&js).await {
+                        Ok(response) => {
+                            if response.starts_with("ERROR:") {
+                                warn!("[step] graphql failed: {}", response);
+                            } else {
+                                let value = if let Some(ref path) = graphql_def.json_path {
+                                    parse_json_path(&response, path)
+                                } else {
+                                    response
+                                };
+                                if ctx.verbose {
+                                    let preview = &value[..value.len().min(120)];
+                                    eprintln!("[step] graphql stored in '{}': {}", graphql_def.var, preview);
+                                }
+                                vars.insert(graphql_def.var.clone(), value);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("[step] graphql execute failed: {e}");
+                        }
+                    }
+                }
+
+                StepDef::FromJson { from_json: from_json_def } => {
+                    if ctx.verbose {
+                        eprintln!("[step] from_json → var={}", from_json_def.var);
+                    }
+                    
+                    let json_str = vars.get(&from_json_def.var)
+                        .ok_or_else(|| ScraperError::Parse(format!("from_json: variable '{}' not found", from_json_def.var)))?;
+                    
+                    let json_array: Vec<serde_json::Value> = serde_json::from_str(json_str)
+                        .map_err(|e| ScraperError::Parse(format!("from_json: failed to parse JSON: {e}")))?;
+                    
+                    for item in json_array {
+                        let mut record: HashMap<String, String> = HashMap::new();
+                        for (output_key, json_key) in &from_json_def.extract {
+                            let value = extract_json_value(&item, json_key);
+                            if let Some(val) = value {
+                                // Apply prefix if not absolute URL
+                                let final_val = if let Some(prefix) = from_json_def.prefix.get(output_key) {
+                                    let expanded_prefix = self.expand(prefix, &vars);
+                                    if val.starts_with("http://") || val.starts_with("https://") {
+                                        val
+                                    } else {
+                                        format!("{}{}", expanded_prefix, val)
+                                    }
+                                } else {
+                                    val
+                                };
+                                record.insert(output_key.clone(), final_val);
+                            }
+                        }
+                        if !record.is_empty() {
+                            results.push(record);
+                        }
+                    }
+                    
+                    if ctx.verbose {
+                        eprintln!("[step] from_json → {} records extracted", results.len());
+                    }
+                }
             }
         }
 
@@ -585,10 +813,6 @@ impl Provider for YamlProvider {
         self.def.rate_limit.page_delay_ms
     }
 
-    fn page_referer(&self) -> Option<&str> {
-        self.def.page_referer.as_deref()
-    }
-
     async fn search(
         &self,
         ctx: &ScraperCtx,
@@ -598,6 +822,7 @@ impl Provider for YamlProvider {
         let encoded = urlencoding::encode(title).into_owned();
         let mut input = HashMap::new();
         input.insert("query".to_owned(), encoded);
+        input.insert("query_raw".to_owned(), title.to_owned());
 
         let result = self.execute_action(ctx, def, input).await?;
         Ok(records_to_search_results(result.into_records()))
@@ -990,4 +1215,28 @@ fn js_escape(s: &str) -> String {
         .replace('\'', "\\'")
         .replace('\n', "\\n")
         .replace('\r', "\\r")
+}
+
+/// Parse a JSON string and navigate to a specific path, returning the result as a JSON string.
+fn parse_json_path(body: &str, json_path: &str) -> String {
+    if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(body) {
+        for key in json_path.split('.') {
+            json = json[key].take();
+        }
+        return json.to_string();
+    }
+    body.to_owned()
+}
+
+/// Extract a value from a JSON object using a key path (e.g., "name" or "thumbnail.url").
+fn extract_json_value(json: &serde_json::Value, key_path: &str) -> Option<String> {
+    let mut current = json.clone();
+    for key in key_path.split('.') {
+        let next = current.get(key)?.clone();
+        current = next;
+    }
+    match current {
+        serde_json::Value::String(s) => Some(s),
+        other => Some(other.to_string()),
+    }
 }

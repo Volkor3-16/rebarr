@@ -1,0 +1,60 @@
+name: Atsumaru
+base_url: https://atsu.moe
+rate_limit:
+  requests_per_minute: 30
+  page_delay_ms: 500
+
+search:
+  steps:
+    - open: "{base_url}"
+    - fetch:
+        url: "https://atsu.moe/api/explore/filteredView"
+        method: POST
+        headers:
+          Content-Type: application/json
+          Referer: "{base_url}/"
+        body: '{"filter":{"search":"{query}","genres":[],"excludeGenres":[],"types":[],"status":[],"years":[],"minChapters":null,"hideBookmarked":false,"officialTranslation":false,"showAdult":true,"sortBy":"popularity"},"page":0,"adult":false}'
+        var: search_results
+        json_path: items
+    - from_json:
+        var: search_results
+        extract:
+          title: title
+          url: id
+          cover: largeImage
+
+chapters:
+  steps:
+    - open: "{base_url}"
+    - fetch:
+        url: "https://atsu.moe/api/manga/allChapters?mangaId={manga_url|basename}"
+        method: GET
+        headers:
+          Referer: "{base_url}/"
+        var: chapters_data
+        json_path: chapters
+    - from_json:
+        var: chapters_data
+        extract:
+          number_raw: number
+          title: title
+          url: id
+        prefix:
+          url: "{base_url}/chapter/{manga_url|basename}/"
+
+pages:
+  steps:
+    - open: "{base_url}"
+    - fetch:
+        url: "https://atsu.moe/api/read/chapter?mangaId={chapter_url|strip_last_segment|basename}&chapterId={chapter_url|basename}"
+        method: GET
+        headers:
+          Referer: "{base_url}/"
+        var: pages_data
+        json_path: readChapter.pages
+    - from_json:
+        var: pages_data
+        extract:
+          url: image
+        prefix:
+          url: "{base_url}"

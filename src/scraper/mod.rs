@@ -130,12 +130,6 @@ pub trait Provider: Send + Sync {
         0
     }
 
-    /// Referer header to send when downloading page images.
-    /// Returns `None` for providers that don't require it.
-    fn page_referer(&self) -> Option<&str> {
-        None
-    }
-
     /// Search for a manga by title. Returns ranked candidates.
     async fn search(
         &self,

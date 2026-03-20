@@ -2,10 +2,11 @@ use std::io::Write as _;
 use std::path::Path;
 use std::sync::Arc;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use chrono::Utc;
 use log::{debug, info, warn};
 use thiserror::Error;
-use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 
 use crate::db::{chapter as db_chapter, provider as db_provider, settings as db_settings};
@@ -171,7 +172,7 @@ pub async fn download_chapter(
             continue;
         }
 
-        match download_pages(ctx, &pages, provider.page_delay_ms(), provider.page_referer().map(str::to_owned), cancel_token.clone()).await {
+        match download_pages_via_browser(ctx, &pages, provider.page_delay_ms(), cancel_token.clone()).await {
             Ok(image_data) => {
                 let mut cbz_name = format!("Chapter {}", chapter.number_sort());
                 if let Some(ref t) = chapter.title {
@@ -293,51 +294,68 @@ async fn ensure_chapter_url(
         .and_then(|info| info.url)
 }
 
-/// Download all page images concurrently (max 4 parallel). Returns Vec<(index, bytes)> sorted.
-/// `page_delay_ms` — if non-zero, sleep this many ms after acquiring the semaphore permit
-/// before each request to avoid hammering the provider.
-async fn download_pages(
+/// Download page images using the headless browser.
+///
+/// All image downloads go through the Chromium engine to maximize anti-blocking protection.
+/// `page_delay_ms` — sleep this many ms between images to avoid rate-limiting.
+async fn download_pages_via_browser(
     ctx: &ScraperCtx,
     pages: &[crate::scraper::PageUrl],
     page_delay_ms: u64,
-    page_referer: Option<String>,
     cancel_token: CancellationToken,
 ) -> Result<Vec<(u32, Vec<u8>)>, DownloadError> {
-    let semaphore = Arc::new(Semaphore::new(4));
-    let mut handles = Vec::with_capacity(pages.len());
+    let mut results = Vec::with_capacity(pages.len());
 
-    for page in pages {
+    // All downloads through browser — no reqwest
+    let browser = ctx
+        .browser
+        .get()
+        .await
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+
+    let page = browser
+        .new_blank_page()
+        .await
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+
+    for page_url in pages {
         if cancel_token.is_cancelled() {
             return Err(DownloadError::Cancelled);
         }
+        if page_delay_ms > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(page_delay_ms)).await;
+        }
+        let url = &page_url.url;
 
-        let url = page.url.clone();
-        let index = page.index;
-        let http = ctx.http.clone();
-        let sem = Arc::clone(&semaphore);
-        let referer = page_referer.clone();
+        if let Err(e) = page.goto(url.as_str()).await {
+            warn!("[dl] browser navigate failed for {url}: {e}");
+            continue;
+        }
+        page.wait_for_network_idle(500, 15_000).await.ok();
 
-        handles.push(tokio::spawn(async move {
-            let _permit = sem.acquire().await.unwrap();
-            if page_delay_ms > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(page_delay_ms)).await;
-            }
-            let mut req = http.get(&url);
-            if let Some(ref r) = referer {
-                req = req.header(reqwest::header::REFERER, r);
-            }
-            let bytes = req.send().await?.bytes().await?;
-            Ok::<(u32, Vec<u8>), reqwest::Error>((index, bytes.to_vec()))
-        }));
-    }
+        let js = format!(
+            r#"(async () => {{
+                const r = await fetch({url_json});
+                if (!r.ok) return null;
+                const buf = await r.arrayBuffer();
+                const bytes = new Uint8Array(buf);
+                let binary = "";
+                for (let i = 0; i < bytes.length; i += 8192) {{
+                    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+                }}
+                return btoa(binary);
+            }})()"#,
+            url_json = serde_json::to_string(url).unwrap(),
+        );
 
-    let mut results = Vec::with_capacity(handles.len());
-    for handle in handles {
-        let (index, data) = handle
-            .await
-            .map_err(|e| std::io::Error::other(e.to_string()))?
-            .map_err(DownloadError::Http)?;
-        results.push((index, data));
+        match page.evaluate::<Option<String>>(&js).await {
+            Ok(Some(b64)) => match BASE64.decode(b64.trim()) {
+                Ok(data) => results.push((page_url.index, data)),
+                Err(e) => warn!("[dl] base64 decode failed for {url}: {e}"),
+            },
+            Ok(None) => warn!("[dl] empty response for {url}"),
+            Err(e) => warn!("[dl] browser fetch failed for {url}: {e}"),
+        }
     }
 
     results.sort_by_key(|(idx, _)| *idx);

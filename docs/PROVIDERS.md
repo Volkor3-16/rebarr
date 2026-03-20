@@ -12,8 +12,8 @@ If you're here because you're hoping for your favourite site to be added, make a
 | AsuraComic    | asuracomic.net          | **WORKING** | Formatting and info kinda sloppy. |
 | Comix         | comix.to                | **WORKING** | NextJS app, works by injecting scripts instad of normal selector scraping. |
 | AllManga      | allmanga.to             | BROKEN      | Large Library, uses graphql to fuck us over a bit.  |
-| MangaBall     | mangaball.net           | **WORKING** | Massive scanlator hub, would be worth adding |
-| Atsumaru      | atsu.moe                | N/A         | Decent Aggregator, well organised library. |
+| MangaBall     | mangaball.net           | **WORKING** | Massive scanlator hub, Working but incredibly low quality metadata and rips. |
+| Atsumaru      | atsu.moe                | **WORKING** | Decent Aggregator, well organised library. |
 | Mangago       | www.mangago.zone        | N/A         | Large library (esp yaoi smh) long lived site |
 | Cubari        | cubari.moe              | N/A         | Supports multiple sites scraped, popular |
 | VyManga       | vymanga.com             | N/A         | Giant library, but bad quality. |
@@ -57,9 +57,9 @@ Working Example: https://github.com/manga-download/haruneko/blob/master/web/src/
 
 ## AllManga
 
-- "Error Page" when curling.
-- I got myself blocked from the api lmao
-- Does some fucky domains when viewing chapters.
+- GraphQL api
+- But images are hosted on a domain that blocks direct downloads.
+- Adapted from https://github.com/keiyoushi/extensions-source/blob/2f988d8c75e01f717706acc0b9d3917370425667/src/en/allanime/src/eu/kanade/tachiyomi/extension/en/allanime/AllManga.kt
 
 ## MangaFire
 

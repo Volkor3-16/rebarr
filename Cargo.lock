@@ -2867,6 +2867,7 @@ version = "0.1.0"
 dependencies = [
  "anilist_moe",
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "dotenvy",
  "env_logger",

@@ -18,13 +18,14 @@ I'll remove this when I've got the first public release out, this is just a quic
 - Providers that break can sometimes download a empty image and make a corrupt cbz file (all manga)
     - We already know how many pages a chapter /should/ have, we should compare against that to check for potentially failed downloads
 - Deleting a file on disk, then running a ScanDisk doesn't flag the file as missing.
-
-
-#### Manual Provider Matching
-
-Some Manga series (Ruri Dragon for example) have two series with the same name. One, the main series, and one is a oneshot.
-Since rebarr matches the first result with a good name match, we can't correct that.
-Ideally I'd like a way for a user in the frontend to see each providers search results and manually match it, if there's multiple matches.
+- Scraper is bad.
+    - We have no way to see download status on a per-page level, as it happens (for frontend download bar)
+    - Provider schema is a little bad.
+        - We can't just hit an API
+        - We can't handle GraphQL stuff properly
+        - The only way to parse browser fuckery is injecting javascript and building a new DOM with what to scrape.
+    - It should natively support all of these things, and still be a nice fairly simple format that non-developers could stumble into getting to work.
+    - It should handle failures gracefully and in a nice way, logging the type (cloudflare/page error/scrape error/whatever) for us to use in the frontend
 
 ### Frontend
 

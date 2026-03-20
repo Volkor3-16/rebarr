@@ -31,11 +31,6 @@ pub struct ProviderDef {
 
     /// Steps to fetch page image URLs for a single chapter.
     pub pages: Option<ActionDef>,
-
-    /// Referer header sent when downloading page images (e.g. "https://allmanga.to/").
-    /// Leave unset for providers that don't require it.
-    #[serde(default)]
-    pub page_referer: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -145,6 +140,18 @@ pub enum StepDef {
 
     /// `- scroll: "bottom"` — Scroll to the bottom, or `- scroll: "selector"` to an element.
     Scroll { scroll: String },
+
+    /// `- fetch: {url: "...", var: name}` — Execute an HTTP request via browser's fetch()
+    /// and store the response body as a string variable. All traffic goes through Chromium.
+    Fetch { fetch: FetchDef },
+
+    /// `- graphql: {url: "...", query: "...", variables: {...}, var: name}` — 
+    /// Sugar over fetch for GraphQL endpoints. Sends POST with JSON body.
+    Graphql { graphql: GraphqlDef },
+
+    /// `- from_json: {var: source_var, extract: {...}}` — Map a stored JSON array 
+    /// directly to result rows, replacing the extract_js → foreach pattern.
+    FromJson { from_json: FromJsonDef },
 }
 
 // ---------------------------------------------------------------------------
@@ -242,4 +249,69 @@ pub enum ContentKind {
     OwnText,
     /// Read a named attribute from the element.
     Attr,
+}
+
+// ---------------------------------------------------------------------------
+// HTTP fetch step
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FetchDef {
+    /// URL to request. Supports template placeholders.
+    pub url: String,
+    /// HTTP method. Defaults to GET.
+    #[serde(default = "default_method_get")]
+    pub method: String,
+    /// Request headers (key → value). Supports template placeholders in values.
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    /// Request body for POST/PUT. Supports template placeholders.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// Variable name to store the response body in.
+    pub var: String,
+    /// Optional JSON path to extract a specific value from the response.
+    #[serde(default)]
+    pub json_path: Option<String>,
+}
+
+fn default_method_get() -> String {
+    "GET".to_string()
+}
+
+// ---------------------------------------------------------------------------
+// GraphQL step (sugar over fetch)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct GraphqlDef {
+    /// GraphQL endpoint URL.
+    pub url: String,
+    /// GraphQL query string.
+    pub query: String,
+    /// Variables for the query. Supports strings (with template placeholders),
+    /// numbers, booleans, and nested objects/arrays.
+    #[serde(default)]
+    pub variables: HashMap<String, serde_json::Value>,
+    /// Variable name to store the response in.
+    pub var: String,
+    /// Optional JSON path to extract from the response (e.g. "data.mangas").
+    #[serde(default)]
+    pub json_path: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// From JSON step (direct JSON array to results)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FromJsonDef {
+    /// Name of the variable containing the JSON array string.
+    pub var: String,
+    /// Map of output field name → JSON key to extract.
+    /// Example: { title: "name", url: "id" }
+    pub extract: HashMap<String, String>,
+    /// Optional per-field prefixes (e.g. to prepend base_url to URLs).
+    #[serde(default)]
+    pub prefix: HashMap<String, String>,
 }
