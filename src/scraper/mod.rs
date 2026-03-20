@@ -111,6 +111,13 @@ pub trait Provider: Send + Sync {
         true
     }
 
+    /// Default score used as a tiebreaker within the same tier when selecting the canonical
+    /// chapter. Higher scores are preferred. Can be overridden globally or per-series via the API.
+    /// Defaults to 0.
+    fn default_score(&self) -> i32 {
+        0
+    }
+
     /// Maximum requests per minute to enforce for this provider.
     /// Used by the worker rate limiter. Defaults to 30.
     fn rate_limit_rpm(&self) -> u32 {
@@ -121,6 +128,12 @@ pub trait Provider: Send + Sync {
     /// Defaults to 0 (no delay).
     fn page_delay_ms(&self) -> u64 {
         0
+    }
+
+    /// Referer header to send when downloading page images.
+    /// Returns `None` for providers that don't require it.
+    fn page_referer(&self) -> Option<&str> {
+        None
     }
 
     /// Search for a manga by title. Returns ranked candidates.
@@ -207,6 +220,14 @@ impl ProviderRegistry {
     /// pre-warm the `BrowserPool` at startup.
     pub fn browser_providers(&self) -> impl Iterator<Item = &Arc<dyn Provider>> {
         self.providers.iter().filter(|p| p.needs_browser())
+    }
+
+    /// Returns a map of provider_name → YAML default score for all loaded providers.
+    pub fn yaml_default_scores(&self) -> std::collections::HashMap<String, i32> {
+        self.providers
+            .iter()
+            .map(|p| (p.name().to_owned(), p.default_score()))
+            .collect()
     }
 
     pub fn is_empty(&self) -> bool {

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use chrono::Utc;
 use log::{debug, trace, warn};
 use rocket::{State, delete, get, http::Status, patch, post, serde::json::Json};
+use strsim;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -14,7 +15,7 @@ use crate::{
         comicinfo, covers,
         manga::{Manga, MangaMetadata, MangaSource, PublishingStatus, Synonym, SynonymSource},
     },
-    scraper::ProviderRegistry,
+    scraper::{ProviderRegistry, ScraperCtx},
 };
 
 use super::errors::{ApiError, ApiResult, bad_request, err, internal, not_found};
@@ -64,6 +65,21 @@ pub struct MangaProviderResponse {
     pub found: bool,
     pub last_synced_at: Option<i64>,
     pub search_attempted_at: Option<i64>,
+}
+
+#[derive(Serialize)]
+pub struct ProviderCandidate {
+    pub title: String,
+    pub url: String,
+    pub cover: Option<String>,
+    /// Best Jaro-Winkler score across all manga synonyms (0.0–1.0)
+    pub score: f64,
+}
+
+#[derive(Deserialize)]
+struct SetProviderUrlRequest {
+    /// Pass `null` to clear the mapping for this provider.
+    url: Option<String>,
 }
 
 /// Request to add/remove/hide synonyms for a manga
@@ -665,6 +681,126 @@ pub async fn update_synonyms(
 }
 
 // ---------------------------------------------------------------------------
+// GET /api/manga/<id>/providers/<name>/candidates
+// ---------------------------------------------------------------------------
+
+/// Search a specific provider for this manga and return all results with scores,
+/// so the user can manually pick the correct series when there are ambiguous matches.
+#[get("/api/manga/<id>/providers/<name>/candidates")]
+pub async fn provider_candidates(
+    pool: &State<SqlitePool>,
+    registry: &State<std::sync::Arc<ProviderRegistry>>,
+    ctx: &State<ScraperCtx>,
+    id: &str,
+    name: &str,
+) -> ApiResult<Vec<ProviderCandidate>> {
+    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    let manga = db::manga::get_by_id(pool.inner(), manga_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("manga not found"))?;
+
+    let provider = registry
+        .all()
+        .into_iter()
+        .find(|p| p.name() == name)
+        .ok_or_else(|| not_found("provider not found"))?;
+
+    // Build the same search title list as merge.rs
+    let mut search_titles: Vec<String> = vec![manga.metadata.title.clone()];
+    if let Some(ref other) = manga.metadata.other_titles {
+        for syn in other {
+            if !syn.hidden && !syn.title.trim().is_empty() {
+                search_titles.push(syn.title.clone());
+            }
+        }
+    }
+    // Deduplicate
+    search_titles.sort();
+    search_titles.dedup();
+
+    // Try each title until we get some results
+    let mut raw_results = Vec::new();
+    for title in &search_titles {
+        match provider.search(ctx.inner(), title).await {
+            Ok(r) if !r.is_empty() => {
+                raw_results = r;
+                break;
+            }
+            Ok(_) => continue,
+            Err(e) => {
+                return Err(err(
+                    rocket::http::Status::BadGateway,
+                    format!("provider search failed: {e}"),
+                ));
+            }
+        }
+    }
+
+    // Score every result against all synonyms and return sorted descending
+    let mut candidates: Vec<ProviderCandidate> = raw_results
+        .into_iter()
+        .map(|r| {
+            let score = search_titles
+                .iter()
+                .map(|t| strsim::jaro_winkler(&r.title.to_lowercase(), &t.to_lowercase()))
+                .fold(0.0f64, f64::max);
+            ProviderCandidate {
+                title: r.title,
+                url: r.url,
+                cover: r.cover_url,
+                score,
+            }
+        })
+        .collect();
+    candidates.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+
+    Ok(Json(candidates))
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/manga/<id>/providers/<name>/url
+// ---------------------------------------------------------------------------
+
+/// Manually set (or clear) the provider URL for a manga/provider pair.
+/// Clears `last_synced_at` so the next scan re-scrapes from the new URL.
+#[post(
+    "/api/manga/<id>/providers/<name>/url",
+    data = "<body>"
+)]
+pub async fn set_provider_url(
+    pool: &State<SqlitePool>,
+    id: &str,
+    name: &str,
+    body: Json<SetProviderUrlRequest>,
+) -> Result<Status, (Status, Json<ApiError>)> {
+    use crate::db::provider::MangaProvider;
+    use chrono::Utc;
+
+    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    db::manga::get_by_id(pool.inner(), manga_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("manga not found"))?;
+
+    db::provider::upsert(
+        pool.inner(),
+        &MangaProvider {
+            manga_id,
+            enabled: true,
+            provider_name: name.to_owned(),
+            provider_url: body.url.clone(),
+            last_synced_at: None,
+            search_attempted_at: Some(Utc::now().timestamp()),
+        },
+    )
+    .await
+    .map_err(internal)?;
+
+    Ok(Status::NoContent)
+}
+
+// ---------------------------------------------------------------------------
 // Routes aggregation
 // ---------------------------------------------------------------------------
 
@@ -684,5 +820,7 @@ pub fn routes() -> Vec<rocket::Route> {
         scan_disk_api,
         serve_cover,
         update_synonyms,
+        provider_candidates,
+        set_provider_url,
     ]
 }

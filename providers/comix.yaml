@@ -4,6 +4,9 @@ rate_limit:
   requests_per_minute: 30
   page_delay_ms: 500
 
+# WARNING: This provider uses cloudflare protection, and while we can bypass some cloudflare stuff, when they lock it down we are out of luck.
+# So don't cry when this stops working for a while
+
 search:
   steps:
     - open: "/browser?keyword={query}&order=relevance%3Adesc&genres=-87264,-87266,-87268,-87265&genres_mode=and"

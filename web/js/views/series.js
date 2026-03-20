@@ -1,8 +1,8 @@
 // Series detail view - manga info + chapters + live task status
 
-import { manga as mangaApi, tasks, trustedGroups } from '../api.js';
+import { manga as mangaApi, tasks, trustedGroups, providerScores } from '../api.js';
 import { render, setPoll, navigate } from '../router.js';
-import { escape, relTime, statusBadge, taskBadge, tierBadgeHtml, skeleton, showToast, truncateMiddle } from '../utils.js';
+import { escape, relTime, statusBadge, taskBadge, tierBadgeHtml, skeleton, showToast, truncateMiddle, formatFileSize } from '../utils.js';
 
 let currentMangaId = null;
 let trustedGroupsCache = [];
@@ -219,6 +219,7 @@ function chapterRow(mangaId, ch, isVariant = false, altCount = 0, extraActions =
   const tierHtml = tierBadgeHtml(ch.tier || 4);
 
   const sourceUrl = ch.chapter_url;
+  const sourceTitle = sourceUrl ? ` title="${escape(sourceUrl)}"` : '';
   const sourceName = ch.provider_name ? escape(ch.provider_name) : (ch.scanlator_group ? escape(ch.scanlator_group) : '—');
   
   // Show +N more below provider name when there are alternatives (click to expand)
@@ -229,7 +230,7 @@ function chapterRow(mangaId, ch, isVariant = false, altCount = 0, extraActions =
   
   // Provider name (as link) with alt count bubble on new line below
   const sourceHtml = sourceUrl
-    ? `<div class="provider-cell"><a href="${escape(sourceUrl)}" target="_blank" class="ch-source">${sourceName}</a>${altCountHtml}</div>`
+    ? `<div class="provider-cell"><a href="${escape(sourceUrl)}" target="_blank" class="ch-source"${sourceTitle}>${sourceName}</a>${altCountHtml}</div>`
     : `<div class="provider-cell"><span class="ch-source">${sourceName}</span>${altCountHtml}</div>`;
 
   let langHtml = '';
@@ -239,6 +240,11 @@ function chapterRow(mangaId, ch, isVariant = false, altCount = 0, extraActions =
 
   const status = ch.download_status;
   const canDl = status === 'Missing' || status === 'Failed';
+
+  // File size label for downloaded chapters
+  const fileSizeHtml = (status === 'Downloaded' && ch.file_size_bytes)
+    ? `<div class="ch-filesize">${formatFileSize(ch.file_size_bytes)}</div>`
+    : '';
 
   const cb = (!isVariant && canDl)
     ? `<input type="checkbox" class="ch-checkbox" data-base="${base}" data-variant="${variant}">`
@@ -282,7 +288,9 @@ function chapterRow(mangaId, ch, isVariant = false, altCount = 0, extraActions =
     ? `<button class="btn-sm" onclick='event.stopPropagation(); doSetCanonical("${mangaId}", ${base}, ${variant}, "${ch.id}")'>Use</button>`
     : '';
 
-  const rowClass = isVariant ? 'ch-variant ch-row' : 'ch-main ch-row';
+  const rowClass = isVariant
+    ? 'ch-variant ch-row'
+    : `ch-main ch-row ch-row-${status.toLowerCase()}`;
   const rowId = `ch-row-${base}-${variant}`;
 
   return {
@@ -292,7 +300,7 @@ function chapterRow(mangaId, ch, isVariant = false, altCount = 0, extraActions =
       <td>${scanlatorHtml}</td>
       <td>${tierHtml}</td>
       <td>${sourceHtml}</td>
-      <td>${statusBadge(status)}</td>
+      <td>${statusBadge(status)}${fileSizeHtml}</td>
       <td><small>${relTime(ch.released_at)}</small></td>
       <td><small>${relTime(ch.scraped_at)}</small></td>
       <td>${useBtn}${actionMenuHtml}${extraActions}</td>
@@ -863,40 +871,63 @@ export async function loadProviders(mangaId) {
   const el = document.getElementById('providers-list');
   if (!el) return;
   try {
-    const providers = await mangaApi.providers(mangaId);
-    if (providers.length === 0) {
+    const provList = await mangaApi.providers(mangaId);
+    if (provList.length === 0) {
       el.innerHTML = '<p><small>No providers found yet. Scan this manga to discover providers.</small></p>';
       return;
     }
-    
-    const rows = providers.map(p => {
+
+    // Fetch per-series scores in parallel
+    const scoreResults = await Promise.allSettled(
+      provList.map(p => providerScores.getSeries(mangaId, p.provider_name))
+    );
+
+    const rows = provList.map((p, i) => {
       const statusClass = p.found ? 'found' : 'not-found';
       const statusText = p.found ? 'Found' : 'Not found';
       const searched = p.search_attempted_at ? relTime(p.search_attempted_at) : 'never';
       const synced = p.last_synced_at ? relTime(p.last_synced_at) : 'Never';
-      
-      // Provider bubble with actions
-      const linkBtn = p.provider_url 
+
+      const scoreData = scoreResults[i].status === 'fulfilled' ? scoreResults[i].value : null;
+      const currentScore = scoreData?.score ?? 0;
+      const isEnabled = scoreData?.enabled ?? true;
+
+      const linkBtn = p.provider_url
         ? `<button onclick="window.open('${escape(p.provider_url)}', '_blank')">Open</button>`
         : '';
-      const refreshBtn = `<button onclick="alert('Refresh coming soon!')">Refresh</button>`;
-      
+
+      const enableToggle = `<label title="${isEnabled ? 'Enabled: click to disable (only for checking new chapters)' : 'Disabled — click to enable'}">
+        <input type="checkbox" ${isEnabled ? 'checked' : ''} onchange="setProviderEnabled('${mangaId}', '${escape(p.provider_name)}', this.checked)">
+        ${isEnabled ? 'Enabled' : 'Disabled'}
+      </label>`;
+
+      const scoreInput = `<input type="number" class="score-input" value="${currentScore}" min="-100" max="100"
+        title="Per-series score override for ${escape(p.provider_name)}"
+        data-manga="${mangaId}" data-provider="${escape(p.provider_name)}"
+        onchange="setSeriesScore('${mangaId}', '${escape(p.provider_name)}', this.value)"
+        onblur="setSeriesScore('${mangaId}', '${escape(p.provider_name)}', this.value)">`;
+
+      const pickBtn = `<button class="btn btn-xs btn-ghost" onclick="pickProvider('${mangaId}', '${escape(p.provider_name)}')" title="Search this provider and pick the correct match">Pick</button>`;
+
       return `<tr>
         <td><span class="provider-bubble">
           <span class="status-dot ${statusClass}"></span>
           ${escape(p.provider_name)}
-          <span class="actions">${linkBtn}${refreshBtn}</span>
+          <span class="actions">${linkBtn}</span>
         </span></td>
         <td>${statusText}</td>
         <td><small>${synced}</small></td>
         <td><small>searched: ${searched}</small></td>
+        <td>${enableToggle}</td>
+        <td>${scoreInput}</td>
+        <td>${pickBtn}</td>
       </tr>`;
     }).join('');
-    
+
     el.innerHTML = `<div class="chapters-table">
       <table>
         <thead>
-          <tr><th>Provider</th><th>&darr;</th><th>Last Synced</th><th>Searched</th></tr>
+          <tr><th>Provider</th><th>Status</th><th>Last Synced</th><th>Searched</th><th>Enabled</th><th>Score</th><th></th></tr>
         </thead>
         <tbody>${rows}</tbody>
       </table>
@@ -905,6 +936,108 @@ export async function loadProviders(mangaId) {
     el.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
   }
 }
+
+window.setProviderEnabled = async function(mangaId, providerName, enabled) {
+  try {
+    const current = await providerScores.getSeries(mangaId, providerName);
+    await providerScores.setSeries(mangaId, providerName, current?.score ?? 0, enabled);
+    showToast(`${providerName} ${enabled ? 'enabled' : 'disabled'}`);
+  } catch(e) {
+    showToast('Error: ' + e.message, 'error');
+  }
+};
+
+window.setSeriesScore = async function(mangaId, providerName, value) {
+  const score = parseInt(value, 10);
+  if (isNaN(score)) return;
+  try {
+    const current = await providerScores.getSeries(mangaId, providerName);
+    await providerScores.setSeries(mangaId, providerName, score, current?.enabled ?? true);
+  } catch(e) {
+    showToast('Score save failed: ' + e.message, 'error');
+  }
+};
+
+window.pickProvider = async function(mangaId, providerName) {
+  // Create and show modal immediately with loading state
+  const existingModal = document.getElementById('pick-provider-modal');
+  if (existingModal) existingModal.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'pick-provider-modal';
+  modal.className = 'modal-overlay';
+  modal.innerHTML = `
+    <div class="modal-box">
+      <h3 class="modal-title">Pick match for <strong>${escape(providerName)}</strong></h3>
+      <div id="pick-modal-results"><p class="modal-loading">Searching…</p></div>
+      <div class="modal-custom-url">
+        <label>Custom URL</label>
+        <div class="modal-custom-url-row">
+          <input type="url" id="pick-custom-url" placeholder="https://..." class="input input-sm">
+          <button class="btn btn-sm btn-primary" onclick="pickProviderSaveCustom('${escape(mangaId)}', '${escape(providerName)}')">Save</button>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-sm btn-ghost" onclick="document.getElementById('pick-provider-modal').remove()">Cancel</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  // Close on backdrop click
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+
+  // Fetch candidates
+  try {
+    const candidates = await mangaApi.providerCandidates(mangaId, providerName);
+    const resultsEl = document.getElementById('pick-modal-results');
+    if (!resultsEl) return;
+
+    if (candidates.length === 0) {
+      resultsEl.innerHTML = '<p class="modal-empty">No results found on this provider.</p>';
+      return;
+    }
+
+    const rows = candidates.map(c => {
+      const pct = Math.round(c.score * 100);
+      const scoreClass = pct >= 85 ? 'score-good' : pct >= 60 ? 'score-mid' : 'score-low';
+      const coverHtml = c.cover
+        ? `<img class="pick-cover" src="${escape(c.cover)}" alt="" loading="lazy">`
+        : `<div class="pick-cover pick-cover-empty"></div>`;
+      return `<div class="pick-result-row">
+        ${coverHtml}
+        <div class="pick-result-info">
+          <a class="pick-result-title" href="${escape(c.url)}" target="_blank" rel="noopener">${escape(c.title)}</a>
+          <span class="pick-result-url">${escape(c.url)}</span>
+        </div>
+        <span class="pick-score ${scoreClass}">${pct}%</span>
+        <button class="btn btn-xs btn-primary" onclick="pickProviderSelect('${escape(mangaId)}', '${escape(providerName)}', '${escape(c.url)}')">Select</button>
+      </div>`;
+    }).join('');
+
+    resultsEl.innerHTML = `<div class="pick-results-list">${rows}</div>`;
+  } catch(e) {
+    const resultsEl = document.getElementById('pick-modal-results');
+    if (resultsEl) resultsEl.innerHTML = `<p class="error">Search failed: ${escape(e.message)}</p>`;
+  }
+};
+
+window.pickProviderSelect = async function(mangaId, providerName, url) {
+  try {
+    await mangaApi.setProviderUrl(mangaId, providerName, url);
+    document.getElementById('pick-provider-modal')?.remove();
+    showToast(`${providerName} → matched`);
+    loadProviders(mangaId);
+  } catch(e) {
+    showToast('Failed to save: ' + e.message, 'error');
+  }
+};
+
+window.pickProviderSaveCustom = async function(mangaId, providerName) {
+  const url = document.getElementById('pick-custom-url')?.value?.trim();
+  if (!url) { showToast('Please enter a URL', 'error'); return; }
+  await window.pickProviderSelect(mangaId, providerName, url);
+};
 
 // Trusted group functions for bubble UI
 window.addTrustedFromBubble = async function(groupName) {

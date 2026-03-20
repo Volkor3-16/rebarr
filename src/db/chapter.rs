@@ -385,6 +385,7 @@ pub async fn update_canonical(
     manga_id: Uuid,
     trusted_groups: &[String],
     preferred_language: &str,
+    provider_scores: &std::collections::HashMap<String, i32>,
 ) -> Result<(), sqlx::Error> {
     let all = get_all_for_manga(pool, manga_id).await?;
 
@@ -440,8 +441,29 @@ pub async fn update_canonical(
             }
         }
 
-        // Tier sort: lower tier number = better (1=Official, 4=No group)
-        entries.sort_by_key(|e| compute_tier(e.scanlator_group.as_deref(), trusted_groups));
+        // Primary: tier ascending (1=Official best, 4=No group worst).
+        // Secondary within same tier: provider score descending (higher = better).
+        // Score NEVER promotes a lower tier above a higher one.
+        entries.sort_by(|a, b| {
+            let tier_a = compute_tier(a.scanlator_group.as_deref(), trusted_groups);
+            let tier_b = compute_tier(b.scanlator_group.as_deref(), trusted_groups);
+            if tier_a != tier_b {
+                return tier_a.cmp(&tier_b);
+            }
+            let score_a = a
+                .provider_name
+                .as_deref()
+                .and_then(|n| provider_scores.get(n))
+                .copied()
+                .unwrap_or(0);
+            let score_b = b
+                .provider_name
+                .as_deref()
+                .and_then(|n| provider_scores.get(n))
+                .copied()
+                .unwrap_or(0);
+            score_b.cmp(&score_a)
+        });
 
         if let Some(winner) = entries.into_iter().next() {
             // Apply user override if present and the overridden chapter still exists.

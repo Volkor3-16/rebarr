@@ -5,6 +5,7 @@ pub(crate) mod chapter;
 pub(crate) mod library;
 pub(crate) mod manga;
 pub(crate) mod provider;
+pub(crate) mod provider_scores;
 pub(crate) mod settings;
 pub(crate) mod task;
 

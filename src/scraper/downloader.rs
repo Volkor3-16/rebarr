@@ -171,7 +171,7 @@ pub async fn download_chapter(
             continue;
         }
 
-        match download_pages(ctx, &pages, provider.page_delay_ms(), cancel_token.clone()).await {
+        match download_pages(ctx, &pages, provider.page_delay_ms(), provider.page_referer().map(str::to_owned), cancel_token.clone()).await {
             Ok(image_data) => {
                 let mut cbz_name = format!("Chapter {}", chapter.number_sort());
                 if let Some(ref t) = chapter.title {
@@ -300,6 +300,7 @@ async fn download_pages(
     ctx: &ScraperCtx,
     pages: &[crate::scraper::PageUrl],
     page_delay_ms: u64,
+    page_referer: Option<String>,
     cancel_token: CancellationToken,
 ) -> Result<Vec<(u32, Vec<u8>)>, DownloadError> {
     let semaphore = Arc::new(Semaphore::new(4));
@@ -314,13 +315,18 @@ async fn download_pages(
         let index = page.index;
         let http = ctx.http.clone();
         let sem = Arc::clone(&semaphore);
+        let referer = page_referer.clone();
 
         handles.push(tokio::spawn(async move {
             let _permit = sem.acquire().await.unwrap();
             if page_delay_ms > 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(page_delay_ms)).await;
             }
-            let bytes = http.get(&url).send().await?.bytes().await?;
+            let mut req = http.get(&url);
+            if let Some(ref r) = referer {
+                req = req.header(reqwest::header::REFERER, r);
+            }
+            let bytes = req.send().await?.bytes().await?;
             Ok::<(u32, Vec<u8>), reqwest::Error>((index, bytes.to_vec()))
         }));
     }

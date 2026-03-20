@@ -16,7 +16,9 @@ Before running the full scan, you should:
 
 You should click the button that says "manual", and enter all the details in you can.
 
-## Whats the usual flow for adding a manga
+## The provider found a match, but it's not right!
 
-0. Make sure you have a library
-1. 
+On the series page, you can 'pick' / manually override the match. Scroll down to the providers list, and click **Pick**, it automatically search the provider and return all matches, allowing you to investigate which is right.
+
+Additionally, if you're already on the series on the provider, you can just enter the correct series URL.
+Be careful though, if the url isn't correct it will break.

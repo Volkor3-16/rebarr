@@ -1,0 +1,133 @@
+name: All Manga
+base_url: https://allmanga.to
+default_score: 80
+page_referer: https://allmanga.to/
+rate_limit:
+  requests_per_minute: 30
+
+search:
+  steps:
+    - open: "{base_url}"
+    - extract_js:
+        var: _injected
+        script: |
+          (async function() {
+            var q = 'query($search: SearchInput, $size: Int, $page: Int, $translationType: VaildTranslationTypeMangaEnumType, $countryOrigin: VaildCountryOriginEnumType) { mangas(search: $search, limit: $size, page: $page, translationType: $translationType, countryOrigin: $countryOrigin) { edges { _id name thumbnail } } }';
+            var vars = {
+              search: { query: decodeURIComponent("{query}"), isManga: true, allowAdult: false, allowUnknown: false },
+              size: 20, page: 1, translationType: "sub", countryOrigin: "ALL"
+            };
+            var resp = await fetch("https://api.allanime.day/api", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "Referer": "{base_url}/" },
+              body: JSON.stringify({ query: q, variables: vars })
+            });
+            var data = await resp.json();
+            var c = document.createElement("div");
+            c.id = "_am_results";
+            ((data.data && data.data.mangas && data.data.mangas.edges) || []).forEach(function(m) {
+              var el = document.createElement("div");
+              el.className = "_am_manga";
+              el.setAttribute("data-id", m._id || "");
+              el.setAttribute("data-title", m.name || "");
+              el.setAttribute("data-cover", m.thumbnail || "");
+              c.appendChild(el);
+            });
+            document.body.appendChild(c);
+            return "ok";
+          })();
+    - foreach:
+        selector: "#_am_results ._am_manga"
+        extract:
+          title:
+            selector: ""
+            content: attr
+            attr_name: data-title
+          url:
+            selector: ""
+            content: attr
+            attr_name: data-id
+            prefix: "{base_url}/manga/"
+          cover:
+            selector: ""
+            content: attr
+            attr_name: data-cover
+
+chapters:
+  steps:
+    - open: "{manga_url}"
+    - extract_js:
+        var: _injected
+        script: |
+          (async function() {
+            var mangaId = window.location.href.split("/manga/")[1];
+            if (mangaId) mangaId = mangaId.replace(/\/.*$/, "");
+            if (!mangaId) return "no-id";
+            var q = 'query($id: String!, $chapterNumStart: Float!, $chapterNumEnd: Float!) { episodeInfos(showId: $id, episodeNumStart: $chapterNumStart, episodeNumEnd: $chapterNumEnd) { episodeIdNum notes } }';
+            var vars = { id: "manga@" + mangaId, chapterNumStart: 0, chapterNumEnd: 9999 };
+            var resp = await fetch("https://api.allanime.day/api", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "Referer": "{base_url}/" },
+              body: JSON.stringify({ query: q, variables: vars })
+            });
+            var data = await resp.json();
+            var c = document.createElement("div");
+            c.id = "_am_chapters";
+            ((data.data && data.data.episodeInfos) || []).forEach(function(ch) {
+              var el = document.createElement("div");
+              el.className = "_am_chapter";
+              el.setAttribute("data-num", String(ch.episodeIdNum || ""));
+              el.setAttribute("data-title", ch.notes || "");
+              el.setAttribute("data-url", "{base_url}/read/" + mangaId + "/" + ch.episodeIdNum);
+              c.appendChild(el);
+            });
+            document.body.appendChild(c);
+            return "ok:" + ((data.data && data.data.episodeInfos) || []).length;
+          })();
+    - foreach:
+        selector: "#_am_chapters ._am_chapter"
+        extract:
+          number_raw:
+            selector: ""
+            content: attr
+            attr_name: data-num
+          title:
+            selector: ""
+            content: attr
+            attr_name: data-title
+          url:
+            selector: ""
+            content: attr
+            attr_name: data-url
+
+pages:
+  steps:
+    - open: "{base_url}"
+    - extract_js:
+        var: pages_json
+        script: |
+          (async function() {
+            var chapterUrl = "{chapter_url}";
+            var readPart = chapterUrl.split("/read/")[1] || "";
+            var parts = readPart.split("/");
+            var mangaId = parts[0];
+            var chapterNum = parts[1];
+            if (!mangaId || !chapterNum) return "[]";
+            var q = 'query($id: String!, $translationType: VaildTranslationTypeMangaEnumType!, $chapterNum: String!) { chapterPages(mangaId: $id, translationType: $translationType, chapterString: $chapterNum) { edges { pictureUrls pictureUrlHead } } }';
+            var vars = { id: mangaId, chapterNum: chapterNum, translationType: "sub" };
+            var resp = await fetch("https://api.allanime.day/api", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "Referer": "{base_url}/" },
+              body: JSON.stringify({ query: q, variables: vars })
+            });
+            var data = await resp.json();
+            var edges = (data.data && data.data.chapterPages && data.data.chapterPages.edges) || [];
+            if (!edges.length) return JSON.stringify(data);
+            var head = edges[0].pictureUrlHead || "";
+            var urls = (edges[0].pictureUrls || []).filter(function(u) { return u != null; }).map(function(u) {
+              var path = typeof u === "string" ? u : (u.url || JSON.stringify(u));
+              return path.match(/^https?:\/\//) ? path : head + path;
+            });
+            return JSON.stringify(urls);
+          })();
+    - return: "{pages_json}"

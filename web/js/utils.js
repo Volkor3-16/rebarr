@@ -133,15 +133,35 @@ export function toPathSafe(s) {
   return (s || '').replace(/[\/\\:*?"<>|']/g, '').replace(/\s+/g, ' ').trim() || 'manga';
 }
 
+const TIER_LABELS = {
+  1: 'Official',
+  2: 'Trusted',
+  3: 'Unknown',
+  4: 'No Group',
+};
+
 /**
- * Render score badge HTML (formerly tier)
+ * Render tier badge HTML with label and color
  * @param {number|null} tier - Tier number (1-4), lower is better
  * @returns {string} HTML span element
  */
 export function tierBadgeHtml(tier) {
-  // Show score number (inverted: 1 = best, 4 = worst)
-  const score = tier ? (5 - tier) : 0;
-  return `<span class="ch-tier ch-tier-${tier || 4}">${score}</span>`;
+  const t = tier || 4;
+  const label = TIER_LABELS[t] || 'Unknown';
+  return `<span class="tier-badge tier-badge-${t}" title="Tier ${t}: ${label}">${label}</span>`;
+}
+
+/**
+ * Format bytes into a human-readable file size string
+ * @param {number|null} bytes - Size in bytes
+ * @returns {string} Formatted size (e.g. "12.3 MB")
+ */
+export function formatFileSize(bytes) {
+  if (!bytes || bytes <= 0) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
 /**

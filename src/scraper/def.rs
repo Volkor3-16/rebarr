@@ -14,6 +14,11 @@ pub struct ProviderDef {
     /// Root URL (e.g. "https://weebcentral.com"). Used as `{base_url}` in templates.
     pub base_url: String,
 
+    /// Default score for chapter ranking tiebreaks within the same tier.
+    /// Can be overridden globally or per-series via the API.
+    #[serde(default)]
+    pub default_score: i32,
+
     /// Per-provider rate limiting.
     #[serde(default)]
     pub rate_limit: RateLimitDef,
@@ -26,6 +31,11 @@ pub struct ProviderDef {
 
     /// Steps to fetch page image URLs for a single chapter.
     pub pages: Option<ActionDef>,
+
+    /// Referer header sent when downloading page images (e.g. "https://allmanga.to/").
+    /// Leave unset for providers that don't require it.
+    #[serde(default)]
+    pub page_referer: Option<String>,
 }
 
 // ---------------------------------------------------------------------------

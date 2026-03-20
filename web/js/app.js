@@ -11,7 +11,7 @@ import './views/queue.js';
 import { initTheme } from './theme.js';
 import { initRouter } from './router.js';
 import { updateRelTimes } from './utils.js';
-import { tasks, settings } from './api.js';
+import { tasks, settings, system } from './api.js';
 
 // Activity console state
 let activityLog = [];
@@ -204,14 +204,36 @@ async function pollActivity() {
   }
 }
 
+// Update system stats in header
+async function updateSystemStats() {
+  const textEl = document.getElementById('system-stats-text');
+  if (!textEl) return;
+  try {
+    const info = await system.info();
+    const mb = info.process_mem_mb;
+    const memText = mb > 0
+      ? (mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`)
+      : '';
+    const queueText = info.tasks_pending > 0 || info.tasks_running > 0
+      ? [
+          info.tasks_running > 0 ? `${info.tasks_running} running` : '',
+          info.tasks_pending > 0 ? `${info.tasks_pending} queued` : '',
+        ].filter(Boolean).join(', ')
+      : 'idle';
+    textEl.textContent = [memText, queueText].filter(Boolean).join(' | ');
+  } catch (_) {
+    // Non-critical
+  }
+}
+
 // Initialize the application
 function init() {
   // Initialize theme
   initTheme();
-  
+
   // Initialize router (which will load the initial view)
   initRouter();
-  
+
   // Start the relative time updater (updates every 30 seconds)
   setInterval(updateRelTimes, 30000);
 
@@ -219,13 +241,17 @@ function init() {
   // can't kill it. Poll every 3s to catch fast tasks.
   pollActivity();
   setInterval(pollActivity, 3000);
-  
+
+  // System stats polling every 30s
+  updateSystemStats();
+  setInterval(updateSystemStats, 30000);
+
   // Add scroll listener for header collapse
   window.addEventListener('scroll', handleScroll, { passive: true });
-  
+
   // Add initial activity
   addActivity('REBARR started', 'success');
-  
+
   console.log('REBARR initialized');
 }
 

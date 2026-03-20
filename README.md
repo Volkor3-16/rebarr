@@ -13,24 +13,18 @@ I'll remove this when I've got the first public release out, this is just a quic
 
 ### Backend
 - Full test of new chapter refresh -> chapter downloading
+    - 2026-03-20: It refreshed automatically when my pc came out of sleep! noice!
 - Full test of chapter upgrading from site
+- Providers that break can sometimes download a empty image and make a corrupt cbz file (all manga)
+    - We already know how many pages a chapter /should/ have, we should compare against that to check for potentially failed downloads
+- Deleting a file on disk, then running a ScanDisk doesn't flag the file as missing.
 
-#### Provider Scores
-Implements Sonarr-style scoring system where providers can have positive or negative integer scores.
-- Default score of 0 defined in each provider's yaml file
-- Global override: stored in database, applies to all series using that provider
-- Series override: stored per-series, overrides global setting
-- Enable/disable: each provider can be individually enabled/disabled per-series
-- Canonical selection: when multiple providers have chapters in the same tier (Official, Trusted, etc), provider score acts as tiebreaker
-- Tier order (highest to lowest): Official > Trusted Scanlator > Scanlator > Unknown (unlabelled/aggregator reupload)
-- IMPORTANT: Provider scores must NEVER elevate a lower tier above Official (e.g., Trusted score 100 cannot beat Official score 0)
 
-Implementation:
-1. Add `default_score` field to provider yaml schema
-2. Add `provider_scores` table with columns: provider_name, global_score (nullable), series_id (nullable for global)
-3. Add `provider_enabled` table with columns: provider_name, series_id, enabled (boolean)
-4. Modify chapter scoring to consider provider score only within the same tier
-5. API endpoints: GET/PUT /api/providers/{name}/score (global), GET/PUT /api/series/{id}/providers/{name}/score (series-specific)
+#### Manual Provider Matching
+
+Some Manga series (Ruri Dragon for example) have two series with the same name. One, the main series, and one is a oneshot.
+Since rebarr matches the first result with a good name match, we can't correct that.
+Ideally I'd like a way for a user in the frontend to see each providers search results and manually match it, if there's multiple matches.
 
 ### Frontend
 

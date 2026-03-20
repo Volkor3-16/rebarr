@@ -56,6 +56,8 @@ export const manga = {
   delete: (id) => del(`/api/manga/${id}`),
   chapters: (id) => get(`/api/manga/${id}/chapters`),
   providers: (id) => get(`/api/manga/${id}/providers`),
+  providerCandidates: (id, name) => get(`/api/manga/${id}/providers/${encodeURIComponent(name)}/candidates`),
+  setProviderUrl: (id, name, url) => post(`/api/manga/${id}/providers/${encodeURIComponent(name)}/url`, { url }),
   scan: (id) => post(`/api/manga/${id}/scan`, null),
   checkNew: (id) => post(`/api/manga/${id}/check-new`, null),
   scanDisk: (id) => post(`/api/manga/${id}/scan-disk`, null),
@@ -100,4 +102,17 @@ export const trustedGroups = {
   list: () => get('/api/trusted-groups'),
   add: (name) => post('/api/trusted-groups', { name }),
   remove: (name) => del(`/api/trusted-groups/${encodeURIComponent(name)}`),
+};
+
+// System info API
+export const system = {
+  info: () => get('/api/system'),
+};
+
+// Provider scores API
+export const providerScores = {
+  getGlobal: (name) => get(`/api/providers/${encodeURIComponent(name)}/score`),
+  setGlobal: (name, score, enabled) => put(`/api/providers/${encodeURIComponent(name)}/score`, { score, enabled }),
+  getSeries: (mangaId, name) => get(`/api/manga/${mangaId}/providers/${encodeURIComponent(name)}/score`),
+  setSeries: (mangaId, name, score, enabled) => put(`/api/manga/${mangaId}/providers/${encodeURIComponent(name)}/score`, { score, enabled }),
 };

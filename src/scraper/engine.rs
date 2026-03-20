@@ -573,12 +573,20 @@ impl Provider for YamlProvider {
         true
     }
 
+    fn default_score(&self) -> i32 {
+        self.def.default_score
+    }
+
     fn rate_limit_rpm(&self) -> u32 {
         self.def.rate_limit.requests_per_minute
     }
 
     fn page_delay_ms(&self) -> u64 {
         self.def.rate_limit.page_delay_ms
+    }
+
+    fn page_referer(&self) -> Option<&str> {
+        self.def.page_referer.as_deref()
     }
 
     async fn search(

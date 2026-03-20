@@ -673,6 +673,120 @@ img.cover-lg {
   to { opacity: 1; }
 }
 
+/* Pick-provider modal */
+.modal-box {
+  background: var(--bg);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+  width: min(520px, 90vw);
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.modal-title {
+  margin: 0;
+  font-size: 1rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.5rem;
+}
+
+.modal-loading,
+.modal-empty {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  margin: 0;
+}
+
+.pick-results-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.pick-result-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+.pick-cover {
+  width: 36px;
+  height: 50px;
+  object-fit: cover;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.pick-cover-empty {
+  background: var(--bg-card);
+}
+
+.pick-result-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.pick-result-title {
+  font-size: 0.875rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pick-result-url {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pick-score {
+  font-size: 0.75rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 999px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.score-good { background: rgba(72, 199, 116, 0.15); color: #48c774; }
+.score-mid  { background: rgba(255, 221, 87, 0.15);  color: #ffd857; }
+.score-low  { background: rgba(255, 100, 100, 0.15); color: #f97474; }
+
+.modal-custom-url {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.modal-custom-url-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.modal-custom-url-row .input {
+  flex: 1;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
 /* Relative time */
 .rel-time {
   cursor: help;
@@ -1608,4 +1722,172 @@ nav.header-collapsed {
 nav.header-collapsed a {
   padding: 0.3rem 0.5rem;
   font-size: 0.9rem;
+}
+
+/* ---- Chapter row status tints ---- */
+/* Subtle background tint per download status. Uses color-mix for theme-aware opacity. */
+.ch-row.ch-row-downloaded {
+  background: color-mix(in srgb, var(--st-downloaded) 8%, transparent);
+}
+.ch-row.ch-row-failed {
+  background: color-mix(in srgb, var(--st-failed) 9%, transparent);
+}
+.ch-row.ch-row-queued {
+  background: color-mix(in srgb, var(--st-queued) 6%, transparent);
+}
+.ch-row.ch-row-downloading {
+  background: color-mix(in srgb, var(--st-downloading) 7%, transparent);
+}
+/* Missing = no background override */
+
+/* Hover still overrides the tint for clarity */
+.ch-row.ch-row-downloaded:hover,
+.ch-row.ch-row-failed:hover,
+.ch-row.ch-row-queued:hover,
+.ch-row.ch-row-downloading:hover {
+  background: var(--bg-secondary) !important;
+}
+
+/* File size label inside a downloaded chapter row */
+.ch-filesize {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+}
+
+/* ---- Settings cards ---- */
+.settings-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.settings-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.settings-card-header h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.settings-card-desc {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin: 0 0 1rem 0;
+}
+
+/* ---- Home sort bar ---- */
+.sort-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+}
+
+.sort-bar span.label {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-right: 0.25rem;
+}
+
+.sort-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition);
+}
+
+.sort-btn:hover {
+  background: var(--bg-secondary);
+}
+
+.sort-btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--bg-secondary);
+  font-weight: 600;
+}
+
+/* ---- System stats in header ---- */
+.system-stats {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  white-space: nowrap;
+}
+
+.system-stats .stat-sep {
+  opacity: 0.4;
+}
+
+/* ---- Tier badge improvements ---- */
+.tier-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 10px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.tier-badge-1 {
+  background: color-mix(in srgb, var(--tier-1) 15%, transparent);
+  color: var(--tier-1);
+  border: 1px solid color-mix(in srgb, var(--tier-1) 30%, transparent);
+}
+
+.tier-badge-2 {
+  background: color-mix(in srgb, var(--tier-2) 15%, transparent);
+  color: var(--tier-2);
+  border: 1px solid color-mix(in srgb, var(--tier-2) 30%, transparent);
+}
+
+.tier-badge-3 {
+  background: color-mix(in srgb, var(--tier-3) 15%, transparent);
+  color: var(--tier-3);
+  border: 1px solid color-mix(in srgb, var(--tier-3) 30%, transparent);
+}
+
+.tier-badge-4 {
+  background: color-mix(in srgb, var(--tier-4) 15%, transparent);
+  color: var(--tier-4);
+  border: 1px solid color-mix(in srgb, var(--tier-4) 30%, transparent);
+}
+
+/* ---- Provider score input in tables ---- */
+.score-input {
+  width: 60px;
+  text-align: center;
+  padding: 0.2rem 0.4rem;
+  font-size: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.score-input:focus {
+  outline: none;
+  border-color: var(--accent);
 }

@@ -32,8 +32,12 @@ impl BrowserPool {
             return Ok(Arc::clone(browser));
         }
 
+        let headless = std::env::var("CHROME_HEADLESS")
+            .map(|v| v.to_lowercase() != "false")
+            .unwrap_or(true);
+
         let config = StealthConfig {
-            headless: true,
+            headless,
             // patch_binary modifies the Chrome binary on disk (~400 MB copy).
             // Disabled to avoid issues in environments with read-only Chrome installs.
             // eoka's CDP command filtering provides substantial evasion without it.

@@ -6,7 +6,8 @@ use thiserror::Error;
 use crate::db::provider::MangaProvider;
 use crate::db::task::TaskType;
 use crate::db::{
-    chapter as db_chapter, provider as db_provider, settings as db_settings, task as db_task,
+    chapter as db_chapter, provider as db_provider, provider_scores as db_scores,
+    settings as db_settings, task as db_task,
 };
 use crate::manga::manga::{DownloadStatus, Manga};
 use crate::scraper::{Provider, ProviderRegistry, ScraperCtx};
@@ -81,8 +82,19 @@ pub async fn scan_manga(
         manga.metadata.title, search_titles
     );
 
+    let globally_disabled = db_scores::get_globally_disabled(pool).await?;
+
     // For every provider...
     for provider in registry.all() {
+        // Skip globally disabled providers.
+        if globally_disabled.contains(provider.name()) {
+            debug!(
+                "[scan] {} is globally disabled, skipping search.",
+                provider.name()
+            );
+            continue;
+        }
+
         // Skip providers that have already searched for the series.
         if db_provider::has_url(pool, manga.id, provider.name()).await? {
             debug!(
@@ -200,9 +212,14 @@ async fn scrape_known_providers(
     ctx: &ScraperCtx,
     manga: &Manga,
 ) -> Result<ScanResult, ScanError> {
+    let globally_disabled = db_scores::get_globally_disabled(pool).await?;
+
     // Now lets start scraping chapter lists!
     let all_entries = db_provider::get_all_for_manga(pool, manga.id).await?;
-    let provider_entries: Vec<_> = all_entries.into_iter().filter(|e| e.found()).collect();
+    let provider_entries: Vec<_> = all_entries
+        .into_iter()
+        .filter(|e| e.found() && !globally_disabled.contains(&e.provider_name))
+        .collect();
     let mut total_new = 0usize;
     // UUIDs of newly inserted Chapters rows (for auto-download candidates).
     let mut all_new_ids: std::collections::HashSet<uuid::Uuid> = std::collections::HashSet::new();
@@ -269,7 +286,17 @@ async fn scrape_known_providers(
     // --- Phase 3: CanonicalChapters ---
     let trusted_groups = db_provider::get_trusted_groups(pool).await?;
     let preferred_language = db_settings::get(pool, "preferred_language", "").await?;
-    db_chapter::update_canonical(pool, manga.id, &trusted_groups, &preferred_language).await?;
+    let yaml_defaults = registry.yaml_default_scores();
+    let provider_scores =
+        db_scores::load_effective_scores(pool, manga.id, &yaml_defaults).await?;
+    db_chapter::update_canonical(
+        pool,
+        manga.id,
+        &trusted_groups,
+        &preferred_language,
+        &provider_scores,
+    )
+    .await?;
 
     // --- Auto-download new chapters for monitored manga ---
     if !all_new_ids.is_empty() {
