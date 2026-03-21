@@ -8,6 +8,7 @@ use rocket::fs::FileServer;
 mod api;
 mod db;
 mod http;
+mod importer;
 mod library;
 mod manga;
 mod scheduler;

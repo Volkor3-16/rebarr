@@ -2,6 +2,14 @@
 
 This a informal changelog so i can keep track of what im doing.
 
+## 2026-03-21
+
+- Scandisk will mark deleted chapters as missing again
+    - Any chapters marked as 'Local' will be removed completely, since they're not automatically grabbed by the system.
+- Added Bulk chapter importing
+- Rewrote Comicinfo.xml, now includes internal rebarr metadata for sharing and reimport later.
+- Fixed up a few pain points I had with the frontend (tooltips and such)
+
 ## 2026-03-19
 
 - Scandisk actually now scans the disk and flags already-downloaded chapters as downloaded.

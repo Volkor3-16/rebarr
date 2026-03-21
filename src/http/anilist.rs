@@ -1,5 +1,5 @@
 use anilist_moe::{AniListClient, AniListError, enums::media::MediaFormat};
-use log::debug;
+use log::{debug, info};
 
 use crate::manga::manga::Manga;
 
@@ -40,7 +40,6 @@ impl ALClient {
     }
 
     /// Converts search results Media type into Manga Struct objects
-    /// BUG: Anilist_Moe seems to only check the MediaType and not MediaFormat, so it sometimes returns Light Novels
     pub async fn search_manga_as_manga(&self, title: &str) -> Result<Vec<Manga>, AniListError> {
         let page = self.search_manga(title).await?;
         Ok(page

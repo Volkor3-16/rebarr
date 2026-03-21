@@ -46,6 +46,11 @@ pub fn logs_page() -> RawHtml<String> {
     serve_index()
 }
 
+#[get("/import")]
+pub fn import_page() -> RawHtml<String> {
+    serve_index()
+}
+
 // ---------------------------------------------------------------------------
 // Route list
 // ---------------------------------------------------------------------------
@@ -58,6 +63,7 @@ pub fn routes() -> Vec<rocket::Route> {
         search_page,
         settings_page,
         queue_page,
-        logs_page
+        logs_page,
+        import_page
     ]
 }

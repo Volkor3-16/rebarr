@@ -12,6 +12,7 @@ pub enum TaskType {
     /// Build a full chapter list from all enabled providers
     BuildFullChapterList,
     /// Refresh metadata from the source (AniList, local, etc.)
+    /// TODO: This also creates/updates ComicInfo.xml files
     RefreshMetadata,
     /// Check for new chapters on enabled providers
     CheckNewChapter,

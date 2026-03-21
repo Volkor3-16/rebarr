@@ -15,63 +15,35 @@ I'll remove this when I've got the first public release out, this is just a quic
 - Full test of new chapter refresh -> chapter downloading
     - 2026-03-20: It refreshed automatically when my pc came out of sleep! noice!
 - Full test of chapter upgrading from site
-- Providers that break can sometimes download a empty image and make a corrupt cbz file (all manga)
-    - We already know how many pages a chapter /should/ have, we should compare against that to check for potentially failed downloads
-- Deleting a file on disk, then running a ScanDisk doesn't flag the file as missing.
-- Scraper is bad.
-    - We have no way to see download status on a per-page level, as it happens (for frontend download bar)
-    - Provider schema is a little bad.
-        - We can't just hit an API
-        - We can't handle GraphQL stuff properly
-        - The only way to parse browser fuckery is injecting javascript and building a new DOM with what to scrape.
-    - It should natively support all of these things, and still be a nice fairly simple format that non-developers could stumble into getting to work.
-    - It should handle failures gracefully and in a nice way, logging the type (cloudflare/page error/scrape error/whatever) for us to use in the frontend
+- Chromium instances time out, and then we spawn another one, they stay open after we exit rebarr
+    - Fix: use docker lmao
 
-### Frontend
+### Providers
 
-#### Downloaded Chapters UI
-- Highlight downloaded chapters with a subtle background color on their row (instead of just a small green icon like now)
-- Display the downloaded version's metadata in the chapter list (title, scanlator, etc)
-- (when theres a chapter downloaded) Store all available online versions as "variants" - accessed via expand/collapse on each chapter row
+I think we need to rework how pages are downloaded:
+- Downloads report status by page (to show progress in frontend)
+- We should use proper referrers and all the good stuff we need to bypass hotlinking/cloudflare protections
+- We shouldn't let the browser disconnect and crash? Do we start a new browser session on each task, and close it during completion?
 
-#### Series Page Improvements
-- Add tooltips to all interactive elements (provider names, scanlator groups, chapter info)
-- Display scanlator group as a styled pill component
-- Improve score display (currently "basic" - needs better visualization)
-- Improve "+1 More" pill styling (indicates additional variants exist)
-- The 3-dot action menu already exists - ensure it has "Download" and "Extra" options
-
-#### Queue/Activity Page
-- Replace current queue page with fullscreen activity view in top bar
-- Stream live tracing/logs to this view
-- Implement multiple tabs: one per log channel (info, warn, error) or per task type
-
-#### Home Page Sorting
-- Implement multiple sort options, each with toggle between ascending/descending:
-  - Latest chapter (most recent chapter number)
-  - Most recent check (last_checked_at timestamp)
-  - First added (created_at timestamp)
-  - A-Z (alphabetical by title)
-  - Number of chapters (total from providers)
-  - Number of chapters downloaded (downloaded_count)
-
-#### System Info
-- Display memory usage and basic app stats in top bar next to activity icon
-
-#### Settings Page
-- it ugly af
+- [ ] Get Mangakakalot working
+- [ ] Get Mangago working
+- [ ] Get AllManga Working
+- [ ] Get MangaDex Working
 
 ## Features
 
 - You can add series to your library and download them (obviously)
-- We automatically look on **all**(available) sites and compare what they have, downloading only the best available.
-- You can monitor/unmonitor series from automatic download. Good for when you've already got a full set and don't need them to download.
+- We automatically look on **all**(available) sites and compare what they have, downloading only the best copy.
+- Downloaded chapters save all the metadata inside them, so if my awful code breaks something, you can rebuild (most of) the database from that. Also, any manga you share with another rebarr installation will have its metadata shared over. How handy!
+- You can monitor/unmonitor series from automatic download. Just like sonarr!
 - Uses anilist for metadata, saves it into the chapter itself for easy-importing and such.
 - New sites are just a .yaml with some html selectors (and maybe some javascript). No rust knowledge needed.
     - Hell half the providers were just me giving chatgpt the yaml schema and an example.
 - REST API, so someone with a workable knowledge of frontend design can implement their own (PRs welcome!)
 
 ### Minimum Viable Release
+
+This is all the stuff I haven't started working on yet, but will be in before a 0.1 release.
 
 #### New Database/User Wizard
 First-run modal that shows on fresh install. Saves `wizard_completed` flag to settings table when complete. Users can revisit from settings if needed.
@@ -94,31 +66,10 @@ Steps:
    - Repeat until all directories processed
 5. **Quick Tutorial**: Brief overview of UI
 
-#### Chapter Importing
-- User selects a directory containing manga files
-- Recursively scan for all .cbz files in directory and subdirectories
-- Parse ComicInfo.xml from each cbz for metadata (anilist_id, title, etc)
-- Use parsed metadata for automatic series matching (or prompt user)
-- Move and rename files to standard library/series/ directory structure
-- Same naming scheme as downloaded chapters
-
-#### Automatic Upgrade Path
-- Automatically re-download chapters when they upgrade to a higher tier
-- Tier order: Official > Trusted Scanlator > Scanlator > Unknown > Aggregator
-- Same-tier upgrades (e.g., LHTranslation → Comix) are ignored
-- Log all upgrades to activity log - do not prompt user
-- User can disable auto-upgrade in settings if desired
 
 #### Extended ComicInfo.xml Support
-Populate more fields from AniList (https://github.com/anansi-project/comicinfo/blob/main/schema/v2.0/ComicInfo.xsd):
-- Writer, Penciller, Inker, Colorist, Letterer (from AniList staff/studio data)
-- AgeRating (map from AniList rating)
-- Community Rating (from AniList score)
 
-This enables constructing full Manga struct from ComicInfo.xml in:
-- Series directory (series-level metadata)
-- Individual cbz files (chapter-level metadata)
-- Greatly simplifies the import wizard - can skip AniList lookup if ComicInfo exists
+- [ ] Add a new task to 'Fix metadata/comicinfo', which goes through all files in all libraries and checks the comicinfo, updating them when needed?
 
 ### Maximum Viable Release (in order of importance)
 
@@ -130,7 +81,7 @@ This is in addition to the above.
     - [ ] Any other sites can be listed here. It's good to not be stuck with a single metadata service.
 - [ ] Storage Backends
     - [ ] S3 Storage?
-    - I'm not sure what else we'd need.
+    - [ ] IPFS/decentralised 'provider'
 - [ ] A nice looking webui
     - [ ] Basic Auth
     - [ ] oauth/oidc/whatever fancy system (would link with komga emulation)
@@ -165,6 +116,7 @@ This is in addition to the above.
     - something else?
 - [ ] Anti-scraping prevention
     - 'random' useragent (pick a random one from the `n` most common UA's)
+    - Seriously how do they figure out im using a automated browser surely we can fix that
 - [ ] Tachiyomi/Mihon backup importer (Add libraries)
 - [ ] Various site list scrape + importer
 - [ ] Fallback mode? use single provider as grand source of metadata?
@@ -196,19 +148,5 @@ for testing a provider, use
 
 ## Thanks
 
-- My mates claude subscription that i'm borrowing lmfao.
-
-## Copyright Holders
-
-If you are a copyright holder and don't like this, perhaps you should have thought about that before you and ur cunty mates decided to shut down the only place (legal or illegal) where you can find your content. Making it harder for people to find out about your content isn't a good way to make money. (oh and pissing off everyone in the community).
-
-Sure, you can shut me down and get me to stop my work, but honestly this software isn't even that good, and you're not going to **stop** piracy.
-
-### The fuck you list
-
-This is a bit of a old-man-screams-at-cloud thing, but it's nice to vent :)
-
-- Kakao Entertainment.  
-  Thanks for killing Tachiyomi you cunts, you guys gonna try and get firefox shut down for enabling access to piracy sites?  
-  It's really cool how you exist to leech money from the artists, and then you cancel their series and their revenue sharing. ***"At this point, I’d rather you pirate Sound of Bread than give Tapas a single cent."*** - author of Sound of Bread  
-  It's also really cool how you force artists to work until they miscarry. total normal ethical behaviour.  
+- domacikolaci, with his nice Claude subscription that made this project so much easier.
+- Kakao Entertainment (Thanks for being so shit I made this out of spite.)

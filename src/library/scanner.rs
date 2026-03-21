@@ -1,5 +1,6 @@
 use log::{info, warn};
 use sqlx::SqlitePool;
+use std::collections::HashSet;
 use uuid::Uuid;
 
 use crate::db::{chapter as db_chapter, library as db_library, manga as db_manga};
@@ -39,6 +40,7 @@ pub async fn scan_existing_chapters(pool: &SqlitePool, manga_id: Uuid) -> Result
     };
 
     let mut found = 0u32;
+    let mut found_ids: HashSet<Uuid> = HashSet::new();
     for entry in entries.flatten() {
         let fname = entry.file_name();
         let name = fname.to_string_lossy();
@@ -78,70 +80,177 @@ pub async fn scan_existing_chapters(pool: &SqlitePool, manga_id: Uuid) -> Result
 
         let cbz_info = comicinfo::read_cbz_comicinfo(&entry.path());
 
-        match db_chapter::get_canonical_by_number(pool, manga_id, chapter_base, chapter_variant)
-            .await
-        {
-            Ok(Some(ch)) => {
-                if ch.download_status != DownloadStatus::Downloaded {
-                    db_chapter::set_status(pool, ch.id, DownloadStatus::Downloaded, downloaded_at)
+        if let Some(ref ci) = cbz_info {
+            // ComicInfo present — use it as the authoritative source for chapter identity
+            // and metadata, regardless of what canonical chapter exists in the DB.
+            let language = ci.language.clone().unwrap_or_else(|| "EN".to_owned());
+            let scanlator_group = ci.scanlator.clone();
+            let provider_name = ci.provider_name.clone();
+            let chapter_url = ci.chapter_url.clone();
+
+            // For CBZs with JSON Notes (indicated by a stored chapter UUID), use the
+            // released_at from JSON directly — null means the provider didn't give a date.
+            // For old CBZs without JSON Notes, fall back to the XML <Year> tag.
+            let released_at = ci
+                .released_at
+                .and_then(|ts| chrono::DateTime::from_timestamp(ts, 0))
+                .or_else(|| {
+                    if ci.chapter_uuid.is_some() {
+                        return None; // JSON Notes present — respect null released_at
+                    }
+                    ci.release_year
+                        .and_then(|y| chrono::NaiveDate::from_ymd_opt(y, 1, 1))
+                        .and_then(|d| d.and_hms_opt(0, 0, 0))
+                        .map(|dt| dt.and_utc())
+                });
+
+            let ci_downloaded_at = ci
+                .downloaded_at
+                .and_then(|ts| chrono::DateTime::from_timestamp(ts, 0))
+                .or(downloaded_at);
+
+            let scraped_at = ci
+                .scraped_at
+                .and_then(|ts| chrono::DateTime::from_timestamp(ts, 0));
+
+            // Prefer UUID stored in JSON Notes for round-trip fidelity
+            let id = ci.chapter_uuid.unwrap_or_else(|| {
+                db_chapter::chapter_uuid(
+                    manga_id,
+                    chapter_base,
+                    chapter_variant,
+                    &language,
+                    scanlator_group.as_deref(),
+                    provider_name.as_deref(),
+                )
+            });
+
+            let chapter = Chapter {
+                id,
+                manga_id,
+                chapter_base,
+                chapter_variant,
+                is_extra: false,
+                title: ci.chapter_title.clone(),
+                language,
+                scanlator_group,
+                provider_name,
+                chapter_url,
+                download_status: DownloadStatus::Downloaded,
+                released_at,
+                downloaded_at: ci_downloaded_at,
+                scraped_at,
+                file_size_bytes: file_size,
+            };
+
+            db_chapter::insert(pool, &chapter)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            // set_status handles both the newly inserted row and the case where
+            // INSERT OR IGNORE skipped because the row already existed.
+            db_chapter::set_status(pool, chapter.id, DownloadStatus::Downloaded, ci_downloaded_at)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            if let Some(size) = file_size {
+                let _ = db_chapter::set_file_size(pool, chapter.id, size).await;
+            }
+            found_ids.insert(chapter.id);
+            found += 1;
+        } else {
+            // No ComicInfo — fall back to canonical lookup.
+            match db_chapter::get_canonical_by_number(pool, manga_id, chapter_base, chapter_variant)
+                .await
+            {
+                Ok(Some(ch)) => {
+                    if ch.download_status != DownloadStatus::Downloaded {
+                        db_chapter::set_status(
+                            pool,
+                            ch.id,
+                            DownloadStatus::Downloaded,
+                            downloaded_at,
+                        )
                         .await
                         .map_err(|e| e.to_string())?;
-                    found += 1;
+                        found += 1;
+                    }
+                    if let Some(size) = file_size {
+                        let _ = db_chapter::set_file_size(pool, ch.id, size).await;
+                    }
                 }
-                // Always refresh file size (may not have been recorded before)
-                if let Some(size) = file_size {
-                    let _ = db_chapter::set_file_size(pool, ch.id, size).await;
-                }
-            }
-            Ok(None) => {
-                // No canonical entry — insert a row marked as Downloaded (provider_name = NULL),
-                // enriched with metadata from the embedded ComicInfo.xml when available.
-                let released_at = cbz_info
-                    .as_ref()
-                    .and_then(|i| i.release_year)
-                    .and_then(|y| chrono::NaiveDate::from_ymd_opt(y, 1, 1))
-                    .and_then(|d| d.and_hms_opt(0, 0, 0))
-                    .map(|dt| dt.and_utc());
-                let language = cbz_info
-                    .as_ref()
-                    .and_then(|i| i.language.clone())
-                    .unwrap_or_else(|| "EN".to_owned());
-                let scanlator_group = cbz_info.as_ref().and_then(|i| i.scanlator.clone());
-                let provider_name = cbz_info.as_ref().and_then(|i| i.provider_name.clone());
-                let chapter = Chapter {
-                    id: db_chapter::chapter_uuid(
+                Ok(None) => {
+                    // No canonical and no ComicInfo — insert a minimal placeholder.
+                    let language = "EN".to_owned();
+                    let id = db_chapter::chapter_uuid(
                         manga_id,
                         chapter_base,
                         chapter_variant,
                         &language,
-                        scanlator_group.as_deref(),
-                        provider_name.as_deref(),
-                    ),
-                    manga_id,
-                    chapter_base,
-                    chapter_variant,
-                    is_extra: false,
-                    title: cbz_info.as_ref().and_then(|i| i.chapter_title.clone()),
-                    language,
-                    scanlator_group,
-                    // Recover provider from embedded ComicInfo Notes
-                    provider_name,
-                    chapter_url: None,
-                    download_status: DownloadStatus::Downloaded,
-                    released_at,
-                    downloaded_at,
-                    scraped_at: None,
-                    file_size_bytes: file_size,
-                };
-                db_chapter::insert(pool, &chapter)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                found += 1;
-            }
-            Err(e) => {
-                warn!("[scanner] DB error for chapter {num_str}: {e}");
+                        None,
+                        None,
+                    );
+                    let chapter = Chapter {
+                        id,
+                        manga_id,
+                        chapter_base,
+                        chapter_variant,
+                        is_extra: false,
+                        title: None,
+                        language,
+                        scanlator_group: None,
+                        provider_name: None,
+                        chapter_url: None,
+                        download_status: DownloadStatus::Downloaded,
+                        released_at: None,
+                        downloaded_at,
+                        scraped_at: None,
+                        file_size_bytes: file_size,
+                    };
+                    db_chapter::insert(pool, &chapter)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    found += 1;
+                }
+                Err(e) => {
+                    warn!("[scanner] DB error for chapter {num_str}: {e}");
+                }
             }
         }
+    }
+
+    // For previously-Downloaded chapters whose files no longer exist:
+    // - Local/unknown-provider chapters are deleted (they won't be recreated by any provider).
+    // - Provider-backed chapters are marked Missing (they'll resurface on the next scan).
+    let downloaded = db_chapter::get_downloaded(pool, manga_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut marked_missing = 0u32;
+    let mut deleted = 0u32;
+    for (chapter_id, provider_name) in downloaded {
+        if found_ids.contains(&chapter_id) {
+            continue;
+        }
+        let is_local = provider_name
+            .as_deref()
+            .map_or(true, |p| p.eq_ignore_ascii_case("local"));
+        if is_local {
+            db_chapter::delete(pool, chapter_id)
+                .await
+                .map_err(|e| e.to_string())?;
+            deleted += 1;
+        } else {
+            db_chapter::set_status(pool, chapter_id, DownloadStatus::Missing, None)
+                .await
+                .map_err(|e| e.to_string())?;
+            marked_missing += 1;
+        }
+    }
+    if marked_missing > 0 || deleted > 0 {
+        info!(
+            "[scanner] Disk scan for '{}': {marked_missing} chapter(s) marked Missing, {deleted} local chapter(s) deleted.",
+            manga.metadata.title
+        );
     }
 
     // Recompute canonical chapters (disk-scanned files win with no trusted groups needed)

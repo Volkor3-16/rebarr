@@ -42,6 +42,8 @@ struct MangaRow {
     synopsis: Option<String>,
     publishing_status: String,
     start_year: Option<i32>,
+    start_month: Option<i32>,
+    start_day: Option<i32>,
     end_year: Option<i32>,
     chapter_count: Option<i64>,
     downloaded_count: Option<i64>,
@@ -51,6 +53,16 @@ struct MangaRow {
     metadata_updated_at: i64,
     monitored: bool,
     last_checked_at: Option<i64>,
+    // ComicInfo fields
+    writer: Option<String>,
+    penciller: Option<String>,
+    inker: Option<String>,
+    colorist: Option<String>,
+    letterer: Option<String>,
+    editor: Option<String>,
+    translator: Option<String>,
+    genre: Option<String>,
+    community_rating: Option<i32>,
 }
 
 /// Fetch tags for a single manga.
@@ -135,7 +147,19 @@ fn manga_from_parts(row: MangaRow, tags: Vec<String>) -> Result<Manga, sqlx::Err
             publishing_status,
             tags,
             start_year: row.start_year,
+            start_month: row.start_month,
+            start_day: row.start_day,
             end_year: row.end_year,
+            // ComicInfo fields - now populated from DB
+            writer: deserialize_string_vector(row.writer),
+            penciller: deserialize_string_vector(row.penciller),
+            inker: deserialize_string_vector(row.inker),
+            colorist: deserialize_string_vector(row.colorist),
+            letterer: deserialize_string_vector(row.letterer),
+            editor: deserialize_string_vector(row.editor),
+            translator: deserialize_string_vector(row.translator),
+            genre: row.genre,
+            community_rating: row.community_rating,
         },
     })
 }
@@ -169,6 +193,16 @@ fn serialize_other_titles(titles: &Option<Vec<Synonym>>) -> Option<String> {
         .map(|v| serde_json::to_string(v).unwrap_or_default())
 }
 
+/// Serialize a vector of strings to JSON for storage in DB
+fn serialize_string_vector(vec: &Option<Vec<String>>) -> Option<String> {
+    vec.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default())
+}
+
+/// Deserialize a JSON string to a vector of strings
+fn deserialize_string_vector(json: Option<String>) -> Option<Vec<String>> {
+    json.and_then(|s| serde_json::from_str(&s).ok())
+}
+
 /// Insert a manga and all its tags in a single transaction.
 pub async fn insert(pool: &SqlitePool, manga: &Manga) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
@@ -188,13 +222,17 @@ pub async fn insert(pool: &SqlitePool, manga: &Manga) -> Result<(), sqlx::Error>
         r#"INSERT INTO Manga (
             uuid, library_id, anilist_id, mal_id, relative_path,
             title, other_titles, synopsis, publishing_status,
-            start_year, end_year, chapter_count, downloaded_count,
-            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at
+            start_year, start_month, start_day, end_year, chapter_count, downloaded_count,
+            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at,
+            writer, penciller, inker, colorist, letterer, editor, translator,
+            genre, community_rating
         ) VALUES (
             ?, ?, ?, ?, ?,
             ?, ?, ?, ?,
-            ?, ?, ?, ?,
-            ?, ?, ?, ?, ?
+            ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?,
+            ?, ?
         )"#,
     )
     .bind(&id)
@@ -207,6 +245,8 @@ pub async fn insert(pool: &SqlitePool, manga: &Manga) -> Result<(), sqlx::Error>
     .bind(&manga.metadata.synopsis)
     .bind(publishing_status)
     .bind(manga.metadata.start_year)
+    .bind(manga.metadata.start_month)
+    .bind(manga.metadata.start_day)
     .bind(manga.metadata.end_year)
     .bind(chapter_count)
     .bind(downloaded_count)
@@ -215,6 +255,15 @@ pub async fn insert(pool: &SqlitePool, manga: &Manga) -> Result<(), sqlx::Error>
     .bind(manga.monitored as i64)
     .bind(manga.created_at)
     .bind(manga.metadata_updated_at)
+    .bind(serialize_string_vector(&manga.metadata.writer))
+    .bind(serialize_string_vector(&manga.metadata.penciller))
+    .bind(serialize_string_vector(&manga.metadata.inker))
+    .bind(serialize_string_vector(&manga.metadata.colorist))
+    .bind(serialize_string_vector(&manga.metadata.letterer))
+    .bind(serialize_string_vector(&manga.metadata.editor))
+    .bind(serialize_string_vector(&manga.metadata.translator))
+    .bind(&manga.metadata.genre)
+    .bind(manga.metadata.community_rating)
     .execute(&mut *tx)
     .await?;
 
@@ -237,8 +286,10 @@ pub async fn get_by_id(pool: &SqlitePool, id: Uuid) -> Result<Option<Manga>, sql
         r#"SELECT
             uuid, library_id, anilist_id, mal_id, relative_path,
             title, other_titles, synopsis, publishing_status,
-            start_year, end_year, chapter_count, downloaded_count,
-            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at
+            start_year, start_month, start_day, end_year, chapter_count, downloaded_count,
+            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at,
+            writer, penciller, inker, colorist, letterer, editor, translator,
+            genre, community_rating
         FROM Manga WHERE uuid = ?"#,
     )
     .bind(&id_str)
@@ -266,8 +317,10 @@ pub async fn get_all_for_library(
         r#"SELECT
             uuid, library_id, anilist_id, mal_id, relative_path,
             title, other_titles, synopsis, publishing_status,
-            start_year, end_year, chapter_count, downloaded_count,
-            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at
+            start_year, start_month, start_day, end_year, chapter_count, downloaded_count,
+            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at,
+            writer, penciller, inker, colorist, letterer, editor, translator,
+            genre, community_rating
         FROM Manga WHERE library_id = ? ORDER BY title ASC"#,
     )
     .bind(&lib_str)
@@ -305,8 +358,10 @@ pub async fn exists_by_external_ids(
         r#"SELECT
             uuid, library_id, anilist_id, mal_id, relative_path,
             title, other_titles, synopsis, publishing_status,
-            start_year, end_year, chapter_count, downloaded_count,
-            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at
+            start_year, start_month, start_day, end_year, chapter_count, downloaded_count,
+            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at,
+            writer, penciller, inker, colorist, letterer, editor, translator,
+            genre, community_rating
         FROM Manga 
         WHERE library_id = ? 
           AND (anilist_id = ? OR mal_id = ?)"#,
@@ -324,6 +379,67 @@ pub async fn exists_by_external_ids(
             manga_from_parts(row, tags).map(Some)
         }
     }
+}
+
+/// Fetch the first manga with the given AniList ID, across all libraries.
+pub async fn get_by_anilist_id(pool: &SqlitePool, anilist_id: u32) -> Result<Option<Manga>, sqlx::Error> {
+    let al_id = anilist_id as i64;
+    let row = sqlx::query_as::<_, MangaRow>(
+        r#"SELECT
+            uuid, library_id, anilist_id, mal_id, relative_path,
+            title, other_titles, synopsis, publishing_status,
+            start_year, start_month, start_day, end_year, chapter_count, downloaded_count,
+            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at,
+            writer, penciller, inker, colorist, letterer, editor, translator,
+            genre, community_rating
+        FROM Manga WHERE anilist_id = ? LIMIT 1"#,
+    )
+    .bind(al_id)
+    .fetch_optional(pool)
+    .await?;
+
+    match row {
+        None => Ok(None),
+        Some(row) => {
+            let tags = fetch_tags(pool, &row.uuid).await?;
+            manga_from_parts(row, tags).map(Some)
+        }
+    }
+}
+
+/// Lightweight manga summary used for import-time title matching.
+pub struct MangaSummary {
+    pub id: Uuid,
+    pub title: String,
+    pub anilist_id: Option<u32>,
+}
+
+#[derive(sqlx::FromRow)]
+struct MangaSummaryRow {
+    uuid: String,
+    title: String,
+    anilist_id: Option<i64>,
+}
+
+/// Fetch all manga titles across all libraries (lightweight, no tags).
+/// Used by the importer to do fuzzy title matching without loading full manga structs.
+pub async fn get_all_titles(pool: &SqlitePool) -> Result<Vec<MangaSummary>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, MangaSummaryRow>(
+        "SELECT uuid, title, anilist_id FROM Manga ORDER BY title ASC",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let id = Uuid::parse_str(&row.uuid).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
+        out.push(MangaSummary {
+            id,
+            title: row.title,
+            anilist_id: row.anilist_id.map(|v| v as u32),
+        });
+    }
+    Ok(out)
 }
 
 pub async fn delete(pool: &SqlitePool, id: Uuid) -> Result<(), sqlx::Error> {
@@ -401,8 +517,10 @@ pub async fn get_due_for_check(
         r#"SELECT
             uuid, library_id, anilist_id, mal_id, relative_path,
             title, other_titles, synopsis, publishing_status,
-            start_year, end_year, chapter_count, downloaded_count,
-            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at
+            start_year, start_month, start_day, end_year, chapter_count, downloaded_count,
+            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at,
+            writer, penciller, inker, colorist, letterer, editor, translator,
+            genre, community_rating
         FROM Manga 
         WHERE monitored = 1 AND (last_checked_at IS NULL OR last_checked_at < ?)
         ORDER BY last_checked_at ASC NULLS FIRST"#
@@ -433,9 +551,12 @@ pub async fn update_metadata(pool: &SqlitePool, manga: &Manga) -> Result<(), sql
     sqlx::query(
         r#"UPDATE Manga SET
             title = ?, other_titles = ?, synopsis = ?,
-            publishing_status = ?, start_year = ?, end_year = ?,
+            publishing_status = ?, start_year = ?, start_month = ?, start_day = ?, end_year = ?,
             metadata_source = ?, thumbnail_url = ?,
             anilist_id = ?, mal_id = ?,
+            writer = ?, penciller = ?, inker = ?, colorist = ?, letterer = ?,
+            editor = ?, translator = ?, genre = ?,
+            community_rating = ?,
             metadata_updated_at = ?
          WHERE uuid = ?"#,
     )
@@ -444,11 +565,22 @@ pub async fn update_metadata(pool: &SqlitePool, manga: &Manga) -> Result<(), sql
     .bind(&manga.metadata.synopsis)
     .bind(publishing_status)
     .bind(manga.metadata.start_year)
+    .bind(manga.metadata.start_month)
+    .bind(manga.metadata.start_day)
     .bind(manga.metadata.end_year)
     .bind(metadata_source)
     .bind(manga.thumbnail_url.as_deref())
     .bind(manga.anilist_id.map(|v| v as i64))
     .bind(manga.mal_id.map(|v| v as i64))
+    .bind(serialize_string_vector(&manga.metadata.writer))
+    .bind(serialize_string_vector(&manga.metadata.penciller))
+    .bind(serialize_string_vector(&manga.metadata.inker))
+    .bind(serialize_string_vector(&manga.metadata.colorist))
+    .bind(serialize_string_vector(&manga.metadata.letterer))
+    .bind(serialize_string_vector(&manga.metadata.editor))
+    .bind(serialize_string_vector(&manga.metadata.translator))
+    .bind(&manga.metadata.genre)
+    .bind(manga.metadata.community_rating)
     .bind(manga.metadata_updated_at)
     .bind(&id)
     .execute(&mut *tx)
@@ -476,8 +608,10 @@ pub async fn get_all_monitored(pool: &SqlitePool) -> Result<Vec<Manga>, sqlx::Er
         r#"SELECT
             uuid, library_id, anilist_id, mal_id, relative_path,
             title, other_titles, synopsis, publishing_status,
-            start_year, end_year, chapter_count, downloaded_count,
-            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at
+            start_year, start_month, start_day, end_year, chapter_count, downloaded_count,
+            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at,
+            writer, penciller, inker, colorist, letterer, editor, translator,
+            genre, community_rating
         FROM Manga WHERE monitored = 1 ORDER BY title ASC"#,
     )
     .fetch_all(pool)

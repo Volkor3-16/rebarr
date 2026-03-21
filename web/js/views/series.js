@@ -222,13 +222,13 @@ function chapterRow(mangaId, ch, isVariant = false, altCount = 0, extraActions =
   const sourceTitle = sourceUrl ? ` title="${escape(sourceUrl)}"` : '';
   const sourceName = ch.provider_name ? escape(ch.provider_name) : (ch.scanlator_group ? escape(ch.scanlator_group) : '—');
   
-  // Show +N more below provider name when there are alternatives (click to expand)
+  // Show +N badge inline next to provider name when there are alternatives
   const expandId = `${base}-${variant}`;
-  const altCountHtml = altCount > 0 
-    ? `<div class="alt-count-bubble" onclick="event.stopPropagation(); toggleChapterExpand('ch-${expandId}', '${expandId}')" title="Click to see alternatives">+${altCount} More</div>` 
+  const altCountHtml = altCount > 0
+    ? `<span class="alt-count-bubble" onclick="event.stopPropagation(); toggleChapterExpand('ch-${expandId}', '${expandId}')" title="Click to see ${altCount} alternative${altCount === 1 ? '' : 's'}">+${altCount}</span>`
     : '';
-  
-  // Provider name (as link) with alt count bubble on new line below
+
+  // Provider name (as link) with alt count badge inline
   const sourceHtml = sourceUrl
     ? `<div class="provider-cell"><a href="${escape(sourceUrl)}" target="_blank" class="ch-source"${sourceTitle}>${sourceName}</a>${altCountHtml}</div>`
     : `<div class="provider-cell"><span class="ch-source">${sourceName}</span>${altCountHtml}</div>`;
@@ -250,19 +250,15 @@ function chapterRow(mangaId, ch, isVariant = false, altCount = 0, extraActions =
     ? `<input type="checkbox" class="ch-checkbox" data-base="${base}" data-variant="${variant}">`
     : '';
 
-  // Scanlator bubble with +/- actions
+  // Scanlator bubble — click anywhere to toggle trusted state
   const scanlatorName = ch.scanlator_group || '—';
   const isTrusted = trustedGroupsCache.includes(scanlatorName);
   const trustedIndicator = isTrusted ? '<span class="trusted-indicator" title="Trusted scanlator"></span>' : '';
-  const addTrustedBtn = !isTrusted && scanlatorName !== '—' 
-    ? `<button class="add-trusted" onclick="event.stopPropagation(); addTrustedFromBubble('${escape(scanlatorName)}')" title="Add to trusted">+</button>` 
-    : '';
-  const removeTrustedBtn = isTrusted 
-    ? `<button class="remove-trusted" onclick="event.stopPropagation(); removeTrustedFromBubble('${escape(scanlatorName)}')" title="Remove from trusted">−</button>` 
-    : '';
-  
-  const scanlatorHtml = scanlatorName !== '—' 
-    ? `<span class="scanlator-bubble" title="Click to see scanlator actions">${trustedIndicator}${escape(scanlatorName)}<span class="actions">${addTrustedBtn}${removeTrustedBtn}</span></span>`
+  const trustedClass = isTrusted ? ' scanlator-trusted' : '';
+  const trustedTitle = isTrusted ? 'Trusted — click to remove from trusted' : 'Click to add to trusted';
+
+  const scanlatorHtml = scanlatorName !== '—'
+    ? `<span class="scanlator-bubble${trustedClass}" title="${trustedTitle}" onclick="event.stopPropagation(); ${isTrusted ? `removeTrustedFromBubble('${escape(scanlatorName)}')` : `addTrustedFromBubble('${escape(scanlatorName)}')`}">${trustedIndicator}${escape(scanlatorName)}</span>`
     : '—';
 
   // Action menu (three-dot dropdown)
@@ -583,7 +579,7 @@ export async function loadChapters(mangaId) {
               <th style="width:30px"><input type="checkbox" title="Select all" onchange="toggleSelectAll(this.checked)"></th>
               <th>Chapter </th>
               <th>Scanlator</th>
-              <th>Score</th>
+              <th title="Scanlator tier: Official (verified release), Trusted (added by you), Unknown, or No Group">Score</th>
               <th>Provider</th>
               <th><iconify-icon icon="mdi:tray-download" width="24" height="24"></iconify-icon></th>
               <th>Released</th>
@@ -840,7 +836,7 @@ function renderFilteredChapters(filteredChapters) {
               <th style="width:30px"><input type="checkbox" title="Select all" onchange="toggleSelectAll(this.checked)"></th>
               <th>Chapter </th>
               <th>Scanlator</th>
-              <th>Score</th>
+              <th title="Scanlator tier: Official (verified release), Trusted (added by you), Unknown, or No Group">Score</th>
               <th>Provider</th>
               <th><iconify-icon icon="mdi:tray-download" width="24" height="24"></iconify-icon></th>
               <th>Released</th>
@@ -1287,12 +1283,9 @@ function renderSynonyms(synonyms) {
       title = isManual ? 'Manual synonym - always used for search' : 'AniList synonym - click to hide from search';
     }
     
-    const badgeClass = isHidden ? 'badge badge-neutral opacity-50 line-through' : 'badge badge-neutral';
-    
-    return `<span class="${badgeClass}" title="${title}">
-      <button class="synonym-remove btn btn-xs btn-ghost" style="padding:0;margin-right:4px;min-height:auto;line-height:1" data-title="${escape(syn.title)}" data-manual="${isManual}" data-hidden="${isHidden}" title="${isHidden ? 'Show in search' : 'Hide from search'}">×</button>
-      ${escape(syn.title)}
-    </span>`;
+    const badgeClass = isHidden ? 'badge badge-neutral opacity-50 line-through synonym-pill' : 'badge badge-neutral synonym-pill';
+
+    return `<span class="${badgeClass}" title="${title}" data-title="${escape(syn.title)}" data-manual="${isManual}" data-hidden="${isHidden}">${escape(syn.title)}</span>`;
   }).join(' ');
 }
 
@@ -1316,8 +1309,7 @@ window.addSynonym = async function() {
 // Remove a synonym (unhide for AniList if hidden, delete for Manual)
 window.removeSynonym = async function(title, isManual, isHidden) {
   if (isHidden) {
-    // Already hidden - unhide it (use remove action which un-hides AniList synonyms)
-    if (!confirm(`Show synonym "${title}" in search?`)) return;
+    // Already hidden - unhide it
     try {
       await mangaApi.updateSynonyms(currentMangaId, {
         remove: [title]
@@ -1325,10 +1317,10 @@ window.removeSynonym = async function(title, isManual, isHidden) {
       showToast('Synonym shown in search');
     } catch(e) {
       showToast('Error showing synonym: ' + e.message, 'error');
+      return;
     }
   } else {
-    // Not hidden - hide it
-    if (!confirm(`Hide synonym "${title}" from search?`)) return;
+    // Not hidden - hide/remove it
     try {
       if (isManual) {
         // For manual synonyms, remove entirely
@@ -1345,6 +1337,7 @@ window.removeSynonym = async function(title, isManual, isHidden) {
       }
     } catch(e) {
       showToast('Error hiding synonym: ' + e.message, 'error');
+      return;
     }
   }
   // Reload to show updated synonyms
@@ -1353,16 +1346,16 @@ window.removeSynonym = async function(title, isManual, isHidden) {
 
 window.viewSeries = viewSeries;
 
-// Event delegation for synonym buttons
+// Event delegation for synonym pills — click anywhere on pill to toggle
 document.addEventListener('click', (e) => {
-  const btn = e.target.closest('.synonym-remove');
-  if (!btn) return;
-  
+  const pill = e.target.closest('.synonym-pill');
+  if (!pill) return;
+
   e.stopPropagation();
-  const title = btn.dataset.title;
-  const isManual = btn.dataset.manual === 'true';
-  const isHidden = btn.dataset.hidden === 'true';
-  
+  const title = pill.dataset.title;
+  const isManual = pill.dataset.manual === 'true';
+  const isHidden = pill.dataset.hidden === 'true';
+
   if (title && currentMangaId) {
     window.removeSynonym(title, isManual, isHidden);
   }

@@ -3,6 +3,7 @@
 pub mod api;
 pub mod db;
 pub mod http;
+pub mod importer;
 pub mod library;
 pub mod manga;
 pub mod scheduler;

@@ -109,6 +109,12 @@ export const system = {
   info: () => get('/api/system'),
 };
 
+// Import API
+export const importApi = {
+  scan: (source_dir) => post('/api/import/scan', { source_dir }),
+  execute: (imports) => post('/api/import/execute', { imports }),
+};
+
 // Provider scores API
 export const providerScores = {
   getGlobal: (name) => get(`/api/providers/${encodeURIComponent(name)}/score`),

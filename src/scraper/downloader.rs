@@ -176,7 +176,9 @@ pub async fn download_chapter(
             Ok(image_data) => {
                 let mut cbz_name = format!("Chapter {}", chapter.number_sort());
                 if let Some(ref t) = chapter.title {
-                    cbz_name.push_str(&format!(" - {t}"));
+                    if !t.is_empty() {
+                        cbz_name.push_str(&format!(" - {t}"));
+                    }
                 }
                 if let Some(g) = chapter.scanlator_group.as_deref().filter(|s| !s.is_empty()) {
                     cbz_name.push_str(&format!(" [{g}]"));

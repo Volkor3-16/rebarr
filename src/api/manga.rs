@@ -255,7 +255,19 @@ pub async fn add_manga_manual(
             .unwrap_or(PublishingStatus::Unknown),
         tags: body.tags.clone().unwrap_or_default(),
         start_year: body.start_year,
+        start_month: None,
+        start_day: None,
         end_year: body.end_year,
+        // ComicInfo fields
+        writer: None,
+        penciller: None,
+        inker: None,
+        colorist: None,
+        letterer: None,
+        editor: None,
+        translator: None,
+        genre: None,
+        community_rating: None,
     };
 
     let mut manga = Manga {

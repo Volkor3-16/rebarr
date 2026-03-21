@@ -358,6 +358,28 @@ pub async fn set_file_size(
     Ok(())
 }
 
+/// Return the UUIDs and provider names of all chapters for a manga that are currently Downloaded.
+pub async fn get_downloaded(
+    pool: &SqlitePool,
+    manga_id: Uuid,
+) -> Result<Vec<(Uuid, Option<String>)>, sqlx::Error> {
+    let manga_id_str = manga_id.to_string();
+    let rows: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT uuid, provider_name FROM Chapters WHERE manga_id = ? AND download_status = 'Downloaded'",
+    )
+    .bind(&manga_id_str)
+    .fetch_all(pool)
+    .await?;
+
+    rows.into_iter()
+        .map(|(s, p)| {
+            Uuid::parse_str(&s)
+                .map(|id| (id, p))
+                .map_err(|e| sqlx::Error::Decode(Box::new(e)))
+        })
+        .collect()
+}
+
 /// Load the user's manual canonical overrides map from the DB.
 /// Returns a HashMap of "base:variant" -> uuid strings.
 async fn load_canonical_overrides(

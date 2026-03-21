@@ -1219,6 +1219,21 @@ pre {
   border-radius: 20px;
   font-size: 0.8rem;
   vertical-align: middle;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.scanlator-bubble:hover {
+  border-color: var(--accent);
+}
+
+.scanlator-bubble.scanlator-trusted {
+  border-color: var(--success);
+}
+
+.scanlator-bubble.scanlator-trusted:hover {
+  border-color: var(--error);
 }
 
 .scanlator-bubble .trusted-indicator {
@@ -1279,11 +1294,10 @@ pre {
   text-decoration: underline;
 }
 
-/* Alt count bubble below provider name */
+/* Alt count badge inline next to provider name */
 .alt-count-bubble {
   display: inline-block;
-  margin-top: 0.25rem;
-  padding: 0.15rem 0.4rem;
+  padding: 0.1rem 0.35rem;
   background: var(--accent);
   color: white;
   font-size: 0.7rem;
@@ -1291,17 +1305,18 @@ pre {
   border-radius: 10px;
   cursor: pointer;
   transition: background var(--transition);
+  vertical-align: middle;
 }
 
 .alt-count-bubble:hover {
   background: var(--accent-hover);
 }
 
-/* Provider cell wrapper for line break */
+/* Provider cell — inline flex so badge sits next to name */
 .provider-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
 }
 
 /* Provider bubble */
@@ -1593,6 +1608,16 @@ td .status-icon {
 .series-meta-item .value {
   color: var(--text);
   font-weight: 500;
+}
+
+.synonym-pill {
+  cursor: pointer;
+  user-select: none;
+  transition: opacity 0.15s;
+}
+
+.synonym-pill:hover {
+  opacity: 0.7;
 }
 
 .monitored-toggle {

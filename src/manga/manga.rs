@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use anilist_moe::objects::media::Media;
 use chrono::{DateTime, Utc};
+use log::trace;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -85,7 +86,20 @@ pub struct MangaMetadata {
     pub publishing_status: PublishingStatus,
     pub tags: Vec<String>,       // Tags according to anilist
     pub start_year: Option<i32>, // When the manga started publishing
+    pub start_month: Option<i32>, // When the manga started publishing (month)
+    pub start_day: Option<i32>,   // When the manga started publishing (day)
     pub end_year: Option<i32>,   // When the manga finished publishing (or none)
+
+    // ComicInfo fields
+    pub writer: Option<Vec<String>>,       // Mangaka/Author
+    pub penciller: Option<Vec<String>>,    // Artist
+    pub inker: Option<Vec<String>>,        // Inker
+    pub colorist: Option<Vec<String>>,     // Colorist
+    pub letterer: Option<Vec<String>>,     // Letterer
+    pub editor: Option<Vec<String>>,       // Editor (already exists in Manga, move here)
+    pub translator: Option<Vec<String>>,   // Translator (already exists in Manga, move here)
+    pub genre: Option<String>,              // Primary genre
+    pub community_rating: Option<i32>,      // Average score from AniList
 }
 
 /// The 'type' of manga it is. Used for having western comics and manga in one server instance.
@@ -110,6 +124,182 @@ pub enum PublishingStatus {
 pub enum MangaSource {
     AniList,
     Local,
+}
+
+/// Staff role mapping for categorizing AniList staff roles into ComicInfo fields
+#[derive(Debug, Clone, Copy)]
+enum StaffRole {
+    Writer,
+    Penciller,
+    Inker,
+    Colorist,
+    Letterer,
+    Editor,
+    Translator,
+}
+
+impl StaffRole {
+    /// Determine staff role from AniList role string
+    fn from_role(role: &str) -> Option<Self> {
+        let normalized = Self::normalize_role(role);
+        
+        // Check role mappings in order of specificity
+        if Self::is_writer_role(&normalized) {
+            Some(Self::Writer)
+        } else if Self::is_penciller_role(&normalized) {
+            Some(Self::Penciller)
+        } else if Self::is_inker_role(&normalized) {
+            Some(Self::Inker)
+        } else if Self::is_colorist_role(&normalized) {
+            Some(Self::Colorist)
+        } else if Self::is_letterer_role(&normalized) {
+            Some(Self::Letterer)
+        } else if Self::is_editor_role(&normalized) {
+            Some(Self::Editor)
+        } else if Self::is_translator_role(&normalized) {
+            Some(Self::Translator)
+        } else {
+            None
+        }
+    }
+
+    /// Normalize role string by removing parentheses and extra information
+    fn normalize_role(role: &str) -> String {
+        let role_lower = role.to_lowercase();
+        
+        // Remove content in parentheses (e.g., "Lettering (English, chs 1-2)" -> "lettering")
+        let without_parens = if let Some(open_paren) = role_lower.find('(') {
+            role_lower[..open_paren].trim().to_string()
+        } else {
+            role_lower
+        };
+
+        // Remove common suffixes and normalize
+        without_parens
+            .replace(" & art", "")
+            .replace(" & story", "")
+            .replace(" (english)", "")
+            .replace(" (japanese)", "")
+            .replace(" (chinese)", "")
+            .replace(" (korean)", "")
+            .trim()
+            .to_string()
+    }
+
+    /// Check if role indicates a writer/author
+    fn is_writer_role(role: &str) -> bool {
+        role.contains("story") || 
+        role.contains("writer") || 
+        role.contains("mangaka") || 
+        role.contains("author") ||
+        role.contains("script")
+    }
+
+    /// Check if role indicates a penciller/artist
+    fn is_penciller_role(role: &str) -> bool {
+        role.contains("art") || 
+        role.contains("artist") || 
+        role.contains("illustrat") || 
+        role.contains("pencil") || 
+        role.contains("draw") ||
+        role.contains("sketch")
+    }
+
+    /// Check if role indicates an inker
+    fn is_inker_role(role: &str) -> bool {
+        role.contains("ink")
+    }
+
+    /// Check if role indicates a colorist
+    fn is_colorist_role(role: &str) -> bool {
+        role.contains("color") || role.contains("colour")
+    }
+
+    /// Check if role indicates a letterer
+    fn is_letterer_role(role: &str) -> bool {
+        role.contains("letter")
+    }
+
+    /// Check if role indicates an editor
+    fn is_editor_role(role: &str) -> bool {
+        role.contains("edit")
+    }
+
+    /// Check if role indicates a translator
+    fn is_translator_role(role: &str) -> bool {
+        role.contains("translat")
+    }
+}
+
+/// Extract staff information from Media object and categorize by role
+fn extract_staff_from_media(media: &Media) -> (
+    Option<Vec<String>>, // writer
+    Option<Vec<String>>, // penciller  
+    Option<Vec<String>>, // inker
+    Option<Vec<String>>, // colorist
+    Option<Vec<String>>, // letterer
+    Option<Vec<String>>, // editor
+    Option<Vec<String>>, // translator
+) {
+    // Initialize vectors to collect staff by role
+    let mut writers = Vec::new();
+    let mut pencillers = Vec::new();
+    let mut inkers = Vec::new();
+    let mut colorists = Vec::new();
+    let mut letterers = Vec::new();
+    let mut editors = Vec::new();
+    let mut translators = Vec::new();
+
+    // Check if staff data exists
+    if let Some(staff_edges) = &media.staff {
+        if let Some(edges) = &staff_edges.edges {
+            for staff_edge in edges {
+                if let Some(staff_node) = &staff_edge.node {
+                    if let Some(staff_name) = extract_staff_name(staff_node) {
+                        if let Some(role) = &staff_edge.role {
+                            if let Some(staff_role) = StaffRole::from_role(role) {
+                                match staff_role {
+                                    StaffRole::Writer => writers.push(staff_name),
+                                    StaffRole::Penciller => pencillers.push(staff_name),
+                                    StaffRole::Inker => inkers.push(staff_name),
+                                    StaffRole::Colorist => colorists.push(staff_name),
+                                    StaffRole::Letterer => letterers.push(staff_name),
+                                    StaffRole::Editor => editors.push(staff_name),
+                                    StaffRole::Translator => translators.push(staff_name),
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Return None if no staff found for a category, otherwise Some(vec)
+    (
+        if writers.is_empty() { None } else { Some(writers) },
+        if pencillers.is_empty() { None } else { Some(pencillers) },
+        if inkers.is_empty() { None } else { Some(inkers) },
+        if colorists.is_empty() { None } else { Some(colorists) },
+        if letterers.is_empty() { None } else { Some(letterers) },
+        if editors.is_empty() { None } else { Some(editors) },
+        if translators.is_empty() { None } else { Some(translators) },
+    )
+}
+
+/// Extract the full name from a Staff object
+fn extract_staff_name(staff: &anilist_moe::objects::staff::Staff) -> Option<String> {
+    staff.name.as_ref().and_then(|name| {
+        name.user_preferred
+            .clone()
+            .or_else(|| name.full.clone())
+            .or_else(|| {
+                // Build name from parts if full name not available
+                let first = name.first.as_ref()?;
+                let last = name.last.as_ref()?;
+                Some(format!("{} {}", first, last))
+            })
+    })
 }
 
 /// Strip HTML tags from AniList synopsis text.
@@ -186,11 +376,9 @@ impl From<Media> for Manga {
         // Start with synonyms from AniList
         let mut other_titles: Vec<Synonym> = media
             .synonyms
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|s| existing_titles.insert(s.clone()))
-            .map(|s| Synonym::anilist(&s))
-            .collect();
+            .as_ref()
+            .map(|synonyms| synonyms.iter().filter(|s| existing_titles.insert(s.to_string())).map(|s| Synonym::anilist(s)).collect())
+            .unwrap_or_default();
 
         // Add Romaji if it's different from main title
         if let Some(romaji) = media.title.as_ref().and_then(|t| t.romaji.clone()) {
@@ -218,6 +406,30 @@ impl From<Media> for Manga {
             _ => PublishingStatus::Unknown,
         };
 
+        // Staff extraction - do this first before moving any fields from media
+        let (writer, penciller, inker, colorist, letterer, editor, translator) = 
+            extract_staff_from_media(&media);
+        trace!("Extracted Writers: {writer:?}");
+        trace!("Extracted penciller: {penciller:?}");
+        trace!("Extracted inker: {inker:?}");
+        trace!("Extracted colorist: {colorist:?}");
+        trace!("Extracted letterer: {letterer:?}");
+        trace!("Extracted editor: {editor:?}");
+        trace!("Extracted translator: {translator:?}");
+
+        // Extract tags and genre
+        let tags: Vec<String> = media
+            .tags
+            .as_ref()
+            .map(|tags| tags.iter().filter_map(|t| t.name.clone()).collect())
+            .unwrap_or_default();
+        trace!("Extracted Tags: {tags:?}");
+        let genre = Some(media.genres.unwrap_or_default().first().unwrap().clone());
+        trace!("Extracted Genre: {genre:?}");
+
+        // Community rating %
+        let community_rating = media.average_score;
+
         // chapter_count stays None until scraped from providers; AniList data is unreliable
         let chapter_count = None;
 
@@ -226,14 +438,22 @@ impl From<Media> for Manga {
             other_titles: Some(other_titles),
             synopsis: media.description.as_deref().map(strip_html),
             publishing_status: status,
-            tags: media
-                .tags
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|t| t.name)
-                .collect(),
-            start_year: media.start_date.and_then(|d| d.year),
+            tags,
+            start_year: media.start_date.as_ref().and_then(|d| d.year),
+            start_month: media.start_date.as_ref().and_then(|d| d.month),
+            start_day: media.start_date.as_ref().and_then(|d| d.day),
             end_year: media.end_date.and_then(|d| d.year),
+
+            // ComicInfo fields
+            writer,
+            penciller,
+            inker,
+            colorist,
+            letterer,
+            editor,
+            translator,
+            genre,
+            community_rating,
         };
 
         let thumbnail_url = media.cover_image.as_ref().and_then(|c| {

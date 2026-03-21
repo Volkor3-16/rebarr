@@ -5,6 +5,7 @@ pub(crate) mod errors;
 
 // API Endpoints
 pub(crate) mod chapters;
+pub(crate) mod import;
 pub(crate) mod libraries;
 pub(crate) mod manga;
 pub(crate) mod provider_scores;
@@ -19,6 +20,7 @@ pub(crate) mod frontend;
 // re-export the route functions
 pub use chapters::routes as chapter_routes;
 pub use frontend::routes as frontend_routes;
+pub use import::routes as import_routes;
 pub use libraries::routes as library_routes;
 pub use manga::routes as manga_routes;
 pub use provider_scores::routes as provider_score_routes;
@@ -33,6 +35,7 @@ pub fn api_routes() -> Vec<rocket::Route> {
     routes.extend(library_routes());
     routes.extend(manga_routes());
     routes.extend(chapter_routes());
+    routes.extend(import_routes());
     routes.extend(task_routes());
     routes.extend(settings_routes());
     routes.extend(trusted_group_routes());

@@ -101,6 +101,7 @@ export async function viewSettings() {
           <h3>Trusted Scanlation Groups</h3>
         </div>
         <p class="settings-card-desc">Groups listed here are Tier 2 (Trusted). They rank above unknown groups (Tier 3) but below official releases (Tier 1). Re-scan a series after changing this list to update scores.</p>
+        <input type="search" id="trusted-groups-filter" class="input input-bordered input-sm" placeholder="Filter groups…" style="width:220px;margin-bottom:0.5rem" oninput="filterTrustedGroups(this.value)">
         <div id="trusted-groups-list"><p>Loading...</p></div>
         <div class="mt-2 flex gap-1">
           <input type="text" id="new-trusted-group" class="input input-bordered input-sm" placeholder="Group name (exact)" style="width:220px">
@@ -251,22 +252,39 @@ window.removeFilterLanguage = async function(code) {
   }
 };
 
+let _trustedGroupsCache = [];
+
+function renderTrustedGroupPills(filter = '') {
+  const el = document.getElementById('trusted-groups-list');
+  if (!el) return;
+  const q = filter.trim().toLowerCase();
+  const visible = q ? _trustedGroupsCache.filter(g => g.toLowerCase().includes(q)) : _trustedGroupsCache;
+  if (visible.length === 0) {
+    el.innerHTML = q ? '<p><small>No groups match.</small></p>' : '<p><small>No trusted groups yet.</small></p>';
+    return;
+  }
+  el.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:0.4rem;margin:0.3rem 0">${
+    visible.map(g =>
+      `<span class="badge badge-neutral" style="cursor:default;gap:0.35rem">${escape(g)}<button class="btn btn-xs btn-ghost" style="padding:0;min-height:auto;line-height:1;color:var(--error)" onclick='removeTrustedGroup("${escape(g)}")' title="Remove">×</button></span>`
+    ).join('')
+  }</div>`;
+}
+
 async function loadTrustedGroups() {
   const el = document.getElementById('trusted-groups-list');
   if (!el) return;
   try {
-    const groups = await trustedGroups.list();
-    if (groups.length === 0) {
-      el.innerHTML = '<p><small>No trusted groups yet.</small></p>';
-      return;
-    }
-    el.innerHTML = '<ul style="margin:0.3rem 0">' + groups.map(g =>
-      `<li style="margin:0.25rem 0">${escape(g)} <button class="btn btn-xs btn-error btn-outline" onclick='removeTrustedGroup("${escape(g)}")'>Remove</button></li>`
-    ).join('') + '</ul>';
+    _trustedGroupsCache = await trustedGroups.list();
+    const filterInput = document.getElementById('trusted-groups-filter');
+    renderTrustedGroupPills(filterInput ? filterInput.value : '');
   } catch(e) {
     el.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
   }
 }
+
+window.filterTrustedGroups = function(value) {
+  renderTrustedGroupPills(value);
+};
 
 window.addTrustedGroup = async function() {
   const input = document.getElementById('new-trusted-group');

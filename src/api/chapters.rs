@@ -195,14 +195,18 @@ pub async fn delete_chapter_api(
             )
         };
 
-        // Add title if present
+        // Add title if present and non-empty
         if let Some(ref title) = chapter.title {
-            cbz_name.push_str(&format!(" - {title}"));
+            if !title.is_empty() {
+                cbz_name.push_str(&format!(" - {title}"));
+            }
         }
 
-        // Add scanlator group if present
+        // Add scanlator group if present and non-empty
         if let Some(ref group) = chapter.scanlator_group {
-            cbz_name.push_str(&format!(" [{group}]"));
+            if !group.is_empty() {
+                cbz_name.push_str(&format!(" [{group}]"));
+            }
         }
 
         // Sanitize filename

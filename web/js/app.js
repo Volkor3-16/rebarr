@@ -7,6 +7,7 @@ import './views/series.js';
 import './views/search.js';
 import './views/settings.js';
 import './views/queue.js';
+import './views/import.js';
 
 import { initTheme } from './theme.js';
 import { initRouter } from './router.js';
