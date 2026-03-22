@@ -4,7 +4,7 @@
 /// (default: `./providers/`, or `REBARR_PROVIDERS_DIR`). No Rust code required.
 use std::collections::HashMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProviderDef {
@@ -13,6 +13,16 @@ pub struct ProviderDef {
 
     /// Root URL (e.g. "https://weebcentral.com"). Used as `{base_url}` in templates.
     pub base_url: String,
+
+    /// Provider version string (e.g. "1", "2.1"). Purely informational — useful for
+    /// tracking compatibility when the YAML format or site structure changes.
+    #[serde(default)]
+    pub version: Option<String>,
+
+    /// Quality / characteristic tags. Displayed in the UI to warn users about
+    /// Cloudflare protection, scan quality issues, adult content, etc.
+    #[serde(default)]
+    pub tags: Vec<ProviderTag>,
 
     /// Default score for chapter ranking tiebreaks within the same tier.
     /// Can be overridden globally or per-series via the API.
@@ -31,6 +41,42 @@ pub struct ProviderDef {
 
     /// Steps to fetch page image URLs for a single chapter.
     pub pages: Option<ActionDef>,
+}
+
+// ---------------------------------------------------------------------------
+// Provider tags
+// ---------------------------------------------------------------------------
+
+/// Well-known quality / characteristic tags for a provider.
+///
+/// Unknown values in YAML cause a load error (intentional — keeps tags validated).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderTag {
+    /// Provider is behind Cloudflare; may require a FlareSolverr instance.
+    Cloudflare,
+    /// Scan quality is known to be poor (low resolution, watermarks, etc.).
+    LowQualityScans,
+    /// Scan quality is known to be excellent.
+    HighQualityScans,
+    /// Chapter numbers, dates, or titles are frequently wrong or missing.
+    BadMetadata,
+    /// Contains adult / NSFW content.
+    Nsfw,
+    /// Consistently slow to respond; expect longer scrape times.
+    Slow,
+    /// Hosts Official / Licensed content.
+    Official,
+    /// Aggregates chapters from multiple upstream sources.
+    Aggregator,
+    /// Hosts fan-translated chapters not yet licensed officially.
+    Hub,
+    /// This is a site for a single scanlator group
+    ScanlatorSite,
+    /// Offers multiple languages
+    MultiLanguage,
+    /// The site frequently goes down, or has other problems with access.
+    Unstable,
 }
 
 // ---------------------------------------------------------------------------
@@ -298,6 +344,10 @@ pub struct GraphqlDef {
     /// Optional JSON path to extract from the response (e.g. "data.mangas").
     #[serde(default)]
     pub json_path: Option<String>,
+    /// Request headers (key → value). Supports template placeholders in values.
+    /// Content-Type: application/json is always included automatically.
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
 }
 
 // ---------------------------------------------------------------------------

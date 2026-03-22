@@ -7,12 +7,15 @@
 ///   -p, --provider <name>      Provider to test (default: highest-scored)
 ///   -d                         Also download the first chapter pages to ./test_dl/
 ///   -H, --dump-html            Dump page HTML to ./scraper_dump_N.html after each open step
+///   -V, --visible              Run Chromium in non-headless (visible) mode
+///   -k, --keep-open            Don't close Chromium on exit (useful for debugging providers)
 ///
 /// Examples:
 ///   cargo run --bin cli -- "berserk"
 ///   cargo run --bin cli -- -p MangaFire "berserk"
 ///   cargo run --bin cli -- -p WeebCentral -d "berserk"
 ///   cargo run --bin cli -- -H "berserk"
+///   cargo run --bin cli -- -V -k -p WeebCentral "berserk"   # visible + keep open for debugging
 ///
 /// What it does:
 ///   1. Loads providers from ./providers/ (or REBARR_PROVIDERS_DIR)
@@ -42,6 +45,8 @@ async fn main() {
     let mut provider_name: Option<String> = None;
     let mut download = false;
     let mut dump_html = false;
+    let mut visible = false;
+    let mut keep_open = false;
     let mut query: Option<String> = None;
 
     let mut i = 0;
@@ -60,9 +65,15 @@ async fn main() {
             "-H" | "--dump-html" => {
                 dump_html = true;
             }
+            "-V" | "--visible" => {
+                visible = true;
+            }
+            "-k" | "--keep-open" => {
+                keep_open = true;
+            }
             flag if flag.starts_with('-') => {
                 eprintln!("Unknown flag: {flag}");
-                eprintln!("Usage: scraper_test [-p <provider>] [-d] [-H] <query>");
+                eprintln!("Usage: scraper_test [-p <provider>] [-d] [-H] [-V] [-k] <query>");
                 process::exit(1);
             }
             _ => {
@@ -78,6 +89,12 @@ async fn main() {
         eprintln!("Example: cargo run --bin scraper_test -- -p MangaFire \"berserk\"");
         process::exit(1);
     });
+
+    if visible {
+        // Picked up by BrowserPool::get() when it launches Chromium.
+        // Safety: single-threaded at this point, no concurrent env reads.
+        unsafe { std::env::set_var("CHROME_HEADLESS", "false") };
+    }
 
     // Setup http client.
     let http = reqwest::Client::builder()
@@ -196,6 +213,11 @@ async fn main() {
             process::exit(1);
         });
 
+    if chapters.is_empty() {
+        eprintln!("No chapters found for this manga. It may only have official publisher chapters or no translated content.");
+        process::exit(1);
+    }
+
     println!("Found {} chapters:", chapters.len());
     for ch in chapters.iter().take(1000) {
         let title = ch.title.as_deref().unwrap_or("(no title)");
@@ -250,6 +272,10 @@ async fn main() {
     // Download pages/images of the selected chapter (the first chapter found)
     if !download {
         println!("\n(Pass -d to also download the pages to ./test_dl/)");
+        if keep_open {
+            println!("Chromium left open. Kill this terminal to close it.");
+            std::process::exit(0);
+        }
         return;
     }
 
@@ -264,36 +290,30 @@ async fn main() {
         out_dir.display()
     );
 
-    let mut downloaded = 0usize;
-    for page in &pages {
-        let ext = page
-            .url
-            .rsplit('.')
-            .next()
-            .filter(|e| e.len() <= 4 && !e.contains('/'))
-            .unwrap_or("jpg");
-        let filename = format!("{:03}.{ext}", page.index);
-        let path = out_dir.join(&filename);
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let image_data = rebarr::scraper::downloader::download_pages_via_browser(
+        &ctx,
+        &pages,
+        provider.page_delay_ms(),
+        chapter_url,
+        cancel,
+    )
+    .await
+    .unwrap_or_else(|e| {
+        eprintln!("Download failed: {e}");
+        process::exit(1);
+    });
 
-        match http.get(&page.url).send().await {
-            Ok(resp) => match resp.bytes().await {
-                Ok(bytes) => {
-                    tokio::fs::write(&path, &bytes)
-                        .await
-                        .expect("failed to write page file");
-                    info!(
-                        "  [{}/{}] {} → {}",
-                        page.index,
-                        pages.len(),
-                        page.url,
-                        path.display()
-                    );
-                    downloaded += 1;
-                }
-                Err(e) => eprintln!("  Page {}: failed to read bytes: {e}", page.index),
-            },
-            Err(e) => eprintln!("  Page {}: HTTP error: {e}", page.index),
-        }
+    let mut downloaded = 0usize;
+    for (index, data) in &image_data {
+        let ext = rebarr::scraper::downloader::image_ext(data);
+        let filename = format!("{index:03}.{ext}");
+        let path = out_dir.join(&filename);
+        tokio::fs::write(&path, data)
+            .await
+            .expect("failed to write page file");
+        info!("  [{index}/{}] → {}", image_data.len(), path.display());
+        downloaded += 1;
     }
 
     println!(
@@ -302,4 +322,9 @@ async fn main() {
         pages.len(),
         out_dir.display()
     );
+
+    if keep_open {
+        println!("Chromium left open. Kill this terminal to close it.");
+        std::process::exit(0);
+    }
 }

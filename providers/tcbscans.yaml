@@ -1,6 +1,9 @@
 name: TCB Scans
 # The main domain name.
 base_url: https://tcbonepiecechapters.com
+version: "1"
+tags:
+  - scanlator_site
 # Rate limits for the queue.
 rate_limit:
   requests_per_minute: 30

@@ -1,5 +1,8 @@
 name: LHTranslation
 base_url: https://lhtranslation.net
+version: "1"
+tags:
+  - scanlator_site
 rate_limit:
   requests_per_minute: 30
 

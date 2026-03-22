@@ -6,6 +6,12 @@
 
 name: MangaBall
 base_url: https://mangaball.net
+version: "1"
+tags:
+  - aggregator
+  - low_quality_scans
+  - bad_metadata
+  - multi_language
 rate_limit:
   requests_per_minute: 20
 

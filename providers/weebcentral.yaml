@@ -1,5 +1,9 @@
 name: WeebCentral
 base_url: https://weebcentral.com
+version: "1"
+tags:
+  - aggregator
+  - official
 rate_limit:
   requests_per_minute: 30
   page_delay_ms: 500

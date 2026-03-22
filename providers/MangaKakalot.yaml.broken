@@ -1,0 +1,55 @@
+name: MangaKakalot
+base_url: https://www.mangakakalot.gg # These guys run Manganato.gg (and a bunch of others) (not the original manganato though)
+default_score: -20 # Low image quality, but large library, good backup.
+rate_limit:
+  requests_per_minute: 30
+  page_delay_ms: 500
+
+# This provider is broken: They use strict cloudflare checks :(
+
+search:
+  steps:
+    - open: "{base_url}"
+    - fetch:
+        url: "{base_url}/home/search/json?searchword={query}"
+        method: GET
+        headers:
+          X-Requested-With: XMLHttpRequest
+          Referer: "{base_url}/"
+        var: search_results
+    - from_json:
+        var: search_results
+        extract:
+          title: name
+          url: url
+          cover: thumb
+
+chapters:
+  steps:
+    - open: "{base_url}"
+    - fetch:
+        url: "{base_url}/api/manga/{manga_url|basename}/chapters?limit=50&offset=0"
+        method: GET
+        headers:
+          Referer: "{manga_url}"
+        var: chapters_data
+        json_path: data.chapters
+    - from_json:
+        var: chapters_data
+        extract:
+          number_raw: chapter_num
+          title: chapter_name
+          url: chapter_slug
+        prefix:
+          url: "{manga_url}/"
+
+pages:
+  steps:
+    - open: "{chapter_url}"
+    - foreach:
+        selector: ".container-chapter-reader img"
+        extract:
+          url:
+            selector: ""
+            content: attr
+            attr_name: src

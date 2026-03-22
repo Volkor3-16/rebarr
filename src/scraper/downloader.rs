@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::Write as _;
 use std::path::Path;
 use std::sync::Arc;
@@ -172,7 +173,7 @@ pub async fn download_chapter(
             continue;
         }
 
-        match download_pages_via_browser(ctx, &pages, provider.page_delay_ms(), cancel_token.clone()).await {
+        match download_pages_via_browser(ctx, &pages, provider.page_delay_ms(), &chapter_url, cancel_token.clone()).await {
             Ok(image_data) => {
                 let mut cbz_name = format!("Chapter {}", chapter.number_sort());
                 if let Some(ref t) = chapter.title {
@@ -296,19 +297,21 @@ async fn ensure_chapter_url(
         .and_then(|info| info.url)
 }
 
-/// Download page images using the headless browser.
+/// Download page images using a two-tier strategy:
+/// 1. JS fetch() from the chapter page context (avoids Chrome's image-URL navigation blocking).
+/// 2. reqwest with spoofed headers + browser session cookies (fallback for CORS-restricted CDNs).
 ///
-/// All image downloads go through the Chromium engine to maximize anti-blocking protection.
 /// `page_delay_ms` — sleep this many ms between images to avoid rate-limiting.
-async fn download_pages_via_browser(
+/// `chapter_url` — navigated once to establish page context, and used as the `Referer` header.
+pub async fn download_pages_via_browser(
     ctx: &ScraperCtx,
     pages: &[crate::scraper::PageUrl],
     page_delay_ms: u64,
+    chapter_url: &str,
     cancel_token: CancellationToken,
 ) -> Result<Vec<(u32, Vec<u8>)>, DownloadError> {
     let mut results = Vec::with_capacity(pages.len());
 
-    // All downloads through browser — no reqwest
     let browser = ctx
         .browser
         .get()
@@ -320,6 +323,39 @@ async fn download_pages_via_browser(
         .await
         .map_err(|e| std::io::Error::other(e.to_string()))?;
 
+    // Enable Network domain (required before setExtraHTTPHeaders) and inject
+    // Referer at the CDP layer so it applies to every JS fetch() call below.
+    page.enable_request_capture()
+        .await
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let mut extra_headers = HashMap::new();
+    extra_headers.insert("Referer".to_string(), chapter_url.to_string());
+    debug!("Referer: {chapter_url}");
+    page.set_extra_headers(extra_headers)
+        .await
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+
+    // Navigate to the chapter page once to establish a trusted origin with
+    // valid session cookies. JS fetch() calls from this context won't be
+    // blocked by Chrome's ERR_BLOCKED_BY_CLIENT (unlike direct image URL navigation).
+    if let Err(e) = page.goto(chapter_url).await {
+        warn!("[dl] could not navigate to chapter URL {chapter_url}: {e}");
+    } else {
+        page.wait_for_network_idle(500, 10_000).await.ok();
+    }
+
+    // Snapshot browser cookies for the reqwest fallback so session state carries over.
+    let browser_cookies = page.cookies().await.unwrap_or_default();
+    let cookie_header = browser_cookies
+        .iter()
+        .map(|c| format!("{}={}", c.name, c.value))
+        .collect::<Vec<_>>()
+        .join("; ");
+
+    // Once Tier 1 fails for any page (e.g. CORS), all pages in this chapter share the same
+    // CDN domain, so skip Tier 1 for all remaining pages.
+    let mut tier1_failed = false;
+
     for page_url in pages {
         if cancel_token.is_cancelled() {
             return Err(DownloadError::Cancelled);
@@ -328,37 +364,106 @@ async fn download_pages_via_browser(
             tokio::time::sleep(std::time::Duration::from_millis(page_delay_ms)).await;
         }
         let url = &page_url.url;
+        let referrer = page_url.referrer.as_deref().unwrap_or(chapter_url);
 
-        if let Err(e) = page.goto(url.as_str()).await {
-            warn!("[dl] browser navigate failed for {url}: {e}");
-            continue;
-        }
-        page.wait_for_network_idle(500, 15_000).await.ok();
+        // Tier 1: JS fetch() from the chapter page context.
+        // Subrequests are not subject to ERR_BLOCKED_BY_CLIENT. CDP extra headers
+        // inject the Referer automatically. Works for CDNs with CORS headers.
+        let image_data = if tier1_failed {
+            None
+        } else {
+            let escaped_url = url.replace('\\', "\\\\").replace('"', "\\\"");
+            let js = format!(
+                r#"(async () => {{
+                    const r = await fetch("{escaped_url}", {{ cache: 'reload' }});
+                    if (!r.ok) return null;
+                    const buf = await r.arrayBuffer();
+                    const bytes = new Uint8Array(buf);
+                    let binary = "";
+                    for (let i = 0; i < bytes.length; i += 8192) {{
+                        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+                    }}
+                    return btoa(binary);
+                }})()"#
+            );
 
-        let js = format!(
-            r#"(async () => {{
-                const r = await fetch({url_json});
-                if (!r.ok) return null;
-                const buf = await r.arrayBuffer();
-                const bytes = new Uint8Array(buf);
-                let binary = "";
-                for (let i = 0; i < bytes.length; i += 8192) {{
-                    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
-                }}
-                return btoa(binary);
-            }})()"#,
-            url_json = serde_json::to_string(url).unwrap(),
-        );
+            match page.evaluate::<Option<String>>(&js).await {
+                Ok(Some(b64)) => match BASE64.decode(b64.trim()) {
+                    Ok(data) if !data.is_empty() => Some(data),
+                    Ok(_) => {
+                        debug!("[dl] tier1 empty bytes for {url}, switching to reqwest for remaining pages");
+                        tier1_failed = true;
+                        None
+                    }
+                    Err(e) => {
+                        debug!("[dl] tier1 base64 decode failed for {url}: {e}, switching to reqwest");
+                        tier1_failed = true;
+                        None
+                    }
+                },
+                Ok(None) => {
+                    debug!("[dl] tier1 null for {url} (likely CORS), switching to reqwest for remaining pages");
+                    tier1_failed = true;
+                    None
+                }
+                Err(e) => {
+                    debug!("[dl] tier1 eval error for {url}: {e}, switching to reqwest for remaining pages");
+                    tier1_failed = true;
+                    None
+                }
+            }
+        };
 
-        match page.evaluate::<Option<String>>(&js).await {
-            Ok(Some(b64)) => match BASE64.decode(b64.trim()) {
-                Ok(data) => results.push((page_url.index, data)),
-                Err(e) => warn!("[dl] base64 decode failed for {url}: {e}"),
-            },
-            Ok(None) => warn!("[dl] empty response for {url}"),
-            Err(e) => warn!("[dl] browser fetch failed for {url}: {e}"),
-        }
+        let image_data = if let Some(data) = image_data {
+            data
+        } else {
+            // Tier 2: reqwest with spoofed browser headers + forwarded session cookies.
+            // Works for CDNs with simple Referer-based hotlink protection.
+            // Some CDNs (e.g. AllManga) reject the full chapter path and only accept the
+            // site origin as Referer, so strip the path here.
+            let referer_origin = url_origin(referrer);
+            let mut req = ctx
+                .http
+                .get(url.as_str())
+                .header("Referer", &referer_origin)
+                .header(
+                    "User-Agent",
+                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 \
+                     (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+                )
+                .header("Accept", "image/webp,image/apng,image/*,*/*;q=0.8");
+            if !cookie_header.is_empty() {
+                req = req.header("Cookie", &cookie_header);
+            }
+            match req.send().await {
+                Ok(resp) if resp.status().is_success() => match resp.bytes().await {
+                    Ok(bytes) if !bytes.is_empty() => bytes.to_vec(),
+                    Ok(_) => {
+                        warn!("[dl] tier2 empty body for {url}");
+                        continue;
+                    }
+                    Err(e) => {
+                        warn!("[dl] tier2 body read failed for {url}: {e}");
+                        continue;
+                    }
+                },
+                Ok(resp) => {
+                    warn!("[dl] tier2 HTTP {} for {url}", resp.status());
+                    continue;
+                }
+                Err(e) => {
+                    warn!("[dl] tier2 request failed for {url}: {e}");
+                    continue;
+                }
+            }
+        };
+
+        results.push((page_url.index, image_data));
     }
+
+    page.clear_extra_headers()
+        .await
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
 
     results.sort_by_key(|(idx, _)| *idx);
     Ok(results)
@@ -483,8 +588,19 @@ async fn write_cbz(
     Ok(())
 }
 
+/// Extract the origin (scheme + host + "/") from a URL.
+/// "https://allmanga.to/manga/abc/ch-1" → "https://allmanga.to/"
+fn url_origin(url: &str) -> String {
+    let after_scheme = url.find("://").map(|i| i + 3).unwrap_or(0);
+    let host_end = url[after_scheme..]
+        .find('/')
+        .map(|i| i + after_scheme)
+        .unwrap_or(url.len());
+    format!("{}/", &url[..host_end])
+}
+
 /// Guess image extension from magic bytes.
-fn image_ext(data: &[u8]) -> &'static str {
+pub fn image_ext(data: &[u8]) -> &'static str {
     match data {
         d if d.starts_with(b"\xFF\xD8\xFF") => "jpg",
         d if d.starts_with(b"\x89PNG") => "png",

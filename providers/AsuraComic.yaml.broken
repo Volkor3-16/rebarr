@@ -1,5 +1,10 @@
 name: AsuraComic
 base_url: https://asuracomic.net
+version: "1"
+tags:
+  - bad_metadata
+  - scanlator_site
+  - low_quality_scans
 rate_limit:
   requests_per_minute: 30
 

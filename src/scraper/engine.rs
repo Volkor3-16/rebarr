@@ -287,6 +287,14 @@ impl YamlProvider {
                     // ZAC NOTE: this sucks
                     p.wait_for_network_idle(1000, 30_000).await.ok();
 
+                    if let Ok(html) = p.content().await {
+                        if is_cf_challenge(&html) {
+                            return Err(ScraperError::Browser(format!(
+                                "Cloudflare challenge page detected at {url} — provider is blocked"
+                            )));
+                        }
+                    }
+
                     // Create screenshot of website (for debugging)
                     if ctx.dump_html {
                         let png = p.screenshot().await.unwrap();
@@ -634,11 +642,19 @@ impl YamlProvider {
                         .replace('\n', "\\n")
                         .replace('\r', "");
 
+                    // Build headers object - start with Content-Type, then add custom headers
+                    let mut headers_js = String::from("'Content-Type': 'application/json',");
+                    for (key, val) in &graphql_def.headers {
+                        let expanded_val = self.expand(val, &vars);
+                        headers_js.push_str(&format!("'{}': '{}',", key, expanded_val.replace('\'', "\\\'")));
+                    }
+
                     let js = format!(r#"
                         (async () => {{
                             const opts = {{
                                 method: 'POST',
-                                headers: {{ 'Content-Type': 'application/json' }},
+                                headers: {{ {} }},
+                                credentials: 'include',
                                 body: JSON.stringify({{
                                     query: '{}',
                                     variables: {}
@@ -652,6 +668,7 @@ impl YamlProvider {
                             }}
                         }})()
                     "#,
+                        headers_js,
                         query_escaped,
                         vars_json,
                         url.replace('\'', "\\'")
@@ -662,6 +679,9 @@ impl YamlProvider {
                             if response.starts_with("ERROR:") {
                                 warn!("[step] graphql failed: {}", response);
                             } else {
+                                if ctx.verbose {
+                                    debug!("[step] graphql raw response ({} bytes): {}", response.len(), &response[..response.len().min(500)]);
+                                }
                                 let value = if let Some(ref path) = graphql_def.json_path {
                                     parse_json_path(&response, path)
                                 } else {
@@ -669,7 +689,7 @@ impl YamlProvider {
                                 };
                                 if ctx.verbose {
                                     let preview = &value[..value.len().min(120)];
-                                    eprintln!("[step] graphql stored in '{}': {}", graphql_def.var, preview);
+                                    debug!("[step] graphql stored in '{}': {}", graphql_def.var, preview);
                                 }
                                 vars.insert(graphql_def.var.clone(), value);
                             }
@@ -694,7 +714,15 @@ impl YamlProvider {
                     for item in json_array {
                         let mut record: HashMap<String, String> = HashMap::new();
                         for (output_key, json_key) in &from_json_def.extract {
-                            let value = extract_json_value(&item, json_key);
+                            // Handle both object-based and plain string arrays
+                            let value = if let serde_json::Value::String(s) = &item {
+                                // If the item is a plain string, use it directly
+                                Some(s.clone())
+                            } else {
+                                // Otherwise extract from object using the key path
+                                extract_json_value(&item, json_key)
+                            };
+                            
                             if let Some(val) = value {
                                 // Apply prefix if not absolute URL
                                 let final_val = if let Some(prefix) = from_json_def.prefix.get(output_key) {
@@ -811,6 +839,14 @@ impl Provider for YamlProvider {
 
     fn page_delay_ms(&self) -> u64 {
         self.def.rate_limit.page_delay_ms
+    }
+
+    fn version(&self) -> Option<&str> {
+        self.def.version.as_deref()
+    }
+
+    fn tags(&self) -> &[crate::scraper::def::ProviderTag] {
+        &self.def.tags
     }
 
     async fn search(
@@ -1074,6 +1110,7 @@ fn result_to_pages(result: ActionResult) -> Result<Vec<PageUrl>, ScraperError> {
                 r.remove("url").map(|url| PageUrl {
                     url,
                     index: (i + 1) as u32,
+                    referrer: r.remove("referrer").filter(|s| !s.is_empty()),
                 })
             })
             .collect()),
@@ -1085,18 +1122,46 @@ fn result_to_pages(result: ActionResult) -> Result<Vec<PageUrl>, ScraperError> {
                     .into_iter()
                     .enumerate()
                     .filter_map(|(i, v)| {
-                        v.as_str().map(|u| PageUrl {
-                            url: u.to_owned(),
-                            index: (i + 1) as u32,
-                        })
+                        // Accept either a plain URL string or an object with a "url" key
+                        // (and an optional "referrer" key).
+                        if let Some(u) = v.as_str() {
+                            Some(PageUrl {
+                                url: u.to_owned(),
+                                index: (i + 1) as u32,
+                                referrer: None,
+                            })
+                        } else if let Some(obj) = v.as_object() {
+                            obj.get("url")?.as_str().map(|u| PageUrl {
+                                url: u.to_owned(),
+                                index: (i + 1) as u32,
+                                referrer: obj
+                                    .get("referrer")
+                                    .and_then(|r| r.as_str())
+                                    .filter(|s| !s.is_empty())
+                                    .map(str::to_owned),
+                            })
+                        } else {
+                            None
+                        }
                     })
                     .collect()),
                 _ => Err(ScraperError::Parse(
-                    "return value for pages must be a JSON array of URL strings".to_owned(),
+                    "return value for pages must be a JSON array".to_owned(),
                 )),
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Cloudflare challenge detection
+// ---------------------------------------------------------------------------
+
+/// Return true when the page HTML looks like a Cloudflare challenge/IUAM page.
+fn is_cf_challenge(html: &str) -> bool {
+    html.contains("cf-browser-verification")
+        || html.contains("__cf_chl")
+        || (html.contains("Just a moment") && html.contains("cloudflare"))
 }
 
 // ---------------------------------------------------------------------------
@@ -1222,6 +1287,11 @@ fn parse_json_path(body: &str, json_path: &str) -> String {
     if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(body) {
         for key in json_path.split('.') {
             json = json[key].take();
+        }
+        // If the result is a JSON string (not an object/array), return the original string value
+        // to preserve escaped content like nested JSON strings
+        if let serde_json::Value::String(s) = &json {
+            return s.clone();
         }
         return json.to_string();
     }

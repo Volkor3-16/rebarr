@@ -1,0 +1,57 @@
+name: MangaBuddy
+base_url: https://mangabuddy.me
+version: "1"
+tags:
+  - aggregator
+  - low_quality_scans
+  - nsfw
+default_score: -20 # Low image quality, but large library, good backup.
+rate_limit:
+  requests_per_minute: 30
+  page_delay_ms: 500
+
+search:
+  steps:
+    - open: "{base_url}/search?q={query}"
+    - foreach:
+        selector: ".book-item"
+        extract:
+          title:
+            selector: ".meta .title h3 a"
+            content: attr
+            attr_name: title
+          url:
+            selector: ".meta .title h3 a"
+            content: attr
+            attr_name: href
+            prefix: "{base_url}"
+          cover:
+            selector: ".thumb img"
+            content: attr
+            attr_name: src
+
+chapters:
+  steps:
+    - open: "{manga_url}"
+    - foreach:
+        selector: "ul.chapter-list li"
+        extract:
+          number_raw:
+            selector: "strong.chapter-title"
+            content: text
+          url:
+            selector: "a"
+            content: attr
+            attr_name: href
+            prefix: "{base_url}"
+
+pages:
+  steps:
+    - open: "{chapter_url}"
+    - foreach:
+        selector: "div.chapter-image img"
+        extract:
+          url:
+            selector: ""
+            content: attr
+            attr_name: src

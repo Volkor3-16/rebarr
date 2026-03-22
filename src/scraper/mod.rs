@@ -5,14 +5,15 @@ pub mod engine;
 pub mod error;
 
 use std::{path::PathBuf, sync::Arc};
-
 use async_trait::async_trait;
+use log::{info, warn};
 
 use browser::BrowserPool;
-use def::ProviderDef;
+use def::{ProviderDef, ProviderTag};
 use engine::YamlProvider;
 use error::ScraperError;
-use log::{info, warn};
+
+// If you're reading this. I'm so sorry.
 
 // ---------------------------------------------------------------------------
 // Output types (runtime only — never persisted to DB)
@@ -50,6 +51,9 @@ pub struct ProviderChapterInfo {
 pub struct PageUrl {
     pub url: String,
     pub index: u32,
+    /// Optional per-page referrer override (e.g. supplied by a provider's return step).
+    /// Falls back to the chapter URL if absent.
+    pub referrer: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -73,10 +77,6 @@ pub struct ScraperCtx {
     /// When true, print step-level diagnostics to stderr (selector match counts,
     /// field extraction stats, variable values, etc.). Always enabled in scraper_test.
     pub verbose: bool,
-    /// Base URL of a running FlareSolverr instance (e.g. `http://localhost:8191`).
-    /// When set, Cloudflare challenge pages are bypassed by calling FlareSolverr
-    /// and injecting the resulting cookies before reloading.
-    pub flaresolverr_url: Option<String>,
 }
 
 impl ScraperCtx {
@@ -86,7 +86,6 @@ impl ScraperCtx {
             browser,
             dump_html: false,
             verbose: false,
-            flaresolverr_url: None,
         }
     }
 }
@@ -128,6 +127,16 @@ pub trait Provider: Send + Sync {
     /// Defaults to 0 (no delay).
     fn page_delay_ms(&self) -> u64 {
         0
+    }
+
+    /// Provider version string, if declared in the YAML (e.g. "1", "2.1").
+    fn version(&self) -> Option<&str> {
+        None
+    }
+
+    /// Quality / characteristic tags declared for this provider.
+    fn tags(&self) -> &[ProviderTag] {
+        &[]
     }
 
     /// Search for a manga by title. Returns ranked candidates.

@@ -2,6 +2,16 @@
 
 This a informal changelog so i can keep track of what im doing.
 
+## 2026-03-22
+
+- Added WeebDex provider
+- Added MangaBuddy provider
+- Added MangaHub provider
+- Tested and Added MangaDex Provider
+    - No longer crashes when you search for something that links to the publisher!
+- AllManga provider is working
+- Added better provider handling
+
 ## 2026-03-21
 
 - Scandisk will mark deleted chapters as missing again

@@ -59,8 +59,7 @@ async fn main() -> Result<(), rocket::Error> {
         }
     }
 
-    let mut scraper_ctx = ScraperCtx::new(http_client.clone(), browser_pool);
-    scraper_ctx.flaresolverr_url = std::env::var("REBARR_FLARESOLVERR_URL").ok();
+    let scraper_ctx = ScraperCtx::new(http_client.clone(), browser_pool);
 
     // Background Task Handler start
     let cancel_map: CancelMap = Arc::new(Mutex::new(HashMap::new()));

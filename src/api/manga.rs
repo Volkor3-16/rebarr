@@ -55,6 +55,8 @@ struct PatchMangaRequest {
 struct ProviderInfo {
     name: String,
     needs_browser: bool,
+    version: Option<String>,
+    tags: Vec<crate::scraper::def::ProviderTag>,
 }
 
 #[derive(Serialize)]
@@ -390,6 +392,8 @@ pub async fn list_providers(
         .map(|p| ProviderInfo {
             name: p.name().to_owned(),
             needs_browser: p.needs_browser(),
+            version: p.version().map(str::to_owned),
+            tags: p.tags().to_vec(),
         })
         .collect();
     Json(providers)

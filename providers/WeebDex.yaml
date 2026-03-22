@@ -1,0 +1,99 @@
+name: WeebDex
+base_url: https://weebdex.org
+version: "1"
+tags:
+  - hub
+  - multi_language
+rate_limit:
+  requests_per_minute: 30
+  page_delay_ms: 500
+
+search:
+  steps:
+    - open: "{base_url}"
+    - fetch:
+        url: "https://api.weebdex.org/manga?title={query}&order[relevance]=desc&contentRating[]=safe&contentRating[]=suggestive&contentRating[]=erotica&contentRating[]=pornographic&limit=50"
+        method: GET
+        headers:
+          User-Agent: "Mozilla/5.0 (X11; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0"
+          Accept: "*/*"
+          Accept-Language: "en-US,en;q=0.9"
+          Referer: "https://weebdex.org/"
+          Origin: "https://weebdex.org"
+        var: search_data
+        json_path: data
+    - from_json:
+        var: search_data
+        extract:
+          title: title
+          url: id
+          cover: relationships.cover.id
+        prefix:
+          url: "https://api.weebdex.org/manga/"
+
+chapters:
+  steps:
+    - open: "{base_url}"
+    - extract_js:
+        var: chapters_json
+        script: |
+          (async () => {
+            try {
+              const resp = await fetch('https://api.weebdex.org/manga/{manga_url|basename}/chapters?limit=100&page=1', {
+                headers: {
+                  'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0',
+                  'Accept': '*/*',
+                  'Referer': 'https://weebdex.org/',
+                  'Origin': 'https://weebdex.org'
+                }
+              });
+              const data = await resp.json();
+              const chapters = data.data || [];
+              const result = chapters.map(ch => ({
+                number_raw: ch.chapter || '0',
+                title: ch.title || '',
+                url: ch.id,
+                language: ch.language || '',
+                scanlator_group: (ch.relationships?.groups || []).map(g => g.name).join(', ')
+              }));
+              return JSON.stringify(result);
+            } catch(e) {
+              return '[]';
+            }
+          })()
+    - from_json:
+        var: chapters_json
+        extract:
+          number_raw: number_raw
+          title: title
+          url: url
+          language: language
+          scanlator_group: scanlator_group
+
+pages:
+  steps:
+    - open: "{base_url}"
+    - extract_js:
+        var: page_urls
+        script: |
+          (async () => {
+            try {
+              const resp = await fetch('https://api.weebdex.org/chapter/{chapter_url|basename}', {
+                headers: {
+                  'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0',
+                  'Accept': '*/*',
+                  'Referer': 'https://weebdex.org/',
+                  'Origin': 'https://weebdex.org'
+                }
+              });
+              const data = await resp.json();
+              const node = data.node || '';
+              const chapterId = '{chapter_url|basename}';
+              const pages = data.data || [];
+              const urls = pages.map(p => node + '/data/' + chapterId + '/' + p.name);
+              return JSON.stringify(urls);
+            } catch(e) {
+              return '[]';
+            }
+          })()
+    - return: "{page_urls}"
