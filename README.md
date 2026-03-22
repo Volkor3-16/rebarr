@@ -24,7 +24,8 @@ I think we need to rework how pages are downloaded:
 - Downloads report status by page (to show progress in frontend)
 - We should use proper referrers and all the good stuff we need to bypass hotlinking/cloudflare protections
 - We shouldn't let the browser disconnect and crash? Do we start a new browser session on each task, and close it during completion?
-- Providers steps shouldn't need a random ass - open and then hit another endpoint why have the open step at all?
+- Providers steps shouldn't need a random ass `- open` and then hit another endpoint why have the open step at all?
+- Add date extraction from all the providers, atsumaru/mangahub/mangabuddy don't have them atm
 
 - [ ] Get Mangakakalot working
 - [ ] Get Mangago working

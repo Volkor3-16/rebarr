@@ -68,6 +68,24 @@ pub async fn list_chapters(pool: &State<SqlitePool>, id: &str) -> ApiResult<Vec<
         .await
         .map_err(internal)?;
 
+    // Get preferred language setting
+    let preferred_language = db::settings::get(pool.inner(), "preferred_language", "")
+        .await
+        .map_err(internal)?;
+
+    // Filter chapters by preferred language if set
+    let filtered_rows: Vec<_> = if !preferred_language.is_empty() {
+        all_rows
+            .into_iter()
+            .filter(|ch| {
+                // Allow chapters with matching language or no language specified
+                ch.language.eq_ignore_ascii_case(&preferred_language) || ch.language.is_empty()
+            })
+            .collect()
+    } else {
+        all_rows
+    };
+
     let canonical_uuids: std::collections::HashSet<String> =
         db::chapter::get_canonical_uuids(pool.inner(), manga_id)
             .await
@@ -79,7 +97,7 @@ pub async fn list_chapters(pool: &State<SqlitePool>, id: &str) -> ApiResult<Vec<
         .await
         .map_err(internal)?;
 
-    let items = all_rows
+    let items = filtered_rows
         .into_iter()
         .map(|ch| {
             let is_canonical = canonical_uuids.contains(&ch.id.to_string());
