@@ -26,7 +26,7 @@ If you're here because you're hoping for your favourite site to be added, make a
 | Mangakakalot   | ?                       | BROKEN      | My personal addition. Low quality, slow but large library. Great backup, but broken due to cloudflare blocks, will fix when they lower blocks |
 | Kagane         | ?                       | N/A         | Decent Library, good tagging, good quality. Worth it. (and lots of hentai for the gooners)|
 | MangaFire      | ?                       | N/A         | Older library, meh quality and tags. |
-| MangaHub       | ?                       | N/A         | Large library, uses names of taken down sites. |
+| MangaHub       | ?                       | **WORKING** | Large library, uses names of taken down sites. |
 | ReadComicOnline| ?                       | N/A         | Good site for Western Comics |
 
 
