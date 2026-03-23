@@ -28,12 +28,19 @@ chapters:
   steps:
     - open: "{base_url}"
     - fetch:
-        url: "{base_url}/api/manga/{manga_url|basename}/chapters?limit=50&offset=0"
+        url: "{base_url}/api/manga/{manga_url|basename}/chapters"
         method: GET
         headers:
           Referer: "{manga_url}"
         var: chapters_data
         json_path: data.chapters
+        pagination:
+          meta_path: "data.pagination"
+          current_page_field: "current_page"
+          last_page_field: "last_page"
+          page_param: "offset"
+          start_page: 0
+          max_pages: 20
     - from_json:
         var: chapters_data
         extract:

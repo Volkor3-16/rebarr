@@ -54,62 +54,32 @@ chapters:
     - extract_js:
         var: manga_id
         script: "window.location.pathname.split('/')[2]"
-    - script: |
-        fetch('https://api.mangadex.org/manga/{manga_id}/feed?limit=500&contentRating[]=safe&contentRating[]=suggestive&contentRating[]=erotica&includeFutureUpdates=0&includeEmptyPages=0&includeExternalUrl=0&includes[]=scanlation_group&order[chapter]=asc')
-          .then(r => r.json())
-          .then(function(j) { window._md_chapters = j.data || []; });
-    - sleep: 2000
-    - script: |
-        document.body.innerHTML = '<div id="md-ch-list"></div>';
-        var container = document.getElementById('md-ch-list');
-        (window._md_chapters || []).forEach(function(ch) {
-          var attrs = ch.attributes || {};
-          if (attrs.isUnavailable) return;
-          var rel = ch.relationships || [];
-          var sgRel = rel.find(function(r) { return r.type === 'scanlation_group'; });
-          var scanlator = (sgRel && sgRel.attributes && sgRel.attributes.name) || '';
-          var div = document.createElement('div');
-          div.className = 'md-chapter';
-          div.setAttribute('data-number', attrs.chapter || '0');
-          div.setAttribute('data-title', attrs.title || '');
-          div.setAttribute('data-volume', attrs.volume || '');
-          div.setAttribute('data-url', 'https://mangadex.org/chapter/' + ch.id);
-          div.setAttribute('data-scanlator', scanlator);
-          div.setAttribute('data-language', attrs.translatedLanguage || '');
-          div.setAttribute('data-date', attrs.updatedAt ? Math.floor(new Date(attrs.updatedAt).getTime() / 1000) : '');
-          container.appendChild(div);
-        });
-    - foreach:
-        selector: ".md-chapter"
+    - fetch:
+        url: "https://api.mangadex.org/manga/{manga_id}/feed"
+        method: GET
+        var: chapters_response
+        json_path: "data"
+        pagination:
+          meta_path: ""
+          current_page_field: "current_page"
+          last_page_field: "last_page"
+          total_field: "total"
+          per_page_field: "limit"
+          page_param: "offset"
+          start_page: 0
+          max_pages: 20
+    - from_json:
+        var: chapters_response
         extract:
-          number_raw:
-            selector: ""
-            content: attr
-            attr_name: data-number
-          title:
-            selector: ""
-            content: attr
-            attr_name: data-title
-          volume:
-            selector: ""
-            content: attr
-            attr_name: data-volume
-          url:
-            selector: ""
-            content: attr
-            attr_name: data-url
-          scanlator_group:
-            selector: ""
-            content: attr
-            attr_name: data-scanlator
-          language:
-            selector: ""
-            content: attr
-            attr_name: data-language
-          date:
-            selector: ""
-            content: attr
-            attr_name: data-date
+          number_raw: "attributes.chapter"
+          title: "attributes.title"
+          volume: "attributes.volume"
+          url: "id"
+          scanlator_group: "relationships[?type=='scanlation_group'].attributes.name"
+          language: "attributes.translatedLanguage"
+          date: "attributes.updatedAt"
+        prefix:
+          url: "https://mangadex.org/chapter/"
 
 pages:
   steps:

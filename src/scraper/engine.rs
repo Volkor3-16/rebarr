@@ -282,15 +282,64 @@ impl YamlProvider {
                     p.wait_for("body", 10_000)
                         .await
                         .map_err(|e| ScraperError::Timeout(format!("body did not appear: {e}")))?;
-                    // Wait for any XHR/fetch requests triggered by page JS to settle.
-                    // Ignored on timeout — some pages never reach true network idle.
-                    // ZAC NOTE: this sucks
-                    p.wait_for_network_idle(1000, 30_000).await.ok();
 
+                    // Poll for Cloudflare challenges while waiting for the page to load.
+                    // The browser's stealth scripts can auto-bypass CF challenges,
+                    // so we wait and re-check rather than failing immediately.
+                    //
+                    // We do a quick initial poll (500ms intervals) to detect CF early,
+                    // but respect the full timeout so JS has time to execute API calls.
+                    let timeout = Duration::from_secs(30);
+                    let poll_interval = Duration::from_millis(500);
+                    let min_settle_time = Duration::from_secs(3);
+                    let start = std::time::Instant::now();
+                    let mut cloudflare_detected = false;
+
+                    loop {
+                        let elapsed = start.elapsed();
+                        if elapsed >= timeout {
+                            break;
+                        }
+
+                        // Check current HTML for Cloudflare challenge
+                        if let Ok(html) = p.content().await {
+                            let is_challenge = is_cf_challenge(&html);
+                            if is_challenge {
+                                if !cloudflare_detected {
+                                    debug!(
+                                        "Cloudflare challenge detected at {url}, waiting for auto-bypass..."
+                                    );
+                                    cloudflare_detected = true;
+                                }
+                            } else if cloudflare_detected {
+                                // Challenge was present but page has loaded — bypassed!
+                                info!("Cloudflare challenge auto-bypassed at {url}");
+                                break;
+                            } else if elapsed >= min_settle_time {
+                                // No CF challenge and minimum settle time passed —
+                                // wait for network to become idle to let JS API calls complete
+                                let remaining_ms = timeout.saturating_sub(elapsed).as_millis() as u64;
+                                p.wait_for_network_idle(1000, remaining_ms)
+                                    .await
+                                    .ok();
+                                break;
+                            }
+                        }
+
+                        tokio::time::sleep(poll_interval).await;
+                    }
+
+                    // Small delay to let page JS finish processing after API calls complete.
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+
+                    // Final check: if Cloudflare challenge still present, fail
                     if let Ok(html) = p.content().await {
                         if is_cf_challenge(&html) {
+                            if let Some(ref p) = page {
+                                let _ = browser.close_tab(p.target_id()).await;
+                            }
                             return Err(ScraperError::Browser(format!(
-                                "Cloudflare challenge page detected at {url} — provider is blocked"
+                                "Cloudflare challenge persisted at {url} — provider is blocked"
                             )));
                         }
                     }
@@ -360,6 +409,10 @@ impl YamlProvider {
                         Err(e) => {
                             if ctx.verbose {
                                 eprintln!("[step] wait_for '{sel}' → TIMEOUT");
+                            }
+                            // Close the tab before returning — otherwise it stays open in Chrome.
+                            if let Some(ref p) = page {
+                                let _ = browser.close_tab(p.target_id()).await;
                             }
                             return Err(ScraperError::Timeout(format!("wait_for '{sel}': {e}")));
                         }
@@ -553,78 +606,206 @@ impl YamlProvider {
                 }
 
                 StepDef::Fetch { fetch: fetch_def } => {
-                    if ctx.verbose {
-                        eprintln!("[step] fetch → url={}", fetch_def.url);
-                    }
                     let p = require_page(&page, "fetch")?;
                     
-                    let url = self.expand(&fetch_def.url, &vars);
-                    let method = fetch_def.method.to_uppercase();
-                    
-                    // Build headers object
-                    let mut headers_js = String::new();
-                    for (key, val) in &fetch_def.headers {
-                        let expanded_val = self.expand(val, &vars);
-                        headers_js.push_str(&format!("'{}': '{}',", key, expanded_val.replace('\'', "\\\'")));
-                    }
-                    
-                    // Build body if present - pass as raw string
-                    let body_js = fetch_def.body.as_ref()
-                        .map(|b| self.expand(b, &vars))
-                        .map(|b| format!(", body: `{}`", b.replace('`', "\\`")))
-                        .unwrap_or_default();
-                    
-                    let js = format!(r#"
-                        (async () => {{
-                            const headers = {{{}}};
-                            const opts = {{
-                                method: '{}',
-                                headers: headers{}
-                            }};
-                            try {{
-                                const resp = await fetch('{}', opts);
-                                return await resp.text();
-                            }} catch(e) {{
-                                return 'ERROR:' + e.message;
-                            }}
-                        }})()
-                    "#, 
-                        headers_js, 
-                        method, 
-                        body_js,
-                        url.replace('\'', "\\\'")
-                    );
-                    
-                    match p.evaluate::<String>(&js).await {
-                        Ok(response) => {
-                            if response.starts_with("ERROR:") {
-                                warn!("[step] fetch failed: {}", response);
+                    if let Some(ref pagination) = fetch_def.pagination {
+                        // Handle paginated fetch
+                        let mut all_items: Vec<serde_json::Value> = Vec::new();
+                        let mut current_page = pagination.start_page;
+                        let mut last_page = pagination.max_pages;
+                        
+                        for _ in 0..pagination.max_pages {
+                            let mut url = self.expand(&fetch_def.url, &vars);
+                            
+                            // Add page parameter to URL
+                            if url.contains('?') {
+                                url.push_str(&format!("&{}={}", pagination.page_param, current_page));
                             } else {
-                                let value = if let Some(ref path) = fetch_def.json_path {
-                                    parse_json_path(&response, path)
-                                } else {
-                                    response
-                                };
-                                if ctx.verbose {
-                                    let preview = &value[..value.len().min(120)];
-                                    eprintln!("[step] fetch stored in '{}': {}", fetch_def.var, preview);
-                                }
-                                vars.insert(fetch_def.var.clone(), value);
+                                url.push_str(&format!("?{}={}", pagination.page_param, current_page));
                             }
+                            
+                            if ctx.verbose {
+                                eprintln!("[step] fetch (page {current_page}) → url={url}");
+                            }
+                            
+                            let method = fetch_def.method.to_uppercase();
+                            
+                            // Build headers object
+                            let mut headers_js = String::new();
+                            for (key, val) in &fetch_def.headers {
+                                let expanded_val = self.expand(val, &vars);
+                                headers_js.push_str(&format!("'{}': '{}',", key, expanded_val.replace('\'', "\\\'")));
+                            }
+                            
+                            // Build body if present - pass as raw string
+                            let body_js = fetch_def.body.as_ref()
+                                .map(|b| self.expand(b, &vars))
+                                .map(|b| format!(", body: `{}`", b.replace('`', "\\`")))
+                                .unwrap_or_default();
+                            
+                            let js = format!(r#"
+                                (async () => {{
+                                    const headers = {{{}}};
+                                    const opts = {{
+                                        method: '{}',
+                                        headers: headers{}
+                                    }};
+                                    try {{
+                                        const resp = await fetch('{}', opts);
+                                        return await resp.text();
+                                    }} catch(e) {{
+                                        return 'ERROR:' + e.message;
+                                    }}
+                                }})()
+                            "#, 
+                                headers_js, 
+                                method, 
+                                body_js,
+                                url.replace('\'', "\\\'")
+                            );
+                            
+                            match p.evaluate::<String>(&js).await {
+                                Ok(response) => {
+                                    if response.starts_with("ERROR:") {
+                                        warn!("[step] fetch failed: {}", response);
+                                        break;
+                                    }
+                                    
+                                    // Parse response
+                                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&response) {
+                                        // Extract pagination metadata if configured
+                                        if let Some(ref meta_path) = pagination.meta_path {
+                                            let meta = parse_json_value(&json, meta_path);
+                                            if let Some(last_page_val) = meta.get(&pagination.last_page_field) {
+                                                if let Some(lp) = last_page_val.as_u64() {
+                                                    last_page = lp as u32;
+                                                }
+                                            }
+                                        }
+                                        
+                                        // Extract data items
+                                        let data_path = fetch_def.json_path.as_deref().unwrap_or("");
+                                        let items = if data_path.is_empty() {
+                                            json.as_array().cloned().unwrap_or_default()
+                                        } else {
+                                            parse_json_value(&json, data_path).as_array().cloned().unwrap_or_default()
+                                        };
+                                        
+                                        if items.is_empty() {
+                                            if ctx.verbose {
+                                                eprintln!("[step] fetch (page {current_page}) → empty response, stopping");
+                                            }
+                                            break;
+                                        }
+                                        
+                                        let items_count = items.len();
+                                        all_items.extend(items);
+                                        
+                                        if ctx.verbose {
+                                            eprintln!("[step] fetch (page {current_page}) → {items_count} items (total: {})", all_items.len());
+                                        }
+                                    } else {
+                                        warn!("[step] fetch response is not valid JSON");
+                                        break;
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!("[step] fetch execute failed: {e}");
+                                    break;
+                                }
+                            }
+                            
+                            // Check if we've reached the last page
+                            if current_page >= last_page {
+                                if ctx.verbose {
+                                    eprintln!("[step] fetch → reached last page ({last_page}), stopping");
+                                }
+                                break;
+                            }
+                            
+                            current_page += 1;
                         }
-                        Err(e) => {
-                            warn!("[step] fetch execute failed: {e}");
+                        
+                        // Store accumulated results
+                        let value = serde_json::to_string(&all_items).unwrap_or_else(|_| "[]".to_string());
+                        if ctx.verbose {
+                            eprintln!("[step] fetch pagination complete → {} total items stored in '{}'", 
+                                all_items.len(), fetch_def.var);
+                        }
+                        vars.insert(fetch_def.var.clone(), value);
+                    } else {
+                        // Non-paginated fetch (original behavior)
+                        let url = self.expand(&fetch_def.url, &vars);
+                        if ctx.verbose {
+                            eprintln!("[step] fetch → url={url}");
+                        }
+                        let method = fetch_def.method.to_uppercase();
+                        
+                        // Build headers object
+                        let mut headers_js = String::new();
+                        for (key, val) in &fetch_def.headers {
+                            let expanded_val = self.expand(val, &vars);
+                            headers_js.push_str(&format!("'{}': '{}',", key, expanded_val.replace('\'', "\\\'")));
+                        }
+                        
+                        // Build body if present - pass as raw string
+                        let body_js = fetch_def.body.as_ref()
+                            .map(|b| self.expand(b, &vars))
+                            .map(|b| format!(", body: `{}`", b.replace('`', "\\`")))
+                            .unwrap_or_default();
+                        
+                        let js = format!(r#"
+                            (async () => {{
+                                const headers = {{{}}};
+                                const opts = {{
+                                    method: '{}',
+                                    headers: headers{}
+                                }};
+                                try {{
+                                    const resp = await fetch('{}', opts);
+                                    return await resp.text();
+                                }} catch(e) {{
+                                    return 'ERROR:' + e.message;
+                                }}
+                            }})()
+                        "#, 
+                            headers_js, 
+                            method, 
+                            body_js,
+                            url.replace('\'', "\\\'")
+                        );
+                        
+                        match p.evaluate::<String>(&js).await {
+                            Ok(response) => {
+                                if response.starts_with("ERROR:") {
+                                    warn!("[step] fetch failed: {}", response);
+                                } else {
+                                    let value = if let Some(ref path) = fetch_def.json_path {
+                                        parse_json_path(&response, path)
+                                    } else {
+                                        response
+                                    };
+                                    if ctx.verbose {
+                                        let preview = &value[..value.len().min(120)];
+                                        eprintln!("[step] fetch stored in '{}': {}", fetch_def.var, preview);
+                                    }
+                                    vars.insert(fetch_def.var.clone(), value);
+                                }
+                            }
+                            Err(e) => {
+                                warn!("[step] fetch execute failed: {e}");
+                            }
                         }
                     }
                 }
 
                 StepDef::Graphql { graphql: graphql_def } => {
-                    if ctx.verbose {
-                        eprintln!("[step] graphql → url={}", graphql_def.url);
-                    }
                     let p = require_page(&page, "graphql")?;
                     
                     let url = self.expand(&graphql_def.url, &vars);
+                    if ctx.verbose {
+                        eprintln!("[step] graphql → url={url}");
+                    }
 
                     // Expand templates in variables, then serialize as JSON.
                     // JSON is valid JS syntax so we can inline it directly as a literal.
@@ -750,7 +931,12 @@ impl YamlProvider {
             }
         }
 
-        // Page closes when dropped.
+        // Close the Chrome tab explicitly before dropping the Rust Page handle.
+        // Dropping Page only decrements Arc<Transport>; without this, the tab
+        // stays open in Chrome and accumulates over thousands of scrape calls.
+        if let Some(ref p) = page {
+            let _ = browser.close_tab(p.target_id()).await;
+        }
         drop(page);
 
         if let Some(val) = early_return {
@@ -1309,4 +1495,13 @@ fn extract_json_value(json: &serde_json::Value, key_path: &str) -> Option<String
         serde_json::Value::String(s) => Some(s),
         other => Some(other.to_string()),
     }
+}
+
+/// Navigate to a specific path in a JSON value and return the result.
+fn parse_json_value(json: &serde_json::Value, path: &str) -> serde_json::Value {
+    let mut current = json.clone();
+    for key in path.split('.') {
+        current = current.get(key).cloned().unwrap_or(serde_json::Value::Null);
+    }
+    current
 }

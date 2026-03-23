@@ -319,6 +319,9 @@ pub struct FetchDef {
     /// Optional JSON path to extract a specific value from the response.
     #[serde(default)]
     pub json_path: Option<String>,
+    /// Optional pagination configuration for fetching multiple pages.
+    #[serde(default)]
+    pub pagination: Option<PaginationDef>,
 }
 
 fn default_method_get() -> String {
@@ -348,6 +351,9 @@ pub struct GraphqlDef {
     /// Content-Type: application/json is always included automatically.
     #[serde(default)]
     pub headers: HashMap<String, String>,
+    /// Optional pagination configuration for fetching multiple pages.
+    #[serde(default)]
+    pub pagination: Option<PaginationDef>,
 }
 
 // ---------------------------------------------------------------------------
@@ -364,4 +370,79 @@ pub struct FromJsonDef {
     /// Optional per-field prefixes (e.g. to prepend base_url to URLs).
     #[serde(default)]
     pub prefix: HashMap<String, String>,
+}
+
+// ---------------------------------------------------------------------------
+// Pagination configuration
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PaginationDef {
+    /// JSON path to pagination metadata in the response (e.g., "data.pagination", "meta").
+    /// If not provided, falls back to counting items and stopping when empty.
+    pub meta_path: Option<String>,
+    /// Field in metadata containing current page number (default: "current_page").
+    #[serde(default = "default_current_page_field")]
+    pub current_page_field: String,
+    /// Field in metadata containing last page number (default: "last_page").
+    #[serde(default = "default_last_page_field")]
+    pub last_page_field: String,
+    /// Field in metadata containing total count (default: "total").
+    #[serde(default = "default_total_field")]
+    pub total_field: String,
+    /// Field in metadata containing per-page count (default: "per_page").
+    #[serde(default = "default_per_page_field")]
+    pub per_page_field: String,
+    /// Query parameter name for page number (default: "page").
+    #[serde(default = "default_page_param")]
+    pub page_param: String,
+    /// Starting page number (default: 1).
+    #[serde(default = "default_start_page")]
+    pub start_page: u32,
+    /// Maximum number of pages to fetch (default: 20, safety limit).
+    #[serde(default = "default_max_pages")]
+    pub max_pages: u32,
+}
+
+impl Default for PaginationDef {
+    fn default() -> Self {
+        Self {
+            meta_path: None,
+            current_page_field: default_current_page_field(),
+            last_page_field: default_last_page_field(),
+            total_field: default_total_field(),
+            per_page_field: default_per_page_field(),
+            page_param: default_page_param(),
+            start_page: default_start_page(),
+            max_pages: default_max_pages(),
+        }
+    }
+}
+
+fn default_current_page_field() -> String {
+    "current_page".to_string()
+}
+
+fn default_last_page_field() -> String {
+    "last_page".to_string()
+}
+
+fn default_total_field() -> String {
+    "total".to_string()
+}
+
+fn default_per_page_field() -> String {
+    "per_page".to_string()
+}
+
+fn default_page_param() -> String {
+    "page".to_string()
+}
+
+fn default_start_page() -> u32 {
+    1
+}
+
+fn default_max_pages() -> u32 {
+    20
 }

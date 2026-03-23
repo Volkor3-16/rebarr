@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use eoka::{Browser, StealthConfig};
+use eoka::stealth::fingerprint::{Fingerprint, Platform};
 use tokio::sync::Mutex;
 
 use crate::scraper::error::ScraperError;
@@ -38,11 +39,23 @@ impl BrowserPool {
 
         let config = StealthConfig {
             headless,
-            // patch_binary modifies the Chrome binary on disk (~400 MB copy).
-            // Disabled to avoid issues in environments with read-only Chrome installs.
-            // eoka's CDP command filtering provides substantial evasion without it.
-            patch_binary: false,
-            ..StealthConfig::default()
+            webgl_spoof: true,
+            canvas_spoof: true,
+            audio_spoof: true,
+            human_mouse: true,
+            human_typing: true,
+            user_agent: Some("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.7680.153 Safari/537.36".to_string()),
+            chrome_path: None,
+            patch_binary: false, // This might break on non-writable installs
+            viewport_width: 1366,
+            viewport_height: 768,
+            debug: false,
+            debug_dir: None,
+            proxy: None,
+            proxy_username: None,
+            proxy_password: None,
+            cdp_timeout: 30,
+            timezone: Some("Australia/Melbourne".to_string()),
         };
 
         let browser = Browser::launch_with_config(config)
@@ -60,7 +73,21 @@ impl BrowserPool {
     /// this when a CDP transport error indicates the connection is dead.
     pub async fn reset(&self) {
         let mut guard = self.inner.lock().await;
-        *guard = None;
+        if let Some(browser_arc) = guard.take() {
+            // If we're the sole owner, call close() which sends a graceful
+            // CDP shutdown and waits for the Chrome process to exit (no zombies).
+            // If other code still holds the Arc, just drop our reference and
+            // rely on Transport::drop() for cleanup.
+            match Arc::try_unwrap(browser_arc) {
+                Ok(browser) => {
+                    let _ = browser.close().await;
+                }
+                Err(_arc) => {
+                    // Arc still shared — drop it; Transport::drop will kill Chrome
+                    // when the last reference goes away.
+                }
+            }
+        }
     }
 }
 

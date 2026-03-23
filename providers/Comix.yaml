@@ -4,7 +4,6 @@ version: "1"
 tags:
   - cloudflare
   - aggregator
-  - unstable
   - multi_language
 rate_limit:
   requests_per_minute: 30
@@ -15,91 +14,56 @@ rate_limit:
 
 search:
   steps:
-    - open: "/browser?keyword={query}&order=relevance%3Adesc&genres=-87264,-87266,-87268,-87265&genres_mode=and"
-    - foreach:
-        selector: ".item"
+    - open: "{base_url}"
+    - fetch:
+        url: "https://comix.to/api/v2/manga?exclude_genres[]=87264&exclude_genres[]=87266&exclude_genres[]=87268&exclude_genres[]=87265&keyword={query}&order[relevance]=desc&limit=6"
+        method: GET
+        headers:
+          Referer: "https://comix.to/home"
+        var: search_response
+        json_path: "result.items"
+    - from_json:
+        var: search_response
         extract:
-          title:
-            selector: ".detail a.title"
-            content: text
-          url:
-            selector: ".detail a.title"
-            content: attr
-            attr_name: href
-            prefix: "{base_url}"
-          cover:
-            selector: ".poster img"
-            content: attr
-            attr_name: src
+          title: title
+          url: hash_id
+          cover: poster.medium
+        prefix:
+          url: "{base_url}/title/"
 
 chapters:
   steps:
     - open: "{manga_url}"
-    # grok add yogurt to this step (I have no idea how this works)
-    # TODO: we should check the is_official tag first before scraping scanlation_group name, some tags are `Official?` but flagged as is_official...
     - extract_js:
-        var: _injected
-        script: |
-          (async function() {
-            var hash = (window.location.href.match(/\/title\/([^/-]+)/) || [])[1];
-            if (!hash) return 'no-hash';
-            var all = [];
-            for (var page = 1; ; page++) {
-              var r = await fetch('/api/v2/manga/' + hash + '/chapters?limit=100&page=' + page + '&order[number]=asc');
-              var data = await r.json();
-              var items = (data.result && data.result.items) || [];
-              if (!items.length) break;
-              all = all.concat(items);
-              var last = (data.result.pagination && data.result.pagination.last_page) || 1;
-              if (page >= last) break;
-            }
-            var base = window.location.href.split('?')[0].replace(/\/$/, '');
-            var c = document.createElement('div');
-            c.id = 'rebarr-chapters';
-            all.forEach(function(ch) {
-              var a = document.createElement('a');
-              a.className = 'rebarr-chapter';
-              a.setAttribute('data-number', ch.number);
-              a.setAttribute('data-language', ch.language);
-              a.setAttribute('data-date', ch.created_at);
-              a.setAttribute('data-scanlator', ch.scanlation_group ? ch.scanlation_group.name : '');
-              a.setAttribute('data-title', ch.name || ('Chapter ' + ch.number)); // fallback
-              a.href = base + '/' + ch.chapter_id + '-chapter-' + ch.number;
-              c.appendChild(a);
-            });
-            document.body.appendChild(c);
-            return 'ok:' + all.length;
-          })();
-    - foreach:
-        selector: "#rebarr-chapters .rebarr-chapter"
+        var: manga_hash
+        script: "(window.location.href.match(/\\/title\\/([^/-]+)/) || [])[1]"
+    - fetch:
+        url: "{base_url}/api/v2/manga/{manga_hash}/chapters"
+        method: GET
+        headers:
+          Referer: "{manga_url}"
+        var: chapters_response
+        json_path: "result.items"
+        pagination:
+          meta_path: "result.pagination"
+          current_page_field: "current_page"
+          last_page_field: "last_page"
+          page_param: "page"
+          start_page: 1
+          max_pages: 10
+    - from_json:
+        var: chapters_response
         extract:
-          number_raw:
-            selector: ""
-            content: attr
-            attr_name: data-number
-          title:
-            selector: ""
-            content: attr
-            attr_name: data-title
-          url:
-            selector: ""
-            content: attr
-            attr_name: href
-          language:
-            selector: ""
-            content: attr
-            attr_name: data-language
-          date:
-            selector: ""
-            content: attr
-            attr_name: data-date
-            date_format: "%s"
-          scanlator_group:
-            selector: ""
-            content: attr
-            attr_name: data-scanlator
+          number_raw: number
+          title: name
+          url: chapter_id
+          language: language
+          date: created_at
+          scanlator_group: scanlation_group.name
+        prefix:
+          url: "{manga_url}/"
 
-# We do some fuckery here, scrape the dom for all scripts, and return a list of all the webp images (likely chapters)
+# Pages: scrape all webp image URLs from script tags
 pages:
   steps:
     - open: "{chapter_url}"

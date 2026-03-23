@@ -465,6 +465,9 @@ pub async fn download_pages_via_browser(
         .await
         .map_err(|e| std::io::Error::other(e.to_string()))?;
 
+    // Close the Chrome tab explicitly — otherwise it stays open and leaks memory.
+    let _ = browser.close_tab(page.target_id()).await;
+
     results.sort_by_key(|(idx, _)| *idx);
     Ok(results)
 }

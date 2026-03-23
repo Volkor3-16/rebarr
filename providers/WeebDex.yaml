@@ -34,43 +34,32 @@ search:
 chapters:
   steps:
     - open: "{base_url}"
-    - extract_js:
-        var: chapters_json
-        script: |
-          (async () => {
-            try {
-              const resp = await fetch('https://api.weebdex.org/manga/{manga_url|basename}/chapters?limit=100&page=1', {
-                headers: {
-                  'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0',
-                  'Accept': '*/*',
-                  'Referer': 'https://weebdex.org/',
-                  'Origin': 'https://weebdex.org'
-                }
-              });
-              const data = await resp.json();
-              const chapters = data.data || [];
-              const result = chapters.map(ch => ({
-                number_raw: ch.chapter || '0',
-                title: ch.title || '',
-                url: ch.id,
-                language: ch.language || '',
-                scanlator_group: (ch.relationships?.groups || []).map(g => g.name).join(', '),
-                date: ch.updated_at ? Math.floor(new Date(ch.updated_at).getTime() / 1000).toString() : ''
-              }));
-              return JSON.stringify(result);
-            } catch(e) {
-              return '[]';
-            }
-          })()
+    - fetch:
+        url: "https://api.weebdex.org/manga/{manga_url|basename}/chapters"
+        method: GET
+        headers:
+          User-Agent: "Mozilla/5.0 (X11; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0"
+          Accept: "*/*"
+          Referer: "https://weebdex.org/"
+          Origin: "https://weebdex.org"
+        var: chapters_response
+        json_path: "data"
+        pagination:
+          meta_path: "meta"
+          current_page_field: "current_page"
+          last_page_field: "last_page"
+          page_param: "page"
+          start_page: 1
+          max_pages: 20
     - from_json:
-        var: chapters_json
+        var: chapters_response
         extract:
-          number_raw: number_raw
-          title: title
-          url: url
-          language: language
-          scanlator_group: scanlator_group
-          date: date
+          number_raw: "chapter"
+          title: "title"
+          url: "id"
+          language: "language"
+          scanlator_group: "relationships.groups"
+          date: "updated_at"
         prefix:
           url: "https://weebdex.org/chapter/"
 
