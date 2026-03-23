@@ -29,7 +29,7 @@ search:
           url: id
           cover: relationships.cover.id
         prefix:
-          url: "https://api.weebdex.org/manga/"
+          url: "https://weebdex.org/manga/"
 
 chapters:
   steps:
@@ -55,7 +55,7 @@ chapters:
                 url: ch.id,
                 language: ch.language || '',
                 scanlator_group: (ch.relationships?.groups || []).map(g => g.name).join(', '),
-                date: ch.updated_at || ''
+                date: ch.updated_at ? Math.floor(new Date(ch.updated_at).getTime() / 1000).toString() : ''
               }));
               return JSON.stringify(result);
             } catch(e) {
@@ -71,6 +71,8 @@ chapters:
           language: language
           scanlator_group: scanlator_group
           date: date
+        prefix:
+          url: "https://weebdex.org/chapter/"
 
 pages:
   steps:

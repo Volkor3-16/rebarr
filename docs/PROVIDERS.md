@@ -3,7 +3,6 @@
 A lot of the sites are supplied from https://everythingmoe.com/section/manga
 If you're here because you're hoping for your favourite site to be added, make a new issue :) (or even better, a PR!)
 
-
 | Provider Name  | Domain                  | Status      | Details |
 |----------------|-------------------------|-------------|---------|
 | Weeb Central   | weebcentral.com         | **WORKING** | Stock provider, ai did the whole thing in seconds. |
@@ -33,8 +32,6 @@ If you're here because you're hoping for your favourite site to be added, make a
 requests_per_minute - How many requests you can make to this provider (for any action)
 
 page_delay_ms - How long to wait between page downloads
-
-
 
 ## MangaDex
 

@@ -493,13 +493,11 @@ export async function loadChapters(mangaId) {
     for (const base of sortedBases) {
       const varMap = baseMap.get(base);
 
-      const extras = [];
+      const extrasByVariant = new Map();
       for (const [variant, chs] of varMap) {
-        for (const ch of chs) {
-          if (ch.is_extra) extras.push(ch);
-        }
+        const extraChs = chs.filter(ch => ch.is_extra);
+        if (extraChs.length > 0) extrasByVariant.set(variant, extraChs);
       }
-      extras.sort((a, b) => (b.chapter_variant || 0) - (a.chapter_variant || 0));
 
       const v0rows = (varMap.get(0) || []).filter(ch => !ch.is_extra);
       const v0canonical = v0rows.find(ch => ch.is_canonical) || null;
@@ -525,8 +523,12 @@ export async function loadChapters(mangaId) {
         }
       }
 
-      for (const extra of extras) {
-        rows += chapterRow(mangaId, extra, false, '').row;
+      const sortedExtraVariants = [...extrasByVariant.keys()].sort((a, b) => b - a);
+      for (const v of sortedExtraVariants) {
+        const vChs = extrasByVariant.get(v);
+        const canonical = vChs.find(ch => ch.is_canonical) || vChs[0];
+        const alts = vChs.filter(ch => ch !== canonical).sort((a, b) => (a.tier || 4) - (b.tier || 4));
+        rows += chapterGroupHtml(mangaId, base, canonical, alts, []);
       }
 
       if (mainCh) {
@@ -728,13 +730,11 @@ function renderFilteredChapters(filteredChapters) {
   for (const base of sortedBases) {
     const varMap = baseMap.get(base);
 
-    const extras = [];
+    const extrasByVariant = new Map();
     for (const [variant, chs] of varMap) {
-      for (const ch of chs) {
-        if (ch.is_extra) extras.push(ch);
-      }
+      const extraChs = chs.filter(ch => ch.is_extra);
+      if (extraChs.length > 0) extrasByVariant.set(variant, extraChs);
     }
-    extras.sort((a, b) => (b.chapter_variant || 0) - (a.chapter_variant || 0));
 
     const v0rows = (varMap.get(0) || []).filter(ch => !ch.is_extra);
     const v0canonical = v0rows.find(ch => ch.is_canonical) || null;
@@ -760,8 +760,12 @@ function renderFilteredChapters(filteredChapters) {
       }
     }
 
-    for (const extra of extras) {
-      rows += chapterRow(currentMangaId, extra, false, '').row;
+    const sortedExtraVariants = [...extrasByVariant.keys()].sort((a, b) => b - a);
+    for (const v of sortedExtraVariants) {
+      const vChs = extrasByVariant.get(v);
+      const canonical = vChs.find(ch => ch.is_canonical) || vChs[0];
+      const alts = vChs.filter(ch => ch !== canonical).sort((a, b) => (a.tier || 4) - (b.tier || 4));
+      rows += chapterGroupHtml(currentMangaId, base, canonical, alts, []);
     }
 
     if (mainCh) {
