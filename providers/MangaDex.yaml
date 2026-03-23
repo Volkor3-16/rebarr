@@ -64,6 +64,7 @@ chapters:
         var container = document.getElementById('md-ch-list');
         (window._md_chapters || []).forEach(function(ch) {
           var attrs = ch.attributes || {};
+          if (attrs.isUnavailable) return;
           var rel = ch.relationships || [];
           var sgRel = rel.find(function(r) { return r.type === 'scanlation_group'; });
           var scanlator = (sgRel && sgRel.attributes && sgRel.attributes.name) || '';
@@ -75,6 +76,7 @@ chapters:
           div.setAttribute('data-url', 'https://mangadex.org/chapter/' + ch.id);
           div.setAttribute('data-scanlator', scanlator);
           div.setAttribute('data-language', attrs.translatedLanguage || '');
+          div.setAttribute('data-date', attrs.updatedAt || '');
           container.appendChild(div);
         });
     - foreach:
@@ -104,6 +106,10 @@ chapters:
             selector: ""
             content: attr
             attr_name: data-language
+          date:
+            selector: ""
+            content: attr
+            attr_name: data-date
 
 pages:
   steps:

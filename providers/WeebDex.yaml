@@ -54,7 +54,8 @@ chapters:
                 title: ch.title || '',
                 url: ch.id,
                 language: ch.language || '',
-                scanlator_group: (ch.relationships?.groups || []).map(g => g.name).join(', ')
+                scanlator_group: (ch.relationships?.groups || []).map(g => g.name).join(', '),
+                date: ch.updated_at || ''
               }));
               return JSON.stringify(result);
             } catch(e) {
@@ -69,6 +70,7 @@ chapters:
           url: url
           language: language
           scanlator_group: scanlator_group
+          date: date
 
 pages:
   steps:
