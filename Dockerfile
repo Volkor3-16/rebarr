@@ -14,7 +14,8 @@ RUN adduser -u 1000 -D -s /bin/sh rebarr
 WORKDIR /app
 
 # Instead of ARG, just copy from target/release if artifacts are pulled
-COPY target/release/rebarr ./rebarr
+ARG BINARY_PATH=target/release/rebarr
+COPY ${BINARY_PATH} ./rebarr
 
 # Copy Rocket config (and other runtime files)
 COPY Rocket.toml ./Rocket.toml

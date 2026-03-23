@@ -1,4 +1,7 @@
-target/
+target/*
+!target/release
+target/release/*
+!target/release/rebarr
 .git/
 .env
 *.db
