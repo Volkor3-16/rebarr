@@ -17,8 +17,18 @@ WORKDIR /app
 ARG BINARY_PATH=target/release/rebarr
 COPY ${BINARY_PATH} ./rebarr
 
+# Copy web assets
+COPY web/ ./web/
+
+# Copy default providers (seeded to /data on first run by entrypoint)
+COPY providers/ ./providers/
+
 # Copy Rocket config (and other runtime files)
 COPY Rocket.toml ./Rocket.toml
+
+# Entrypoint script
+COPY docker-entrypoint.sh ./docker-entrypoint.sh
+RUN chmod +x ./docker-entrypoint.sh
 
 # Data dir
 RUN mkdir -p /data && chown rebarr:rebarr /data
@@ -35,4 +45,4 @@ ENV ROCKET_PORT=8000
 VOLUME ["/data"]
 EXPOSE 8000
 
-CMD ["./rebarr"]
+ENTRYPOINT ["./docker-entrypoint.sh"]
