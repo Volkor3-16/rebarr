@@ -25,8 +25,6 @@ I think we need to rework how pages are downloaded:
 - We should use proper referrers and all the good stuff we need to bypass hotlinking/cloudflare protections
 - We shouldn't let the browser disconnect and crash? Do we start a new browser session on each task, and close it during completion?
 - Providers steps shouldn't need a random ass `- open` and then hit another endpoint why have the open step at all?
-- Weebdex chapter urls are broke...
-- mangadex released_at are broke...
 
 - [ ] Get Mangakakalot working
 - [ ] Get Mangago working
