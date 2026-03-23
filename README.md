@@ -14,6 +14,7 @@ I'll remove this when I've got the first public release out, this is just a quic
 ### Backend
 - Full test of new chapter refresh -> chapter downloading
     - 2026-03-20: It refreshed automatically when my pc came out of sleep! noice!
+    - 2026-03-23: I've chucked it on the server, i'll import a fuckload of manga for it to try.
 - Full test of chapter upgrading from site
 - Chromium instances time out, and then we spawn another one, they stay open after we exit rebarr
     - Fix: use docker lmao
@@ -22,7 +23,6 @@ I'll remove this when I've got the first public release out, this is just a quic
 
 I think we need to rework how pages are downloaded:
 - Downloads report status by page (to show progress in frontend)
-- We should use proper referrers and all the good stuff we need to bypass hotlinking/cloudflare protections
 - We shouldn't let the browser disconnect and crash? Do we start a new browser session on each task, and close it during completion?
 - Providers steps shouldn't need a random ass `- open` and then hit another endpoint why have the open step at all?
 

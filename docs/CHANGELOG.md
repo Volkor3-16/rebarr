@@ -6,6 +6,7 @@ This a informal changelog so i can keep track of what im doing.
 
 - Add date scraping because i forgot to do that for the providers added yesterday
 - Simplify docker build pipeline (removed arm64 builds.. my poor poor garage orange pi....)
+- Split `scan_manga()` into like 5 different functions, make it betterer and simples
 
 ## 2026-03-22
 

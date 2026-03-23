@@ -175,7 +175,7 @@ export async function viewSeries(id) {
           banner.innerHTML = '';
           if (prevHadActive) { prevHadActive = false; loadChapters(m.id); }
         }
-      } catch(_) {}
+      } catch(e) { console.warn('Task poll error:', e); }
     };
     setPoll(pollTasks, 3000);
   } catch(e) {
@@ -405,7 +405,20 @@ function filterAndSortChapters(chapters) {
   
   // Filter by status
   if (currentFilter.status) {
-    filtered = filtered.filter(ch => ch.download_status === currentFilter.status);
+    if (currentFilter.status === 'Missing') {
+      // Build a set of (base,variant) pairs that are NOT missing
+      // (i.e. at least one provider has it downloaded/queued/downloading/failed)
+      const hasAnyNonMissing = new Set();
+      for (const ch of filtered) {
+        if (ch.download_status !== 'Missing') {
+          hasAnyNonMissing.add(`${ch.chapter_base}|${ch.chapter_variant}`);
+        }
+      }
+      // Only show chapters where NO provider has a non-missing status
+      filtered = filtered.filter(ch => !hasAnyNonMissing.has(`${ch.chapter_base}|${ch.chapter_variant}`));
+    } else {
+      filtered = filtered.filter(ch => ch.download_status === currentFilter.status);
+    }
   }
   
   // Filter by provider
@@ -444,6 +457,85 @@ function filterAndSortChapters(chapters) {
   return filtered;
 }
 
+// Build chapter table rows HTML from a flat chapters array.
+// Groups by base number, separates extras, handles split variants.
+function buildChapterRows(mangaId, chapters) {
+  const baseMap = new Map();
+  for (const ch of chapters) {
+    if (!baseMap.has(ch.chapter_base)) baseMap.set(ch.chapter_base, new Map());
+    const varMap = baseMap.get(ch.chapter_base);
+    if (!varMap.has(ch.chapter_variant)) varMap.set(ch.chapter_variant, []);
+    varMap.get(ch.chapter_variant).push(ch);
+  }
+
+  const sortedBases = [...baseMap.keys()].sort((a, b) => b - a);
+  let rows = '';
+
+  for (const base of sortedBases) {
+    const varMap = baseMap.get(base);
+
+    const extrasByVariant = new Map();
+    for (const [variant, chs] of varMap) {
+      const extraChs = chs.filter(ch => ch.is_extra);
+      if (extraChs.length > 0) extrasByVariant.set(variant, extraChs);
+    }
+
+    const v0rows = (varMap.get(0) || []).filter(ch => !ch.is_extra);
+    const v0canonical = v0rows.find(ch => ch.is_canonical) || null;
+    const v0alts = v0rows.filter(ch => !ch.is_canonical).sort((a, b) => (a.tier || 4) - (b.tier || 4));
+
+    const splitParts = [...varMap.keys()]
+      .filter(v => v > 0)
+      .sort((a, b) => b - a)
+      .map(v => {
+        const vrows = varMap.get(v).filter(ch => !ch.is_extra);
+        return {
+          canonical: vrows.find(ch => ch.is_canonical) || null,
+          alts: vrows.filter(ch => !ch.is_canonical).sort((a, b) => (a.tier || 4) - (b.tier || 4)),
+        };
+      });
+
+    let mainCh = v0canonical;
+    let effectiveV0alts = v0alts;
+    if (!mainCh) {
+      if (v0alts.length > 0) {
+        mainCh = v0alts[0];
+        effectiveV0alts = v0alts.slice(1);
+      }
+    }
+
+    const sortedExtraVariants = [...extrasByVariant.keys()].sort((a, b) => b - a);
+    for (const v of sortedExtraVariants) {
+      const vChs = extrasByVariant.get(v);
+      const canonical = vChs.find(ch => ch.is_canonical) || vChs[0];
+      const alts = vChs.filter(ch => ch !== canonical).sort((a, b) => (a.tier || 4) - (b.tier || 4));
+      rows += chapterGroupHtml(mangaId, base, canonical, alts, []);
+    }
+
+    if (mainCh) {
+      rows += chapterGroupHtml(mangaId, base, mainCh, effectiveV0alts, splitParts);
+    } else {
+      for (const sp of splitParts) {
+        const spMain = sp.canonical || sp.alts[0];
+        if (spMain) {
+          const spAlts = sp.canonical ? sp.alts : sp.alts.slice(1);
+          rows += chapterGroupHtml(mangaId, base, spMain, spAlts, []);
+        }
+      }
+    }
+  }
+  return rows;
+}
+
+// Patch a canonical chapter entry in the cache and re-render without fetching.
+function patchCachedChapter(base, variant, fields) {
+  const idx = chapterDataCache.findIndex(
+    ch => ch.chapter_base == base && ch.chapter_variant == variant && ch.is_canonical
+  );
+  if (idx !== -1) chapterDataCache[idx] = { ...chapterDataCache[idx], ...fields };
+  renderFilteredChapters(filterAndSortChapters(chapterDataCache));
+}
+
 export async function loadChapters(mangaId) {
   const el = document.getElementById('chapters-list');
   if (!el) return;
@@ -479,70 +571,7 @@ export async function loadChapters(mangaId) {
       return;
     }
 
-    const baseMap = new Map();
-    for (const ch of chapters) {
-      if (!baseMap.has(ch.chapter_base)) baseMap.set(ch.chapter_base, new Map());
-      const varMap = baseMap.get(ch.chapter_base);
-      if (!varMap.has(ch.chapter_variant)) varMap.set(ch.chapter_variant, []);
-      varMap.get(ch.chapter_variant).push(ch);
-    }
-
-    const sortedBases = [...baseMap.keys()].sort((a, b) => b - a);
-    let rows = '';
-
-    for (const base of sortedBases) {
-      const varMap = baseMap.get(base);
-
-      const extrasByVariant = new Map();
-      for (const [variant, chs] of varMap) {
-        const extraChs = chs.filter(ch => ch.is_extra);
-        if (extraChs.length > 0) extrasByVariant.set(variant, extraChs);
-      }
-
-      const v0rows = (varMap.get(0) || []).filter(ch => !ch.is_extra);
-      const v0canonical = v0rows.find(ch => ch.is_canonical) || null;
-      const v0alts = v0rows.filter(ch => !ch.is_canonical).sort((a, b) => (a.tier || 4) - (b.tier || 4));
-
-      const splitParts = [...varMap.keys()]
-        .filter(v => v > 0)
-        .sort((a, b) => b - a)
-        .map(v => {
-          const vrows = varMap.get(v).filter(ch => !ch.is_extra);
-          return {
-            canonical: vrows.find(ch => ch.is_canonical) || null,
-            alts: vrows.filter(ch => !ch.is_canonical).sort((a, b) => (a.tier || 4) - (b.tier || 4)),
-          };
-        });
-
-      let mainCh = v0canonical;
-      let effectiveV0alts = v0alts;
-      if (!mainCh) {
-        if (v0alts.length > 0) {
-          mainCh = v0alts[0];
-          effectiveV0alts = v0alts.slice(1);
-        }
-      }
-
-      const sortedExtraVariants = [...extrasByVariant.keys()].sort((a, b) => b - a);
-      for (const v of sortedExtraVariants) {
-        const vChs = extrasByVariant.get(v);
-        const canonical = vChs.find(ch => ch.is_canonical) || vChs[0];
-        const alts = vChs.filter(ch => ch !== canonical).sort((a, b) => (a.tier || 4) - (b.tier || 4));
-        rows += chapterGroupHtml(mangaId, base, canonical, alts, []);
-      }
-
-      if (mainCh) {
-        rows += chapterGroupHtml(mangaId, base, mainCh, effectiveV0alts, splitParts);
-      } else {
-        for (const sp of splitParts) {
-          const spMain = sp.canonical || sp.alts[0];
-          if (spMain) {
-            const spAlts = sp.canonical ? sp.alts : sp.alts.slice(1);
-            rows += chapterGroupHtml(mangaId, base, spMain, spAlts, []);
-          }
-        }
-      }
-    }
+    const rows = buildChapterRows(mangaId, chapters);
 
     // Build filter bar
     const sortIndicator = (field) => {
@@ -670,17 +699,16 @@ function renderFilteredChapters(filteredChapters) {
       // Update the chips and input without destroying them
       const searchInput = existingFilterBar.querySelector('.search-input');
       const sortSelect = existingFilterBar.querySelector('.sort-select');
-      const statusChips = existingFilterBar.querySelectorAll('.filter-chip');
       
       if (searchInput) searchInput.value = currentFilter.search;
       if (sortSelect) sortSelect.value = `${currentSort.field}-${currentSort.direction}`;
       
-      // Update status chips
-      statusChips.forEach((chip, idx) => {
-        const statuses = ['', 'Missing', 'Downloaded', 'Queued', 'Failed'];
-        chip.classList.toggle('active', chip.textContent === (currentFilter.status || 'All') || 
-          (currentFilter.status === '' && chip.textContent === 'All'));
-      });
+      // Update status chips (first 5 filter-chip elements are always status chips)
+      const allFilterChips = existingFilterBar.querySelectorAll('.filter-chip');
+      const statuses = ['', 'Missing', 'Downloaded', 'Queued', 'Failed'];
+      for (let i = 0; i < Math.min(5, allFilterChips.length); i++) {
+        allFilterChips[i].classList.toggle('active', currentFilter.status === statuses[i]);
+      }
       
       // Check if provider filter already exists
       const existingSeparator = existingFilterBar.querySelector('.filter-separator');
@@ -716,70 +744,7 @@ function renderFilteredChapters(filteredChapters) {
   }
   
   // We have results - build the table body from filtered data
-  const baseMap = new Map();
-  for (const ch of filteredChapters) {
-    if (!baseMap.has(ch.chapter_base)) baseMap.set(ch.chapter_base, new Map());
-    const varMap = baseMap.get(ch.chapter_base);
-    if (!varMap.has(ch.chapter_variant)) varMap.set(ch.chapter_variant, []);
-    varMap.get(ch.chapter_variant).push(ch);
-  }
-
-  const sortedBases = [...baseMap.keys()].sort((a, b) => b - a);
-  let rows = '';
-
-  for (const base of sortedBases) {
-    const varMap = baseMap.get(base);
-
-    const extrasByVariant = new Map();
-    for (const [variant, chs] of varMap) {
-      const extraChs = chs.filter(ch => ch.is_extra);
-      if (extraChs.length > 0) extrasByVariant.set(variant, extraChs);
-    }
-
-    const v0rows = (varMap.get(0) || []).filter(ch => !ch.is_extra);
-    const v0canonical = v0rows.find(ch => ch.is_canonical) || null;
-    const v0alts = v0rows.filter(ch => !ch.is_canonical).sort((a, b) => (a.tier || 4) - (b.tier || 4));
-
-    const splitParts = [...varMap.keys()]
-      .filter(v => v > 0)
-      .sort((a, b) => b - a)
-      .map(v => {
-        const vrows = varMap.get(v).filter(ch => !ch.is_extra);
-        return {
-          canonical: vrows.find(ch => ch.is_canonical) || null,
-          alts: vrows.filter(ch => !ch.is_canonical).sort((a, b) => (a.tier || 4) - (b.tier || 4)),
-        };
-      });
-
-    let mainCh = v0canonical;
-    let effectiveV0alts = v0alts;
-    if (!mainCh) {
-      if (v0alts.length > 0) {
-        mainCh = v0alts[0];
-        effectiveV0alts = v0alts.slice(1);
-      }
-    }
-
-    const sortedExtraVariants = [...extrasByVariant.keys()].sort((a, b) => b - a);
-    for (const v of sortedExtraVariants) {
-      const vChs = extrasByVariant.get(v);
-      const canonical = vChs.find(ch => ch.is_canonical) || vChs[0];
-      const alts = vChs.filter(ch => ch !== canonical).sort((a, b) => (a.tier || 4) - (b.tier || 4));
-      rows += chapterGroupHtml(currentMangaId, base, canonical, alts, []);
-    }
-
-    if (mainCh) {
-      rows += chapterGroupHtml(currentMangaId, base, mainCh, effectiveV0alts, splitParts);
-    } else {
-      for (const sp of splitParts) {
-        const spMain = sp.canonical || sp.alts[0];
-        if (spMain) {
-          const spAlts = sp.canonical ? sp.alts : sp.alts.slice(1);
-          rows += chapterGroupHtml(currentMangaId, base, spMain, spAlts, []);
-        }
-      }
-    }
-  }
+  const rows = buildChapterRows(currentMangaId, filteredChapters);
 
   // Update existing filter bar to preserve focus
   if (existingFilterBar) {
@@ -789,13 +754,12 @@ function renderFilteredChapters(filteredChapters) {
     if (searchInput) searchInput.value = currentFilter.search;
     if (sortSelect) sortSelect.value = `${currentSort.field}-${currentSort.direction}`;
     
-    // Update status chips
-    const statusChips = existingFilterBar.querySelectorAll('.filter-chip');
+    // Update status chips (first 5 filter-chip elements are always status chips)
+    const allFilterChips = existingFilterBar.querySelectorAll('.filter-chip');
     const statuses = ['', 'Missing', 'Downloaded', 'Queued', 'Failed'];
-    statusChips.forEach((chip, idx) => {
-      const status = statuses[idx];
-      chip.classList.toggle('active', currentFilter.status === status || (status === '' && chip.textContent === 'All'));
-    });
+    for (let i = 0; i < Math.min(5, allFilterChips.length); i++) {
+      allFilterChips[i].classList.toggle('active', currentFilter.status === statuses[i]);
+    }
     
     // Check if provider filter already exists (from initial load)
     const existingSeparator = existingFilterBar.querySelector('.filter-separator');
@@ -1116,8 +1080,8 @@ window.doRefreshMetadata = async function(mangaId) {
 window.doDownload = async function(mangaId, base, variant) {
   try {
     await mangaApi.downloadChapter(mangaId, base, variant);
-    loadChapters(mangaId);
-    showToast('Download started');
+    patchCachedChapter(base, variant, { download_status: 'Queued' });
+    showToast('Download queued');
   } catch(e) {
     showToast('Download error: ' + e.message, 'error');
   }
@@ -1126,7 +1090,7 @@ window.doDownload = async function(mangaId, base, variant) {
 window.doResetChapter = async function(mangaId, base, variant) {
   try {
     await mangaApi.resetChapter(mangaId, base, variant);
-    loadChapters(mangaId);
+    patchCachedChapter(base, variant, { download_status: 'Missing' });
     showToast('Chapter reset');
   } catch(e) {
     showToast('Reset failed: ' + e.message, 'error');
@@ -1147,7 +1111,8 @@ window.doDeleteChapter = async function(mangaId, base, variant) {
 window.doToggleExtra = async function(mangaId, base, variant) {
   try {
     await mangaApi.toggleExtra(mangaId, base, variant);
-    loadChapters(mangaId);
+    const ch = chapterDataCache.find(c => c.chapter_base == base && c.chapter_variant == variant && c.is_canonical);
+    if (ch) patchCachedChapter(base, variant, { is_extra: !ch.is_extra });
   } catch(e) {
     showToast('Error: ' + e.message, 'error');
   }
@@ -1238,29 +1203,45 @@ window.toggleSelectAll = function(checked) {
 window.doDownloadSelected = async function(mangaId) {
   const checked = Array.from(document.querySelectorAll('.ch-checkbox:checked'));
   if (checked.length === 0) { showToast('Select at least one chapter.', 'warning'); return; }
-  let count = 0;
+  let count = 0, errors = 0;
   for (const cb of checked) {
-    try { 
-      await mangaApi.downloadChapter(mangaId, cb.dataset.base, cb.dataset.variant); 
-      count++; 
-    } catch(_) {}
+    try {
+      await mangaApi.downloadChapter(mangaId, cb.dataset.base, cb.dataset.variant);
+      count++;
+    } catch(e) { errors++; }
   }
+  for (const cb of checked) {
+    const idx = chapterDataCache.findIndex(ch => ch.chapter_base == cb.dataset.base && ch.chapter_variant == cb.dataset.variant && ch.is_canonical);
+    if (idx !== -1) chapterDataCache[idx] = { ...chapterDataCache[idx], download_status: 'Queued' };
+  }
+  renderFilteredChapters(filterAndSortChapters(chapterDataCache));
   if (count > 0) {
-    loadChapters(mangaId);
-    showToast(`Queued ${count} downloads`);
+    showToast(`Queued ${count} download${count === 1 ? '' : 's'}${errors > 0 ? `, ${errors} failed` : ''}`);
+  } else {
+    showToast(`${errors} download${errors === 1 ? '' : 's'} failed`, 'error');
   }
 };
 
 window.doDownloadAllMissing = async function(mangaId) {
   const cbs = Array.from(document.querySelectorAll('.ch-checkbox'));
   if (cbs.length === 0) { showToast('No missing chapters to download.', 'warning'); return; }
+  let count = 0, errors = 0;
   for (const cb of cbs) {
-    try { 
-      await mangaApi.downloadChapter(mangaId, cb.dataset.base, cb.dataset.variant); 
-    } catch(_) {}
+    try {
+      await mangaApi.downloadChapter(mangaId, cb.dataset.base, cb.dataset.variant);
+      count++;
+    } catch(e) { errors++; }
   }
-  loadChapters(mangaId);
-  showToast('All missing chapters queued');
+  for (const cb of cbs) {
+    const idx = chapterDataCache.findIndex(ch => ch.chapter_base == cb.dataset.base && ch.chapter_variant == cb.dataset.variant && ch.is_canonical);
+    if (idx !== -1) chapterDataCache[idx] = { ...chapterDataCache[idx], download_status: 'Queued' };
+  }
+  renderFilteredChapters(filterAndSortChapters(chapterDataCache));
+  if (errors > 0) {
+    showToast(`Queued ${count}, ${errors} failed`, 'error');
+  } else {
+    showToast(`Queued ${count} chapter${count === 1 ? '' : 's'}`);
+  }
 };
 
 // ---------------------------------------------------------------------------
@@ -1293,17 +1274,36 @@ function renderSynonyms(synonyms) {
   }).join(' ');
 }
 
-// Add a new synonym
-window.addSynonym = async function() {
-  const title = prompt('Enter a new synonym title:');
-  if (!title || !title.trim()) return;
-  
+// Add a new synonym — inserts an inline input row instead of using prompt()
+window.addSynonym = function() {
+  if (document.getElementById('add-synonym-row')) return;
+  const addBtn = document.querySelector('[onclick="addSynonym()"]');
+  if (!addBtn) return;
+
+  const row = document.createElement('span');
+  row.id = 'add-synonym-row';
+  row.style.cssText = 'display:inline-flex;gap:4px;align-items:center;margin-left:4px';
+  row.innerHTML = `<input id="add-synonym-input" type="text" class="input input-xs" placeholder="New alias…" style="width:10rem">` +
+    `<button class="btn btn-xs btn-primary" onclick="confirmAddSynonym()">Add</button>` +
+    `<button class="btn btn-xs btn-ghost" onclick="document.getElementById('add-synonym-row')?.remove()">✕</button>`;
+  addBtn.parentElement.insertBefore(row, addBtn);
+
+  const input = document.getElementById('add-synonym-input');
+  input.focus();
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') confirmAddSynonym();
+    if (e.key === 'Escape') row.remove();
+  });
+};
+
+window.confirmAddSynonym = async function() {
+  const input = document.getElementById('add-synonym-input');
+  const title = input?.value?.trim();
+  if (!title) return;
   try {
-    await mangaApi.updateSynonyms(currentMangaId, {
-      add: [title.trim()]
-    });
+    await mangaApi.updateSynonyms(currentMangaId, { add: [title] });
     showToast('Synonym added');
-    // Reload the page to show updated synonyms
+    document.getElementById('add-synonym-row')?.remove();
     viewSeries(currentMangaId);
   } catch(e) {
     showToast('Error adding synonym: ' + e.message, 'error');

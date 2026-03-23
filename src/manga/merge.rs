@@ -213,21 +213,63 @@ async fn scrape_known_providers(
     manga: &Manga,
 ) -> Result<ScanResult, ScanError> {
     let globally_disabled = db_scores::get_globally_disabled(pool).await?;
-
-    // Now lets start scraping chapter lists!
     let all_entries = db_provider::get_all_for_manga(pool, manga.id).await?;
     let provider_entries: Vec<_> = all_entries
         .into_iter()
         .filter(|e| e.found() && !globally_disabled.contains(&e.provider_name))
         .collect();
-    let mut total_new = 0usize;
-    // UUIDs of newly inserted Chapters rows (for auto-download candidates).
-    let mut all_new_ids: std::collections::HashSet<uuid::Uuid> = std::collections::HashSet::new();
 
+    let (total_new, new_ids_for_download) =
+        scrape_chapters(pool, registry, ctx, manga, &provider_entries).await?;
+
+    let trusted_groups = db_provider::get_trusted_groups(pool).await?;
+    let preferred_language = db_settings::get(pool, "preferred_language", "").await?;
+    let yaml_defaults = registry.yaml_default_scores();
+    let provider_scores =
+        db_scores::load_effective_scores(pool, manga.id, &yaml_defaults).await?;
+    db_chapter::update_canonical(
+        pool,
+        manga.id,
+        &trusted_groups,
+        &preferred_language,
+        &provider_scores,
+    )
+    .await?;
+
+    if manga.monitored {
+        enqueue_auto_downloads(pool, manga, &new_ids_for_download).await;
+        enqueue_upgrades(pool, manga, &trusted_groups).await;
+    }
+
+    let final_entries = db_provider::get_all_for_manga(pool, manga.id).await?;
+    Ok(ScanResult {
+        providers_found: final_entries.iter().filter(|e| e.found()).count(),
+        new_chapters: total_new,
+    })
+}
+
+/// Fetch chapter lists from every cached provider entry, upsert results into DB,
+/// and return (total_new_count, new_chapter_ids_eligible_for_auto_download).
+///
+/// `new_chapter_ids` is populated only for providers that have been synced before —
+/// first-time syncs are excluded to avoid mass-downloading a manga's entire back-catalogue
+/// the first time it is added.
+async fn scrape_chapters(
+    pool: &SqlitePool,
+    registry: &ProviderRegistry,
+    ctx: &ScraperCtx,
+    manga: &Manga,
+    provider_entries: &[crate::db::provider::MangaProvider],
+) -> Result<(usize, std::collections::HashSet<uuid::Uuid>), ScanError> {
     let provider_map: std::collections::HashMap<&str, &std::sync::Arc<dyn Provider>> =
         registry.all().into_iter().map(|p| (p.name(), p)).collect();
 
-    for entry in &provider_entries {
+    let mut total_new = 0usize;
+    let mut new_ids: std::collections::HashSet<uuid::Uuid> = std::collections::HashSet::new();
+
+    for entry in provider_entries {
+        // Track whether this provider has been synced before so we can skip
+        // back-catalogue auto-downloads on first sync.
         let was_previously_synced = entry.last_synced_at.is_some();
 
         let Some(provider) = provider_map.get(entry.provider_name.as_str()) else {
@@ -246,10 +288,10 @@ async fn scrape_known_providers(
         let provider_url = entry.provider_url.as_deref().unwrap();
         match provider.chapters(ctx, provider_url).await {
             Ok(infos) => {
-                let new_ids =
+                let inserted_ids =
                     db_chapter::upsert_from_scrape(pool, manga.id, &entry.provider_name, &infos)
                         .await?;
-                let inserted = new_ids.len();
+                let inserted = inserted_ids.len();
                 total_new += inserted;
                 info!(
                     "[scan] {} returned {} chapters ({inserted} new).",
@@ -257,8 +299,8 @@ async fn scrape_known_providers(
                     infos.len()
                 );
 
-                if manga.monitored && was_previously_synced {
-                    all_new_ids.extend(new_ids);
+                if was_previously_synced {
+                    new_ids.extend(inserted_ids);
                 }
 
                 db_provider::upsert(
@@ -283,107 +325,110 @@ async fn scrape_known_providers(
         }
     }
 
-    // --- Phase 3: CanonicalChapters ---
-    let trusted_groups = db_provider::get_trusted_groups(pool).await?;
-    let preferred_language = db_settings::get(pool, "preferred_language", "").await?;
-    let yaml_defaults = registry.yaml_default_scores();
-    let provider_scores =
-        db_scores::load_effective_scores(pool, manga.id, &yaml_defaults).await?;
-    db_chapter::update_canonical(
-        pool,
-        manga.id,
-        &trusted_groups,
-        &preferred_language,
-        &provider_scores,
-    )
-    .await?;
+    Ok((total_new, new_ids))
+}
 
-    // --- Auto-download new chapters for monitored manga ---
-    if !all_new_ids.is_empty() {
-        let canonical = db_chapter::get_canonical_for_manga(pool, manga.id).await?;
-        let mut enqueued = 0usize;
-        for ch in &canonical {
-            if all_new_ids.contains(&ch.id) {
-                if let Err(e) = db_task::enqueue(
-                    pool,
-                    TaskType::DownloadChapter,
-                    Some(manga.id),
-                    Some(ch.id),
-                    8,
+/// Enqueue DownloadChapter tasks for canonical chapters that were newly discovered.
+/// Only chapters present in `new_ids` and confirmed canonical are queued.
+async fn enqueue_auto_downloads(
+    pool: &SqlitePool,
+    manga: &Manga,
+    new_ids: &std::collections::HashSet<uuid::Uuid>,
+) {
+    if new_ids.is_empty() {
+        return;
+    }
+    let canonical = match db_chapter::get_canonical_for_manga(pool, manga.id).await {
+        Ok(v) => v,
+        Err(e) => {
+            warn!("[scan] Failed to load canonicals for auto-download: {e}");
+            return;
+        }
+    };
+    let mut enqueued = 0usize;
+    for ch in &canonical {
+        if new_ids.contains(&ch.id) {
+            match db_task::enqueue(
+                pool,
+                TaskType::DownloadChapter,
+                Some(manga.id),
+                Some(ch.id),
+                8,
+            )
+            .await
+            {
+                Ok(_) => enqueued += 1,
+                Err(e) => warn!(
+                    "[scan] Failed to enqueue auto-download for chapter {}: {e}",
+                    ch.id
+                ),
+            }
+        }
+    }
+    if enqueued > 0 {
+        info!(
+            "[scan] Queued {enqueued} auto-download(s) for monitored manga '{}'.",
+            manga.metadata.title
+        );
+    }
+}
+
+/// Enqueue DownloadChapter tasks for chapters where a better-tier source became canonical
+/// since the last download (e.g. official release now available for a chapter we got from
+/// an unknown scanlator). Skips chapters already Queued or Downloading.
+async fn enqueue_upgrades(
+    pool: &SqlitePool,
+    manga: &Manga,
+    trusted_groups: &[String],
+) {
+    let candidates = match db_chapter::find_upgrade_candidates(pool, manga.id, trusted_groups).await
+    {
+        Ok(v) if !v.is_empty() => v,
+        Ok(_) => return,
+        Err(e) => {
+            warn!("[scan] Upgrade candidate check failed: {e}");
+            return;
+        }
+    };
+
+    let mut upgrade_count = 0usize;
+    for candidate in &candidates {
+        let already_active = db_chapter::get_by_id(pool, candidate.new_canonical_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|ch| {
+                matches!(
+                    ch.download_status,
+                    DownloadStatus::Queued | DownloadStatus::Downloading
                 )
-                .await
-                {
-                    warn!(
-                        "[scan] Failed to enqueue auto-download for chapter {}: {e}",
-                        ch.id
-                    );
-                } else {
-                    enqueued += 1;
-                }
-            }
+            })
+            .unwrap_or(false);
+
+        if already_active {
+            continue;
         }
-        if enqueued > 0 {
-            info!(
-                "[scan] Queued {enqueued} auto-download(s) for monitored manga '{}'.",
-                manga.metadata.title
-            );
-        }
-    }
 
-    // --- Upgrade detection: queue downloads for chapters with a better source now available ---
-    if manga.monitored {
-        match db_chapter::find_upgrade_candidates(pool, manga.id, &trusted_groups).await {
-            Ok(candidates) if !candidates.is_empty() => {
-                let mut upgrade_count = 0usize;
-                for candidate in &candidates {
-                    // Skip if this chapter is already being downloaded or queued.
-                    let already_active = db_chapter::get_by_id(pool, candidate.new_canonical_id)
-                        .await
-                        .ok()
-                        .flatten()
-                        .map(|ch| {
-                            matches!(
-                                ch.download_status,
-                                DownloadStatus::Queued | DownloadStatus::Downloading
-                            )
-                        })
-                        .unwrap_or(false);
-
-                    if already_active {
-                        continue;
-                    }
-
-                    match db_task::enqueue(
-                        pool,
-                        TaskType::DownloadChapter,
-                        Some(manga.id),
-                        Some(candidate.new_canonical_id),
-                        7,
-                    )
-                    .await
-                    {
-                        Ok(_) => upgrade_count += 1,
-                        Err(e) => warn!(
-                            "[scan] Failed to enqueue upgrade for {}: {e}",
-                            candidate.new_canonical_id
-                        ),
-                    }
-                }
-                if upgrade_count > 0 {
-                    info!(
-                        "[scan] Queued {upgrade_count} chapter upgrade(s) for '{}'.",
-                        manga.metadata.title
-                    );
-                }
-            }
-            Ok(_) => {}
-            Err(e) => warn!("[scan] Upgrade candidate check failed: {e}"),
+        match db_task::enqueue(
+            pool,
+            TaskType::DownloadChapter,
+            Some(manga.id),
+            Some(candidate.new_canonical_id),
+            7,
+        )
+        .await
+        {
+            Ok(_) => upgrade_count += 1,
+            Err(e) => warn!(
+                "[scan] Failed to enqueue upgrade for {}: {e}",
+                candidate.new_canonical_id
+            ),
         }
     }
-
-    let final_entries = db_provider::get_all_for_manga(pool, manga.id).await?;
-    Ok(ScanResult {
-        providers_found: final_entries.iter().filter(|e| e.found()).count(),
-        new_chapters: total_new,
-    })
+    if upgrade_count > 0 {
+        info!(
+            "[scan] Queued {upgrade_count} chapter upgrade(s) for '{}'.",
+            manga.metadata.title
+        );
+    }
 }

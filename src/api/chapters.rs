@@ -63,37 +63,44 @@ pub async fn list_chapters(pool: &State<SqlitePool>, id: &str) -> ApiResult<Vec<
         .await
         .map_err(internal)?
         .ok_or_else(|| not_found("manga not found"))?;
+    build_chapter_list(pool.inner(), manga_id).await
+}
 
-    let all_rows = db::chapter::get_all_for_manga(pool.inner(), manga_id)
+/// Load and shape the full chapter list for a manga:
+/// applies preferred-language filtering, annotates each row with its canonical flag
+/// and tier score, and returns the API response shape.
+async fn build_chapter_list(
+    pool: &SqlitePool,
+    manga_id: Uuid,
+) -> ApiResult<Vec<ChapterListItem>> {
+    let all_rows = db::chapter::get_all_for_manga(pool, manga_id)
         .await
         .map_err(internal)?;
 
-    // Get preferred language setting
-    let preferred_language = db::settings::get(pool.inner(), "preferred_language", "")
+    let preferred_language = db::settings::get(pool, "preferred_language", "")
         .await
         .map_err(internal)?;
 
-    // Filter chapters by preferred language if set
-    let filtered_rows: Vec<_> = if !preferred_language.is_empty() {
+    // Filter by preferred language; chapters with no language set are always included.
+    let filtered_rows: Vec<_> = if preferred_language.is_empty() {
+        all_rows
+    } else {
         all_rows
             .into_iter()
             .filter(|ch| {
-                // Allow chapters with matching language or no language specified
                 ch.language.eq_ignore_ascii_case(&preferred_language) || ch.language.is_empty()
             })
             .collect()
-    } else {
-        all_rows
     };
 
     let canonical_uuids: std::collections::HashSet<String> =
-        db::chapter::get_canonical_uuids(pool.inner(), manga_id)
+        db::chapter::get_canonical_uuids(pool, manga_id)
             .await
             .map_err(internal)?
             .into_iter()
             .collect();
 
-    let trusted = db::provider::get_trusted_groups(pool.inner())
+    let trusted = db::provider::get_trusted_groups(pool)
         .await
         .map_err(internal)?;
 
