@@ -34,16 +34,33 @@ chapters:
         method: GET
         headers:
           Referer: "{base_url}/"
-        var: chapters_data
+        var: chapters_data_raw
         json_path: chapters
+    - extract_js:
+        var: chapters_data
+        script: |
+          (() => {
+            try {
+              const chapters = JSON.parse('{chapters_data_raw}') || [];
+              return JSON.stringify(chapters.map(ch => ({
+                number: ch.number || '0',
+                title: ch.title || '',
+                id: ch.id || '',
+                createdAt: ch.createdAt ? Math.floor(ch.createdAt / 1000).toString() : ''
+              })));
+            } catch(e) {
+              return '[]';
+            }
+          })()
     - from_json:
         var: chapters_data
         extract:
           number_raw: number
           title: title
           url: id
+          date: createdAt
         prefix:
-          url: "{base_url}/chapter/{manga_url|basename}/"
+          url: "{base_url}/read/{manga_url|basename}/"
 
 pages:
   steps:

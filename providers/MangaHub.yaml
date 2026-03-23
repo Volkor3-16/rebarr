@@ -59,7 +59,7 @@ chapters:
         script: "window.location.pathname.split('/manga/')[1]?.split('/')[0] || ''"
     - graphql:
         url: "https://api.mghcdn.com/graphql"
-        query: 'query ($slug: String) { manga(x: m01, slug: $slug) { chapters { number, title } } }'
+        query: 'query ($slug: String) { manga(x: m01, slug: $slug) { chapters { number, title, createdAt } } }'
         variables:
           slug: "{manga_slug}"
         headers:
@@ -78,7 +78,8 @@ chapters:
               return JSON.stringify(chapters.map(ch => ({
                 number_raw: ch.number || '0',
                 title: ch.title || '',
-                url: '{base_url}/chapter/{manga_slug}/chapter-' + (ch.number || '0')
+                url: '{base_url}/chapter/{manga_slug}/chapter-' + (ch.number || '0'),
+                date: ch.createdAt ? Math.floor(new Date(ch.createdAt).getTime() / 1000).toString() : ''
               })));
             } catch(e) {
               return '[]';
@@ -90,6 +91,7 @@ chapters:
           number_raw: number_raw
           title: title
           url: url
+          date: date
 
 pages:
   steps:
