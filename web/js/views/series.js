@@ -247,7 +247,7 @@ function chapterRow(mangaId, ch, isVariant = false, altCount = 0, extraActions =
     : '';
 
   const cb = (!isVariant && canDl)
-    ? `<input type="checkbox" class="ch-checkbox" data-base="${base}" data-variant="${variant}">`
+    ? `<input type="checkbox" class="ch-checkbox" data-base="${base}" data-variant="${variant}" onclick="event.stopPropagation()">`
     : '';
 
   // Scanlator bubble — click anywhere to toggle trusted state
