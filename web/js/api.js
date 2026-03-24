@@ -107,6 +107,7 @@ export const trustedGroups = {
 // System info API
 export const system = {
   info: () => get('/api/system'),
+  desktop: () => get('/api/system/desktop'),
 };
 
 // Import API

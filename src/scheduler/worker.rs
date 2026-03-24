@@ -189,7 +189,7 @@ async fn dispatch(
                 .map_err(|e| e.to_string())?
                 .ok_or_else(|| format!("manga {manga_id} not found"))?;
 
-            let result = merge::scan_manga(pool, registry, ctx, &manga)
+            let result = merge::scan_manga(pool, registry, ctx, &manga, task.id)
                 .await
                 .map_err(|e| e.to_string())?;
 
@@ -210,7 +210,7 @@ async fn dispatch(
                 .map_err(|e| e.to_string())?
                 .ok_or_else(|| format!("manga {manga_id} not found"))?;
 
-            let result = merge::check_new_chapters(pool, registry, ctx, &manga)
+            let result = merge::check_new_chapters(pool, registry, ctx, &manga, task.id)
                 .await
                 .map_err(|e| e.to_string())?;
 
@@ -249,6 +249,7 @@ async fn dispatch(
 
             downloader::download_chapter(
                 pool,
+                task.id,
                 registry,
                 ctx,
                 &manga,
@@ -331,7 +332,7 @@ async fn dispatch(
 
         TaskType::ScanDisk => {
             let manga_id = task.manga_id.ok_or("ScanDisk task missing manga_id")?;
-            scan_existing_chapters(pool, manga_id).await
+            scan_existing_chapters(pool, manga_id, task.id).await
         }
 
         TaskType::OptimiseChapter => {

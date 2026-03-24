@@ -41,14 +41,22 @@ impl YamlProvider {
     // ------------------------------------------------------------------
 
     /// Recursively expand `{key}` placeholders in all string values within a JSON value.
-    fn expand_json_value(&self, value: &serde_json::Value, vars: &HashMap<String, String>) -> serde_json::Value {
+    fn expand_json_value(
+        &self,
+        value: &serde_json::Value,
+        vars: &HashMap<String, String>,
+    ) -> serde_json::Value {
         match value {
             serde_json::Value::String(s) => serde_json::Value::String(self.expand(s, vars)),
             serde_json::Value::Object(map) => serde_json::Value::Object(
-                map.iter().map(|(k, v)| (k.clone(), self.expand_json_value(v, vars))).collect()
+                map.iter()
+                    .map(|(k, v)| (k.clone(), self.expand_json_value(v, vars)))
+                    .collect(),
             ),
             serde_json::Value::Array(arr) => serde_json::Value::Array(
-                arr.iter().map(|v| self.expand_json_value(v, vars)).collect()
+                arr.iter()
+                    .map(|v| self.expand_json_value(v, vars))
+                    .collect(),
             ),
             other => other.clone(),
         }
@@ -57,12 +65,12 @@ impl YamlProvider {
     /// Replace `{key}` placeholders. Relative paths get base_url prepended.
     fn expand(&self, template: &str, vars: &HashMap<String, String>) -> String {
         let mut s = template.replace("{base_url}", &self.def.base_url);
-        
+
         // Process all {var} placeholders first (no modifiers)
         for (k, v) in vars {
             s = s.replace(&format!("{{{k}}}"), v);
         }
-        
+
         // Process modifiers: {var|modifier1|modifier2|...}
         // Capture all patterns and replace them iteratively until none remain
         let mut changed = true;
@@ -74,33 +82,31 @@ impl YamlProvider {
                 let full_match = caps.get(0).unwrap().as_str();
                 let var_name = caps.get(1).unwrap().as_str();
                 let modifiers = caps.get(2).unwrap().as_str();
-                
+
                 // Get base value
                 let base_val = vars.get(var_name).cloned().unwrap_or_default();
-                
+
                 // Apply modifiers in order
                 let mut result = base_val;
                 for mod_name in modifiers.split('|') {
                     result = match mod_name {
-                        "strip_last_segment" => {
-                            result.rfind('/')
-                                .filter(|&i| i > 0)
-                                .map_or(result.clone(), |i| result[..i].to_string())
-                        }
-                        "basename" => {
-                            result.rfind('/')
-                                .map(|i| result[i+1..].to_string())
-                                .unwrap_or(result)
-                        }
+                        "strip_last_segment" => result
+                            .rfind('/')
+                            .filter(|&i| i > 0)
+                            .map_or(result.clone(), |i| result[..i].to_string()),
+                        "basename" => result
+                            .rfind('/')
+                            .map(|i| result[i + 1..].to_string())
+                            .unwrap_or(result),
                         _ => result,
                     };
                 }
-                
+
                 s = s.replace(full_match, &result);
                 changed = true;
             }
         }
-        
+
         if s.starts_with('/') {
             format!("{}{}", self.def.base_url.trim_end_matches('/'), s)
         } else {
@@ -294,6 +300,7 @@ impl YamlProvider {
                     let min_settle_time = Duration::from_secs(3);
                     let start = std::time::Instant::now();
                     let mut cloudflare_detected = false;
+                    let mut last_cf_click_attempt: Option<std::time::Instant> = None;
 
                     loop {
                         let elapsed = start.elapsed();
@@ -311,6 +318,20 @@ impl YamlProvider {
                                     );
                                     cloudflare_detected = true;
                                 }
+
+                                // Some CF flows require a user-triggered checkbox click.
+                                // Nudge likely controls periodically while challenge HTML remains.
+                                let should_try_click = last_cf_click_attempt
+                                    .map(|t| t.elapsed() >= Duration::from_secs(2))
+                                    .unwrap_or(true);
+                                if should_try_click {
+                                    if try_cf_checkbox_click(p, ctx.verbose).await {
+                                        debug!(
+                                            "Cloudflare checkbox click attempt triggered at {url}"
+                                        );
+                                    }
+                                    last_cf_click_attempt = Some(std::time::Instant::now());
+                                }
                             } else if cloudflare_detected {
                                 // Challenge was present but page has loaded — bypassed!
                                 info!("Cloudflare challenge auto-bypassed at {url}");
@@ -318,10 +339,9 @@ impl YamlProvider {
                             } else if elapsed >= min_settle_time {
                                 // No CF challenge and minimum settle time passed —
                                 // wait for network to become idle to let JS API calls complete
-                                let remaining_ms = timeout.saturating_sub(elapsed).as_millis() as u64;
-                                p.wait_for_network_idle(1000, remaining_ms)
-                                    .await
-                                    .ok();
+                                let remaining_ms =
+                                    timeout.saturating_sub(elapsed).as_millis() as u64;
+                                p.wait_for_network_idle(1000, remaining_ms).await.ok();
                                 break;
                             }
                         }
@@ -607,43 +627,56 @@ impl YamlProvider {
 
                 StepDef::Fetch { fetch: fetch_def } => {
                     let p = require_page(&page, "fetch")?;
-                    
+
                     if let Some(ref pagination) = fetch_def.pagination {
                         // Handle paginated fetch
                         let mut all_items: Vec<serde_json::Value> = Vec::new();
                         let mut current_page = pagination.start_page;
                         let mut last_page = pagination.max_pages;
-                        
+
                         for _ in 0..pagination.max_pages {
                             let mut url = self.expand(&fetch_def.url, &vars);
-                            
+
                             // Add page parameter to URL
                             if url.contains('?') {
-                                url.push_str(&format!("&{}={}", pagination.page_param, current_page));
+                                url.push_str(&format!(
+                                    "&{}={}",
+                                    pagination.page_param, current_page
+                                ));
                             } else {
-                                url.push_str(&format!("?{}={}", pagination.page_param, current_page));
+                                url.push_str(&format!(
+                                    "?{}={}",
+                                    pagination.page_param, current_page
+                                ));
                             }
-                            
+
                             if ctx.verbose {
                                 eprintln!("[step] fetch (page {current_page}) → url={url}");
                             }
-                            
+
                             let method = fetch_def.method.to_uppercase();
-                            
+
                             // Build headers object
                             let mut headers_js = String::new();
                             for (key, val) in &fetch_def.headers {
                                 let expanded_val = self.expand(val, &vars);
-                                headers_js.push_str(&format!("'{}': '{}',", key, expanded_val.replace('\'', "\\\'")));
+                                headers_js.push_str(&format!(
+                                    "'{}': '{}',",
+                                    key,
+                                    expanded_val.replace('\'', "\\\'")
+                                ));
                             }
-                            
+
                             // Build body if present - pass as raw string
-                            let body_js = fetch_def.body.as_ref()
+                            let body_js = fetch_def
+                                .body
+                                .as_ref()
                                 .map(|b| self.expand(b, &vars))
                                 .map(|b| format!(", body: `{}`", b.replace('`', "\\`")))
                                 .unwrap_or_default();
-                            
-                            let js = format!(r#"
+
+                            let js = format!(
+                                r#"
                                 (async () => {{
                                     const headers = {{{}}};
                                     const opts = {{
@@ -657,52 +690,65 @@ impl YamlProvider {
                                         return 'ERROR:' + e.message;
                                     }}
                                 }})()
-                            "#, 
-                                headers_js, 
-                                method, 
+                            "#,
+                                headers_js,
+                                method,
                                 body_js,
                                 url.replace('\'', "\\\'")
                             );
-                            
+
                             match p.evaluate::<String>(&js).await {
                                 Ok(response) => {
                                     if response.starts_with("ERROR:") {
                                         warn!("[step] fetch failed: {}", response);
                                         break;
                                     }
-                                    
+
                                     // Parse response
-                                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&response) {
+                                    if let Ok(json) =
+                                        serde_json::from_str::<serde_json::Value>(&response)
+                                    {
                                         // Extract pagination metadata if configured
                                         if let Some(ref meta_path) = pagination.meta_path {
                                             let meta = parse_json_value(&json, meta_path);
-                                            if let Some(last_page_val) = meta.get(&pagination.last_page_field) {
+                                            if let Some(last_page_val) =
+                                                meta.get(&pagination.last_page_field)
+                                            {
                                                 if let Some(lp) = last_page_val.as_u64() {
                                                     last_page = lp as u32;
                                                 }
                                             }
                                         }
-                                        
+
                                         // Extract data items
-                                        let data_path = fetch_def.json_path.as_deref().unwrap_or("");
+                                        let data_path =
+                                            fetch_def.json_path.as_deref().unwrap_or("");
                                         let items = if data_path.is_empty() {
                                             json.as_array().cloned().unwrap_or_default()
                                         } else {
-                                            parse_json_value(&json, data_path).as_array().cloned().unwrap_or_default()
+                                            parse_json_value(&json, data_path)
+                                                .as_array()
+                                                .cloned()
+                                                .unwrap_or_default()
                                         };
-                                        
+
                                         if items.is_empty() {
                                             if ctx.verbose {
-                                                eprintln!("[step] fetch (page {current_page}) → empty response, stopping");
+                                                eprintln!(
+                                                    "[step] fetch (page {current_page}) → empty response, stopping"
+                                                );
                                             }
                                             break;
                                         }
-                                        
+
                                         let items_count = items.len();
                                         all_items.extend(items);
-                                        
+
                                         if ctx.verbose {
-                                            eprintln!("[step] fetch (page {current_page}) → {items_count} items (total: {})", all_items.len());
+                                            eprintln!(
+                                                "[step] fetch (page {current_page}) → {items_count} items (total: {})",
+                                                all_items.len()
+                                            );
                                         }
                                     } else {
                                         warn!("[step] fetch response is not valid JSON");
@@ -714,23 +760,29 @@ impl YamlProvider {
                                     break;
                                 }
                             }
-                            
+
                             // Check if we've reached the last page
                             if current_page >= last_page {
                                 if ctx.verbose {
-                                    eprintln!("[step] fetch → reached last page ({last_page}), stopping");
+                                    eprintln!(
+                                        "[step] fetch → reached last page ({last_page}), stopping"
+                                    );
                                 }
                                 break;
                             }
-                            
+
                             current_page += 1;
                         }
-                        
+
                         // Store accumulated results
-                        let value = serde_json::to_string(&all_items).unwrap_or_else(|_| "[]".to_string());
+                        let value =
+                            serde_json::to_string(&all_items).unwrap_or_else(|_| "[]".to_string());
                         if ctx.verbose {
-                            eprintln!("[step] fetch pagination complete → {} total items stored in '{}'", 
-                                all_items.len(), fetch_def.var);
+                            eprintln!(
+                                "[step] fetch pagination complete → {} total items stored in '{}'",
+                                all_items.len(),
+                                fetch_def.var
+                            );
                         }
                         vars.insert(fetch_def.var.clone(), value);
                     } else {
@@ -740,21 +792,28 @@ impl YamlProvider {
                             eprintln!("[step] fetch → url={url}");
                         }
                         let method = fetch_def.method.to_uppercase();
-                        
+
                         // Build headers object
                         let mut headers_js = String::new();
                         for (key, val) in &fetch_def.headers {
                             let expanded_val = self.expand(val, &vars);
-                            headers_js.push_str(&format!("'{}': '{}',", key, expanded_val.replace('\'', "\\\'")));
+                            headers_js.push_str(&format!(
+                                "'{}': '{}',",
+                                key,
+                                expanded_val.replace('\'', "\\\'")
+                            ));
                         }
-                        
+
                         // Build body if present - pass as raw string
-                        let body_js = fetch_def.body.as_ref()
+                        let body_js = fetch_def
+                            .body
+                            .as_ref()
                             .map(|b| self.expand(b, &vars))
                             .map(|b| format!(", body: `{}`", b.replace('`', "\\`")))
                             .unwrap_or_default();
-                        
-                        let js = format!(r#"
+
+                        let js = format!(
+                            r#"
                             (async () => {{
                                 const headers = {{{}}};
                                 const opts = {{
@@ -768,13 +827,13 @@ impl YamlProvider {
                                     return 'ERROR:' + e.message;
                                 }}
                             }})()
-                        "#, 
-                            headers_js, 
-                            method, 
+                        "#,
+                            headers_js,
+                            method,
                             body_js,
                             url.replace('\'', "\\\'")
                         );
-                        
+
                         match p.evaluate::<String>(&js).await {
                             Ok(response) => {
                                 if response.starts_with("ERROR:") {
@@ -787,7 +846,10 @@ impl YamlProvider {
                                     };
                                     if ctx.verbose {
                                         let preview = &value[..value.len().min(120)];
-                                        eprintln!("[step] fetch stored in '{}': {}", fetch_def.var, preview);
+                                        eprintln!(
+                                            "[step] fetch stored in '{}': {}",
+                                            fetch_def.var, preview
+                                        );
                                     }
                                     vars.insert(fetch_def.var.clone(), value);
                                 }
@@ -799,9 +861,11 @@ impl YamlProvider {
                     }
                 }
 
-                StepDef::Graphql { graphql: graphql_def } => {
+                StepDef::Graphql {
+                    graphql: graphql_def,
+                } => {
                     let p = require_page(&page, "graphql")?;
-                    
+
                     let url = self.expand(&graphql_def.url, &vars);
                     if ctx.verbose {
                         eprintln!("[step] graphql → url={url}");
@@ -810,14 +874,17 @@ impl YamlProvider {
                     // Expand templates in variables, then serialize as JSON.
                     // JSON is valid JS syntax so we can inline it directly as a literal.
                     let expanded_variables: serde_json::Map<String, serde_json::Value> =
-                        graphql_def.variables.iter()
+                        graphql_def
+                            .variables
+                            .iter()
                             .map(|(k, v)| (k.clone(), self.expand_json_value(v, &vars)))
                             .collect();
                     let vars_json = serde_json::to_string(&expanded_variables)
                         .unwrap_or_else(|_| "{}".to_string());
 
                     // Escape the query for embedding in a JS single-quoted string.
-                    let query_escaped = graphql_def.query
+                    let query_escaped = graphql_def
+                        .query
                         .replace('\\', "\\\\")
                         .replace('\'', "\\'")
                         .replace('\n', "\\n")
@@ -827,10 +894,15 @@ impl YamlProvider {
                     let mut headers_js = String::from("'Content-Type': 'application/json',");
                     for (key, val) in &graphql_def.headers {
                         let expanded_val = self.expand(val, &vars);
-                        headers_js.push_str(&format!("'{}': '{}',", key, expanded_val.replace('\'', "\\\'")));
+                        headers_js.push_str(&format!(
+                            "'{}': '{}',",
+                            key,
+                            expanded_val.replace('\'', "\\\'")
+                        ));
                     }
 
-                    let js = format!(r#"
+                    let js = format!(
+                        r#"
                         (async () => {{
                             const opts = {{
                                 method: 'POST',
@@ -854,14 +926,18 @@ impl YamlProvider {
                         vars_json,
                         url.replace('\'', "\\'")
                     );
-                    
+
                     match p.evaluate::<String>(&js).await {
                         Ok(response) => {
                             if response.starts_with("ERROR:") {
                                 warn!("[step] graphql failed: {}", response);
                             } else {
                                 if ctx.verbose {
-                                    debug!("[step] graphql raw response ({} bytes): {}", response.len(), &response[..response.len().min(500)]);
+                                    debug!(
+                                        "[step] graphql raw response ({} bytes): {}",
+                                        response.len(),
+                                        &response[..response.len().min(500)]
+                                    );
                                 }
                                 let value = if let Some(ref path) = graphql_def.json_path {
                                     parse_json_path(&response, path)
@@ -870,7 +946,10 @@ impl YamlProvider {
                                 };
                                 if ctx.verbose {
                                     let preview = &value[..value.len().min(120)];
-                                    debug!("[step] graphql stored in '{}': {}", graphql_def.var, preview);
+                                    debug!(
+                                        "[step] graphql stored in '{}': {}",
+                                        graphql_def.var, preview
+                                    );
                                 }
                                 vars.insert(graphql_def.var.clone(), value);
                             }
@@ -881,17 +960,25 @@ impl YamlProvider {
                     }
                 }
 
-                StepDef::FromJson { from_json: from_json_def } => {
+                StepDef::FromJson {
+                    from_json: from_json_def,
+                } => {
                     if ctx.verbose {
                         eprintln!("[step] from_json → var={}", from_json_def.var);
                     }
-                    
-                    let json_str = vars.get(&from_json_def.var)
-                        .ok_or_else(|| ScraperError::Parse(format!("from_json: variable '{}' not found", from_json_def.var)))?;
-                    
+
+                    let json_str = vars.get(&from_json_def.var).ok_or_else(|| {
+                        ScraperError::Parse(format!(
+                            "from_json: variable '{}' not found",
+                            from_json_def.var
+                        ))
+                    })?;
+
                     let json_array: Vec<serde_json::Value> = serde_json::from_str(json_str)
-                        .map_err(|e| ScraperError::Parse(format!("from_json: failed to parse JSON: {e}")))?;
-                    
+                        .map_err(|e| {
+                            ScraperError::Parse(format!("from_json: failed to parse JSON: {e}"))
+                        })?;
+
                     for item in json_array {
                         let mut record: HashMap<String, String> = HashMap::new();
                         for (output_key, json_key) in &from_json_def.extract {
@@ -903,10 +990,12 @@ impl YamlProvider {
                                 // Otherwise extract from object using the key path
                                 extract_json_value(&item, json_key)
                             };
-                            
+
                             if let Some(val) = value {
                                 // Apply prefix if not absolute URL
-                                let final_val = if let Some(prefix) = from_json_def.prefix.get(output_key) {
+                                let final_val = if let Some(prefix) =
+                                    from_json_def.prefix.get(output_key)
+                                {
                                     let expanded_prefix = self.expand(prefix, &vars);
                                     if val.starts_with("http://") || val.starts_with("https://") {
                                         val
@@ -923,7 +1012,7 @@ impl YamlProvider {
                             results.push(record);
                         }
                     }
-                    
+
                     if ctx.verbose {
                         eprintln!("[step] from_json → {} records extracted", results.len());
                     }
@@ -1348,6 +1437,76 @@ fn is_cf_challenge(html: &str) -> bool {
     html.contains("cf-browser-verification")
         || html.contains("__cf_chl")
         || (html.contains("Just a moment") && html.contains("cloudflare"))
+}
+
+/// Attempt to click likely Cloudflare challenge controls (checkbox/turnstile widgets).
+///
+/// Returns true if a click attempt was dispatched.
+async fn try_cf_checkbox_click(page: &eoka::Page, verbose: bool) -> bool {
+    // First try direct DOM selectors that might exist in same-origin challenge pages.
+    let click_selectors = [
+        "input[type='checkbox']",
+        "button[type='submit']",
+        "label.ctp-checkbox-label",
+        "iframe[title*='challenge']",
+        "iframe[title*='Cloudflare']",
+        "iframe[title*='Turnstile']",
+        "iframe[src*='challenges.cloudflare.com']",
+    ];
+
+    for sel in click_selectors {
+        if page.human_click(sel).await.is_ok() {
+            if verbose {
+                eprintln!("[cf] clicked selector '{sel}'");
+            }
+            return true;
+        }
+    }
+
+    // Fallback: click the center point of likely challenge frames/elements via JS.
+    let js = r#"(function() {
+        const candidates = [
+          "iframe[title*='challenge']",
+          "iframe[title*='Cloudflare']",
+          "iframe[title*='Turnstile']",
+          "iframe[src*='challenges.cloudflare.com']",
+          "input[type='checkbox']",
+          "[role='checkbox']"
+        ];
+        for (const sel of candidates) {
+          const el = document.querySelector(sel);
+          if (!el) continue;
+          const rect = el.getBoundingClientRect();
+          if (!rect || rect.width <= 0 || rect.height <= 0) continue;
+          const x = Math.floor(rect.left + rect.width / 2);
+          const y = Math.floor(rect.top + rect.height / 2);
+          const target = document.elementFromPoint(x, y) || el;
+          const events = ["mousemove", "mousedown", "mouseup", "click"];
+          for (const type of events) {
+            target.dispatchEvent(new MouseEvent(type, {
+              bubbles: true,
+              cancelable: true,
+              view: window,
+              clientX: x,
+              clientY: y,
+              button: 0
+            }));
+          }
+          if (typeof target.click === "function") target.click();
+          return true;
+        }
+        return false;
+    })()"#;
+
+    match page.evaluate::<bool>(js).await {
+        Ok(true) => {
+            if verbose {
+                eprintln!("[cf] clicked via JS fallback");
+            }
+            true
+        }
+        _ => false,
+    }
 }
 
 // ---------------------------------------------------------------------------

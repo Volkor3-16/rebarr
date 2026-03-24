@@ -84,22 +84,22 @@ pub struct MangaMetadata {
     pub other_titles: Option<Vec<Synonym>>, // List of alternative names with metadata
     pub synopsis: Option<String>,
     pub publishing_status: PublishingStatus,
-    pub tags: Vec<String>,       // Tags according to anilist
-    pub start_year: Option<i32>, // When the manga started publishing
+    pub tags: Vec<String>,        // Tags according to anilist
+    pub start_year: Option<i32>,  // When the manga started publishing
     pub start_month: Option<i32>, // When the manga started publishing (month)
     pub start_day: Option<i32>,   // When the manga started publishing (day)
-    pub end_year: Option<i32>,   // When the manga finished publishing (or none)
+    pub end_year: Option<i32>,    // When the manga finished publishing (or none)
 
     // ComicInfo fields
-    pub writer: Option<Vec<String>>,       // Mangaka/Author
-    pub penciller: Option<Vec<String>>,    // Artist
-    pub inker: Option<Vec<String>>,        // Inker
-    pub colorist: Option<Vec<String>>,     // Colorist
-    pub letterer: Option<Vec<String>>,     // Letterer
-    pub editor: Option<Vec<String>>,       // Editor (already exists in Manga, move here)
-    pub translator: Option<Vec<String>>,   // Translator (already exists in Manga, move here)
-    pub genre: Option<String>,              // Primary genre
-    pub community_rating: Option<i32>,      // Average score from AniList
+    pub writer: Option<Vec<String>>,     // Mangaka/Author
+    pub penciller: Option<Vec<String>>,  // Artist
+    pub inker: Option<Vec<String>>,      // Inker
+    pub colorist: Option<Vec<String>>,   // Colorist
+    pub letterer: Option<Vec<String>>,   // Letterer
+    pub editor: Option<Vec<String>>,     // Editor (already exists in Manga, move here)
+    pub translator: Option<Vec<String>>, // Translator (already exists in Manga, move here)
+    pub genre: Option<String>,           // Primary genre
+    pub community_rating: Option<i32>,   // Average score from AniList
 }
 
 /// The 'type' of manga it is. Used for having western comics and manga in one server instance.
@@ -142,7 +142,7 @@ impl StaffRole {
     /// Determine staff role from AniList role string
     fn from_role(role: &str) -> Option<Self> {
         let normalized = Self::normalize_role(role);
-        
+
         // Check role mappings in order of specificity
         if Self::is_writer_role(&normalized) {
             Some(Self::Writer)
@@ -166,7 +166,7 @@ impl StaffRole {
     /// Normalize role string by removing parentheses and extra information
     fn normalize_role(role: &str) -> String {
         let role_lower = role.to_lowercase();
-        
+
         // Remove content in parentheses (e.g., "Lettering (English, chs 1-2)" -> "lettering")
         let without_parens = if let Some(open_paren) = role_lower.find('(') {
             role_lower[..open_paren].trim().to_string()
@@ -188,21 +188,21 @@ impl StaffRole {
 
     /// Check if role indicates a writer/author
     fn is_writer_role(role: &str) -> bool {
-        role.contains("story") || 
-        role.contains("writer") || 
-        role.contains("mangaka") || 
-        role.contains("author") ||
-        role.contains("script")
+        role.contains("story")
+            || role.contains("writer")
+            || role.contains("mangaka")
+            || role.contains("author")
+            || role.contains("script")
     }
 
     /// Check if role indicates a penciller/artist
     fn is_penciller_role(role: &str) -> bool {
-        role.contains("art") || 
-        role.contains("artist") || 
-        role.contains("illustrat") || 
-        role.contains("pencil") || 
-        role.contains("draw") ||
-        role.contains("sketch")
+        role.contains("art")
+            || role.contains("artist")
+            || role.contains("illustrat")
+            || role.contains("pencil")
+            || role.contains("draw")
+            || role.contains("sketch")
     }
 
     /// Check if role indicates an inker
@@ -232,9 +232,11 @@ impl StaffRole {
 }
 
 /// Extract staff information from Media object and categorize by role
-fn extract_staff_from_media(media: &Media) -> (
+fn extract_staff_from_media(
+    media: &Media,
+) -> (
     Option<Vec<String>>, // writer
-    Option<Vec<String>>, // penciller  
+    Option<Vec<String>>, // penciller
     Option<Vec<String>>, // inker
     Option<Vec<String>>, // colorist
     Option<Vec<String>>, // letterer
@@ -277,13 +279,41 @@ fn extract_staff_from_media(media: &Media) -> (
 
     // Return None if no staff found for a category, otherwise Some(vec)
     (
-        if writers.is_empty() { None } else { Some(writers) },
-        if pencillers.is_empty() { None } else { Some(pencillers) },
-        if inkers.is_empty() { None } else { Some(inkers) },
-        if colorists.is_empty() { None } else { Some(colorists) },
-        if letterers.is_empty() { None } else { Some(letterers) },
-        if editors.is_empty() { None } else { Some(editors) },
-        if translators.is_empty() { None } else { Some(translators) },
+        if writers.is_empty() {
+            None
+        } else {
+            Some(writers)
+        },
+        if pencillers.is_empty() {
+            None
+        } else {
+            Some(pencillers)
+        },
+        if inkers.is_empty() {
+            None
+        } else {
+            Some(inkers)
+        },
+        if colorists.is_empty() {
+            None
+        } else {
+            Some(colorists)
+        },
+        if letterers.is_empty() {
+            None
+        } else {
+            Some(letterers)
+        },
+        if editors.is_empty() {
+            None
+        } else {
+            Some(editors)
+        },
+        if translators.is_empty() {
+            None
+        } else {
+            Some(translators)
+        },
     )
 }
 
@@ -377,7 +407,13 @@ impl From<Media> for Manga {
         let mut other_titles: Vec<Synonym> = media
             .synonyms
             .as_ref()
-            .map(|synonyms| synonyms.iter().filter(|s| existing_titles.insert(s.to_string())).map(|s| Synonym::anilist(s)).collect())
+            .map(|synonyms| {
+                synonyms
+                    .iter()
+                    .filter(|s| existing_titles.insert(s.to_string()))
+                    .map(|s| Synonym::anilist(s))
+                    .collect()
+            })
             .unwrap_or_default();
 
         // Add Romaji if it's different from main title
@@ -407,7 +443,7 @@ impl From<Media> for Manga {
         };
 
         // Staff extraction - do this first before moving any fields from media
-        let (writer, penciller, inker, colorist, letterer, editor, translator) = 
+        let (writer, penciller, inker, colorist, letterer, editor, translator) =
             extract_staff_from_media(&media);
         trace!("Extracted Writers: {writer:?}");
         trace!("Extracted penciller: {penciller:?}");

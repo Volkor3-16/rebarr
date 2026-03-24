@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
-use crate::db::provider_scores;
 use super::errors::{ApiResult, bad_request, internal};
+use crate::db::provider_scores;
 
 // ---------------------------------------------------------------------------
 // Response / request types

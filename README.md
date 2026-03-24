@@ -15,9 +15,7 @@ I'll remove this when I've got the first public release out, this is just a quic
 - Full test of new chapter refresh -> chapter downloading
     - 2026-03-20: It refreshed automatically when my pc came out of sleep! noice!
     - 2026-03-23: I've chucked it on the server, i'll import a fuckload of manga for it to try.
-- Full test of chapter upgrading from site
-- Chromium instances time out, and then we spawn another one, they stay open after we exit rebarr
-    - Fix: use docker lmao
+- We should save the reason why we upgrade a chapter (so we can debug bad upgrades easily)
 
 ### Providers
 
@@ -135,6 +133,16 @@ This is in addition to the above.
 3. `docker compose up -d`
 
 If you don't trust the docker image i host, build it yourself nerd
+
+### Docker Desktop Viewer
+
+Docker now runs a virtual desktop stack for Chromium:
+- `Xvfb` + `x11vnc` + `noVNC`
+- `nginx` reverse-proxy so everything stays same-origin on port `8000`
+
+Open `/desktop` in Rebarr to view the browser session.
+- Starts in **view-only**
+- Click **Unlock Controls** for manual interaction
 
 ### Dev Install
 

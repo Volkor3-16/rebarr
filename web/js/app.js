@@ -8,6 +8,7 @@ import './views/search.js';
 import './views/settings.js';
 import './views/queue.js';
 import './views/import.js';
+import './views/desktop.js';
 
 import { initTheme } from './theme.js';
 import { initRouter } from './router.js';

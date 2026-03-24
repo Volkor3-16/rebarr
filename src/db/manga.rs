@@ -195,7 +195,8 @@ fn serialize_other_titles(titles: &Option<Vec<Synonym>>) -> Option<String> {
 
 /// Serialize a vector of strings to JSON for storage in DB
 fn serialize_string_vector(vec: &Option<Vec<String>>) -> Option<String> {
-    vec.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default())
+    vec.as_ref()
+        .map(|v| serde_json::to_string(v).unwrap_or_default())
 }
 
 /// Deserialize a JSON string to a vector of strings
@@ -382,7 +383,10 @@ pub async fn exists_by_external_ids(
 }
 
 /// Fetch the first manga with the given AniList ID, across all libraries.
-pub async fn get_by_anilist_id(pool: &SqlitePool, anilist_id: u32) -> Result<Option<Manga>, sqlx::Error> {
+pub async fn get_by_anilist_id(
+    pool: &SqlitePool,
+    anilist_id: u32,
+) -> Result<Option<Manga>, sqlx::Error> {
     let al_id = anilist_id as i64;
     let row = sqlx::query_as::<_, MangaRow>(
         r#"SELECT

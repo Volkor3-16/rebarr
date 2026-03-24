@@ -41,6 +41,11 @@ pub fn queue_page() -> RawHtml<String> {
     serve_index()
 }
 
+#[get("/desktop")]
+pub fn desktop_page() -> RawHtml<String> {
+    serve_index()
+}
+
 #[get("/logs")]
 pub fn logs_page() -> RawHtml<String> {
     serve_index()
@@ -63,6 +68,7 @@ pub fn routes() -> Vec<rocket::Route> {
         search_page,
         settings_page,
         queue_page,
+        desktop_page,
         logs_page,
         import_page
     ]

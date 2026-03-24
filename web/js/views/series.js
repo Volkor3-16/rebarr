@@ -2,7 +2,7 @@
 
 import { manga as mangaApi, tasks, trustedGroups, providerScores } from '../api.js';
 import { render, setPoll, navigate } from '../router.js';
-import { escape, relTime, statusBadge, taskBadge, tierBadgeHtml, skeleton, showToast, truncateMiddle, formatFileSize } from '../utils.js';
+import { escape, relTime, statusBadge, taskBadge, tierBadgeHtml, skeleton, showToast, truncateMiddle, formatFileSize, renderTaskProgress } from '../utils.js';
 
 let currentMangaId = null;
 let trustedGroupsCache = [];
@@ -167,8 +167,13 @@ export async function viewSeries(id) {
             if (t.chapter_number_raw && (t.task_type === 'DownloadChapter' || t.task_type === 'CheckNewChapter')) {
               taskInfo += ` <small style="color:#888">(Ch. ${escape(t.chapter_number_raw)})</small>`;
             }
-            return `<b>${taskInfo}</b>: ${taskBadge(t.status)}`;
-          }).join(' | ');
+            return `
+              <div class="task-banner-item">
+                <div><b>${taskInfo}</b>: ${taskBadge(t.status)}</div>
+                ${renderTaskProgress(t.progress)}
+              </div>
+            `;
+          }).join('');
           banner.innerHTML = `<div class="task-banner">${lines}</div>`;
           prevHadActive = true;
         } else {

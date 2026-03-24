@@ -1,8 +1,8 @@
 use std::io::Read as _;
 use std::path::Path;
 
-use chrono::Datelike;
 use crate::manga::manga::{Chapter, Manga, Synonym, SynonymSource};
+use chrono::Datelike;
 
 // This file handles the creation of ComicInfo.xml using the various sources of info
 
@@ -80,7 +80,7 @@ pub fn parse_comicinfo(xml: &str) -> ParsedComicInfo {
     }
     info.synopsis = extract_tag(xml, "Summary");
     info.start_year = extract_tag(xml, "Year").and_then(|s| s.parse().ok());
-    
+
     // Parse tags from <Tags> field (preferred) or fall back to <Genre> field for backward compatibility
     info.tags = extract_tag(xml, "Tags")
         .or_else(|| extract_tag(xml, "Genre"))
@@ -99,7 +99,7 @@ pub fn parse_comicinfo(xml: &str) -> ParsedComicInfo {
             .next()
             .and_then(|s| s.parse().ok())
     });
-    
+
     // Notes field: either new JSON format {"series":{...},"chapter":{...}}
     // or legacy text format: rebarr:anilist_id=12345 rebarr:provider=ProviderName
     if let Some(notes) = extract_tag(xml, "Notes") {
@@ -191,16 +191,18 @@ pub fn read_cbz_comicinfo(cbz_path: &Path) -> Option<ParsedComicInfo> {
             }
         }
     }
-    
+
     let idx = comicinfo_idx?;
     let mut entry = archive.by_index(idx).ok()?;
-    
+
     // Read contents with size limit to prevent memory exhaustion
     let mut contents = String::with_capacity(64 * 1024); // 64KB limit
     match entry.read_to_string(&mut contents) {
         Ok(_) => {
             // Basic validation - ensure it's actually XML
-            if contents.trim_start().starts_with("<?xml") || contents.trim_start().starts_with("<ComicInfo") {
+            if contents.trim_start().starts_with("<?xml")
+                || contents.trim_start().starts_with("<ComicInfo")
+            {
                 Some(parse_comicinfo(&contents))
             } else {
                 None
@@ -275,7 +277,7 @@ fn opt_vec_elem(tag: &str, value: Option<&[String]>) -> String {
 /// Serialize series metadata to minified JSON for the notes field.
 fn serialize_series_metadata(manga: &Manga) -> Option<String> {
     use serde::Serialize;
-    
+
     #[derive(Serialize)]
     struct SeriesMetadata {
         uuid: String,
@@ -292,14 +294,15 @@ fn serialize_series_metadata(manga: &Manga) -> Option<String> {
         created_at: i64,
         metadata_updated_at: i64,
     }
-    
+
     let other_titles = manga.metadata.other_titles.as_ref().map(|synonyms| {
-        synonyms.iter()
+        synonyms
+            .iter()
             .filter(|s| !s.hidden)
             .map(|s| s.title.clone())
             .collect::<Vec<_>>()
     });
-    
+
     let series = SeriesMetadata {
         uuid: manga.id.to_string(),
         anilist_id: manga.anilist_id,
@@ -325,11 +328,15 @@ fn serialize_series_metadata(manga: &Manga) -> Option<String> {
         created_at: manga.created_at,
         metadata_updated_at: manga.metadata_updated_at,
     };
-    
+
     match serde_json::to_string(&series) {
         Ok(json) => Some(json),
         Err(e) => {
-            log::warn!("Failed to serialize series metadata for {}: {}", manga.metadata.title, e);
+            log::warn!(
+                "Failed to serialize series metadata for {}: {}",
+                manga.metadata.title,
+                e
+            );
             None
         }
     }
@@ -338,7 +345,7 @@ fn serialize_series_metadata(manga: &Manga) -> Option<String> {
 /// Serialize chapter metadata to minified JSON for the notes field.
 fn serialize_chapter_metadata(chapter: &Chapter) -> Option<String> {
     use serde::Serialize;
-    
+
     #[derive(Serialize)]
     struct ChapterMetadata {
         uuid: String,
@@ -355,7 +362,7 @@ fn serialize_chapter_metadata(chapter: &Chapter) -> Option<String> {
         downloaded_at: Option<i64>,
         scraped_at: Option<i64>,
     }
-    
+
     let chapter_meta = ChapterMetadata {
         uuid: chapter.id.to_string(),
         manga_id: chapter.manga_id.to_string(),
@@ -371,11 +378,15 @@ fn serialize_chapter_metadata(chapter: &Chapter) -> Option<String> {
         downloaded_at: chapter.downloaded_at.map(|dt| dt.timestamp()),
         scraped_at: chapter.scraped_at.map(|dt| dt.timestamp()),
     };
-    
+
     match serde_json::to_string(&chapter_meta) {
         Ok(json) => Some(json),
         Err(e) => {
-            log::warn!("Failed to serialize chapter metadata for chapter {}: {}", chapter.number_sort(), e);
+            log::warn!(
+                "Failed to serialize chapter metadata for chapter {}: {}",
+                chapter.number_sort(),
+                e
+            );
             None
         }
     }
@@ -387,7 +398,7 @@ fn generate_common_metadata_xml(manga: &Manga, xml: &mut String) {
 
     // Series field (always present)
     xml.push_str(&opt_str_elem("Series", Some(&m.title)));
-    
+
     // Alternate series: extract titles from Synonyms (joined with semicolon for ComicInfo.xml)
     let alt_series = m
         .other_titles
@@ -494,7 +505,7 @@ pub fn generate_chapter_xml(
         let year = released_at.year();
         let month = released_at.month();
         let day = released_at.day();
-        
+
         xml.push_str(&opt_int_elem("Year", Some(year)));
         xml.push_str(&opt_int_elem("Month", Some(month)));
         xml.push_str(&opt_int_elem("Day", Some(day)));
@@ -522,10 +533,13 @@ pub fn generate_chapter_xml(
     // Enhanced notes field with comprehensive JSON metadata
     let series_notes = serialize_series_metadata(manga);
     let chapter_notes = serialize_chapter_metadata(chapter);
-    
+
     let notes = match (series_notes, chapter_notes) {
         (Some(series_json), Some(chapter_json)) => {
-            format!("{{\"series\":{},\"chapter\":{}}}", series_json, chapter_json)
+            format!(
+                "{{\"series\":{},\"chapter\":{}}}",
+                series_json, chapter_json
+            )
         }
         (Some(series_json), None) => {
             format!("{{\"series\":{}}}", series_json)
@@ -547,7 +561,7 @@ pub fn generate_chapter_xml(
             parts.join(" ")
         }
     };
-    
+
     xml.push_str(&opt_str_elem("Notes", Some(&notes)));
 
     xml.push_str("</ComicInfo>\n");

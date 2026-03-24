@@ -3,6 +3,7 @@ use sqlx::SqlitePool;
 use std::collections::HashSet;
 use uuid::Uuid;
 
+use crate::db::task::{self as db_task, TaskProgress};
 use crate::db::{chapter as db_chapter, library as db_library, manga as db_manga};
 use crate::manga::comicinfo;
 use crate::manga::manga::{Chapter, DownloadStatus};
@@ -15,7 +16,11 @@ use crate::manga::manga::{Chapter, DownloadStatus};
 ///
 /// Chapters that exist in the DB are updated to Downloaded. Chapters that
 /// don't exist yet are inserted as Downloaded (useful for pre-existing files).
-pub async fn scan_existing_chapters(pool: &SqlitePool, manga_id: Uuid) -> Result<(), String> {
+pub async fn scan_existing_chapters(
+    pool: &SqlitePool,
+    manga_id: Uuid,
+    task_id: Uuid,
+) -> Result<(), String> {
     let manga = db_manga::get_by_id(pool, manga_id)
         .await
         .map_err(|e| e.to_string())?
@@ -39,14 +44,39 @@ pub async fn scan_existing_chapters(pool: &SqlitePool, manga_id: Uuid) -> Result
         }
     };
 
+    let cbz_entries: Vec<_> = entries
+        .flatten()
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .to_ascii_lowercase()
+                .ends_with(".cbz")
+        })
+        .collect();
+
+    let total_entries = cbz_entries.len() as i64;
     let mut found = 0u32;
     let mut found_ids: HashSet<Uuid> = HashSet::new();
-    for entry in entries.flatten() {
+    for (idx, entry) in cbz_entries.into_iter().enumerate() {
         let fname = entry.file_name();
         let name = fname.to_string_lossy();
-        if !name.ends_with(".cbz") {
-            continue;
-        }
+
+        let _ = db_task::set_progress(
+            pool,
+            task_id,
+            &TaskProgress {
+                step: Some("scan-disk".to_owned()),
+                label: Some(format!("Scanning file {} of {}", idx + 1, total_entries)),
+                detail: Some(format!("Inspecting {name}")),
+                current: Some((idx + 1) as i64),
+                total: Some(total_entries),
+                unit: Some("file".to_owned()),
+                ..Default::default()
+            },
+        )
+        .await;
+
         let Some(rest) = name.strip_prefix("Chapter ") else {
             continue;
         };
@@ -149,9 +179,14 @@ pub async fn scan_existing_chapters(pool: &SqlitePool, manga_id: Uuid) -> Result
 
             // set_status handles both the newly inserted row and the case where
             // INSERT OR IGNORE skipped because the row already existed.
-            db_chapter::set_status(pool, chapter.id, DownloadStatus::Downloaded, ci_downloaded_at)
-                .await
-                .map_err(|e| e.to_string())?;
+            db_chapter::set_status(
+                pool,
+                chapter.id,
+                DownloadStatus::Downloaded,
+                ci_downloaded_at,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
 
             if let Some(size) = file_size {
                 let _ = db_chapter::set_file_size(pool, chapter.id, size).await;
@@ -227,6 +262,21 @@ pub async fn scan_existing_chapters(pool: &SqlitePool, manga_id: Uuid) -> Result
         .map_err(|e| e.to_string())?;
     let mut marked_missing = 0u32;
     let mut deleted = 0u32;
+    let _ = db_task::set_progress(
+        pool,
+        task_id,
+        &TaskProgress {
+            step: Some("scan-disk-reconcile".to_owned()),
+            label: Some("Reconciling database with disk".to_owned()),
+            detail: Some("Marking missing chapters and pruning local-only entries".to_owned()),
+            current: None,
+            total: None,
+            unit: None,
+            ..Default::default()
+        },
+    )
+    .await;
+
     for (chapter_id, provider_name) in downloaded {
         if found_ids.contains(&chapter_id) {
             continue;

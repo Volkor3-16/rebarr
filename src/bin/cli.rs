@@ -214,7 +214,9 @@ async fn main() {
         });
 
     if chapters.is_empty() {
-        eprintln!("No chapters found for this manga. It may only have official publisher chapters or no translated content.");
+        eprintln!(
+            "No chapters found for this manga. It may only have official publisher chapters or no translated content."
+        );
         process::exit(1);
     }
 
@@ -292,7 +294,10 @@ async fn main() {
 
     let cancel = tokio_util::sync::CancellationToken::new();
     let image_data = rebarr::scraper::downloader::download_pages_via_browser(
+        None,
+        None,
         &ctx,
+        Some(provider.name()),
         &pages,
         provider.page_delay_ms(),
         chapter_url,

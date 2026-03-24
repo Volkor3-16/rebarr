@@ -2,7 +2,7 @@
 
 import { tasks, settings } from '../api.js';
 import { render, setPoll } from '../router.js';
-import { escape, taskBadge, relTime, skeleton, showToast } from '../utils.js';
+import { escape, taskBadge, renderTaskProgress, showToast } from '../utils.js';
 
 export async function viewQueue() {
   render(`
@@ -55,6 +55,7 @@ async function refreshQueue() {
         taskDesc += ` <small style="color:#888">(Ch. ${escape(t.chapter_number_raw)})</small>`;
       }
       
+      const progress = renderTaskProgress(t.progress);
       const err = t.last_error ? `<br><small class="error">${escape(t.last_error)}</small>` : '';
       const canCancel = t.status === 'Pending' || t.status === 'Running';
       const cb = canCancel ? `<input type="checkbox" class="task-cb" data-id="${t.id}">` : '';
@@ -66,7 +67,7 @@ async function refreshQueue() {
         <tr>
           <td>${cb}</td>
           <td><small>${escape(ts)}</small></td>
-          <td>${taskDesc}</td>
+          <td>${taskDesc}${progress}</td>
           <td>${taskBadge(t.status)}${err}</td>
           <td>${cancelBtn}</td>
         </tr>

@@ -13,6 +13,6 @@ services:
       DATABASE_URL: sqlite:/data/rebarr.db
       REBARR_PROVIDERS_DIR: /data/providers
       RUST_LOG: info
-      ROCKET_ADDRESS: 0.0.0.0
-      ROCKET_PORT: 8000
+      # Internal app port is managed by the image's supervisor/nginx stack.
+      CHROME_HEADLESS: "false"
     restart: unless-stopped

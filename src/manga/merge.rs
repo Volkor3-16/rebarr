@@ -37,8 +37,9 @@ pub async fn check_new_chapters(
     registry: &ProviderRegistry,
     ctx: &ScraperCtx,
     manga: &Manga,
+    task_id: uuid::Uuid,
 ) -> Result<ScanResult, ScanError> {
-    scrape_known_providers(pool, registry, ctx, manga).await
+    scrape_known_providers(pool, registry, ctx, manga, task_id).await
 }
 
 /// Scan all providers for a manga:
@@ -51,6 +52,7 @@ pub async fn scan_manga(
     registry: &ProviderRegistry,
     ctx: &ScraperCtx,
     manga: &Manga,
+    task_id: uuid::Uuid,
 ) -> Result<ScanResult, ScanError> {
     // Fallback to the other titles in case of emergency.
     let mut search_titles: Vec<&str> = vec![manga.metadata.title.as_str()];
@@ -85,6 +87,10 @@ pub async fn scan_manga(
     let globally_disabled = db_scores::get_globally_disabled(pool).await?;
 
     // For every provider...
+    let search_provider_count = registry.all().len() as i64;
+    let search_title_count = search_titles.len() as i64;
+    let mut searched_providers = 0i64;
+
     for provider in registry.all() {
         // Skip globally disabled providers.
         if globally_disabled.contains(provider.name()) {
@@ -111,11 +117,31 @@ pub async fn scan_manga(
             manga.metadata.title
         );
 
+        searched_providers += 1;
+
         let mut results = Vec::new();
 
         // For each title, search for any results
         // Continue to next synonym if results don't meet threshold
-        for title in &search_titles {
+        for (title_idx, title) in search_titles.iter().enumerate() {
+            let _ = db_task::set_progress(
+                pool,
+                task_id,
+                &db_task::TaskProgress {
+                    step: Some("provider-search".to_owned()),
+                    label: Some(format!(
+                        "Searching provider {searched_providers}/{search_provider_count}"
+                    )),
+                    detail: Some(format!("{} searching for \"{}\"", provider.name(), title)),
+                    provider: Some(provider.name().to_owned()),
+                    target: Some(title.to_string()),
+                    current: Some((title_idx + 1) as i64),
+                    total: Some(search_title_count),
+                    unit: Some("title".to_owned()),
+                },
+            )
+            .await;
+
             match provider.search(ctx, title).await {
                 Ok(r) if !r.is_empty() => {
                     // Score results against all synonyms to find best match
@@ -201,7 +227,7 @@ pub async fn scan_manga(
         }
     }
 
-    scrape_known_providers(pool, registry, ctx, manga).await
+    scrape_known_providers(pool, registry, ctx, manga, task_id).await
 }
 
 /// Phase 2+: scrape chapter lists from all cached provider URLs, upsert chapters,
@@ -211,6 +237,7 @@ async fn scrape_known_providers(
     registry: &ProviderRegistry,
     ctx: &ScraperCtx,
     manga: &Manga,
+    task_id: uuid::Uuid,
 ) -> Result<ScanResult, ScanError> {
     let globally_disabled = db_scores::get_globally_disabled(pool).await?;
     let all_entries = db_provider::get_all_for_manga(pool, manga.id).await?;
@@ -220,13 +247,12 @@ async fn scrape_known_providers(
         .collect();
 
     let (total_new, new_ids_for_download) =
-        scrape_chapters(pool, registry, ctx, manga, &provider_entries).await?;
+        scrape_chapters(pool, registry, ctx, manga, &provider_entries, task_id).await?;
 
     let trusted_groups = db_provider::get_trusted_groups(pool).await?;
     let preferred_language = db_settings::get(pool, "preferred_language", "").await?;
     let yaml_defaults = registry.yaml_default_scores();
-    let provider_scores =
-        db_scores::load_effective_scores(pool, manga.id, &yaml_defaults).await?;
+    let provider_scores = db_scores::load_effective_scores(pool, manga.id, &yaml_defaults).await?;
     db_chapter::update_canonical(
         pool,
         manga.id,
@@ -260,6 +286,7 @@ async fn scrape_chapters(
     ctx: &ScraperCtx,
     manga: &Manga,
     provider_entries: &[crate::db::provider::MangaProvider],
+    task_id: uuid::Uuid,
 ) -> Result<(usize, std::collections::HashSet<uuid::Uuid>), ScanError> {
     let provider_map: std::collections::HashMap<&str, &std::sync::Arc<dyn Provider>> =
         registry.all().into_iter().map(|p| (p.name(), p)).collect();
@@ -267,7 +294,9 @@ async fn scrape_chapters(
     let mut total_new = 0usize;
     let mut new_ids: std::collections::HashSet<uuid::Uuid> = std::collections::HashSet::new();
 
-    for entry in provider_entries {
+    let total_providers = provider_entries.len() as i64;
+
+    for (idx, entry) in provider_entries.iter().enumerate() {
         // Track whether this provider has been synced before so we can skip
         // back-catalogue auto-downloads on first sync.
         let was_previously_synced = entry.last_synced_at.is_some();
@@ -284,6 +313,29 @@ async fn scrape_chapters(
             "[scan] Fetching chapters from {} for '{}'…",
             entry.provider_name, manga.metadata.title
         );
+
+        let _ = db_task::set_progress(
+            pool,
+            task_id,
+            &db_task::TaskProgress {
+                step: Some("chapter-sync".to_owned()),
+                label: Some(format!(
+                    "Syncing provider {} of {}",
+                    idx + 1,
+                    provider_entries.len()
+                )),
+                detail: Some(format!(
+                    "Fetching chapter list from {}",
+                    entry.provider_name
+                )),
+                provider: Some(entry.provider_name.clone()),
+                target: entry.provider_url.clone(),
+                current: Some((idx + 1) as i64),
+                total: Some(total_providers),
+                unit: Some("provider".to_owned()),
+            },
+        )
+        .await;
 
         let provider_url = entry.provider_url.as_deref().unwrap();
         match provider.chapters(ctx, provider_url).await {
@@ -376,11 +428,7 @@ async fn enqueue_auto_downloads(
 /// Enqueue DownloadChapter tasks for chapters where a better-tier source became canonical
 /// since the last download (e.g. official release now available for a chapter we got from
 /// an unknown scanlator). Skips chapters already Queued or Downloading.
-async fn enqueue_upgrades(
-    pool: &SqlitePool,
-    manga: &Manga,
-    trusted_groups: &[String],
-) {
+async fn enqueue_upgrades(pool: &SqlitePool, manga: &Manga, trusted_groups: &[String]) {
     let candidates = match db_chapter::find_upgrade_candidates(pool, manga.id, trusted_groups).await
     {
         Ok(v) if !v.is_empty() => v,

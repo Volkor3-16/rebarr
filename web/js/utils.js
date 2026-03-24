@@ -66,6 +66,42 @@ export function taskBadge(s) {
   return `<span class="${cls}">${escape(s)}</span>`;
 }
 
+function taskProgressPercent(progress) {
+  const current = Number(progress?.current);
+  const total = Number(progress?.total);
+  if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 0) return null;
+  return Math.max(0, Math.min(100, (current / total) * 100));
+}
+
+export function renderTaskProgress(progress) {
+  if (!progress) return '';
+
+  const bits = [];
+  if (progress.label) bits.push(`<div class="task-progress-label">${escape(progress.label)}</div>`);
+  if (progress.detail) bits.push(`<div class="task-progress-detail">${escape(progress.detail)}</div>`);
+
+  const meta = [
+    progress.provider ? `Provider: ${escape(progress.provider)}` : '',
+    progress.target ? escape(progress.target) : '',
+    (progress.current != null && progress.total != null)
+      ? `${escape(progress.current)} / ${escape(progress.total)}${progress.unit ? ' ' + escape(progress.unit) + (Number(progress.total) === 1 ? '' : 's') : ''}`
+      : '',
+  ].filter(Boolean).join(' | ');
+
+  if (meta) bits.push(`<div class="task-progress-meta">${meta}</div>`);
+
+  const percent = taskProgressPercent(progress);
+  if (percent != null) {
+    bits.push(`
+      <div class="task-progress-bar" aria-label="Task progress">
+        <div class="task-progress-fill" style="width:${percent.toFixed(1)}%"></div>
+      </div>
+    `);
+  }
+
+  return bits.length ? `<div class="task-progress">${bits.join('')}</div>` : '';
+}
+
 /**
  * Format unix timestamp (seconds) to relative time
  * @param {number|null} ts - Unix timestamp in seconds

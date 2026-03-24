@@ -4,9 +4,9 @@ pub mod downloader;
 pub mod engine;
 pub mod error;
 
-use std::{path::PathBuf, sync::Arc};
 use async_trait::async_trait;
 use log::{info, warn};
+use std::{path::PathBuf, sync::Arc};
 
 use browser::BrowserPool;
 use def::{ProviderDef, ProviderTag};

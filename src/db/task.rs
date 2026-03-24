@@ -1,5 +1,5 @@
 use chrono::{DateTime, Duration, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
@@ -52,6 +52,18 @@ pub struct Task {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub run_after: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TaskProgress {
+    pub step: Option<String>,
+    pub label: Option<String>,
+    pub detail: Option<String>,
+    pub provider: Option<String>,
+    pub target: Option<String>,
+    pub current: Option<i64>,
+    pub total: Option<i64>,
+    pub unit: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -301,6 +313,23 @@ pub async fn complete(pool: &SqlitePool, task_id: Uuid) -> Result<(), sqlx::Erro
     Ok(())
 }
 
+/// Replace the task payload with a structured progress snapshot.
+pub async fn set_progress(
+    pool: &SqlitePool,
+    task_id: Uuid,
+    progress: &TaskProgress,
+) -> Result<(), sqlx::Error> {
+    let now = Utc::now();
+    let payload = serde_json::to_string(progress).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
+    sqlx::query("UPDATE Task SET payload = ?, updated_at = ? WHERE uuid = ?")
+        .bind(payload)
+        .bind(now)
+        .bind(task_id.to_string())
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// Mark a task as Failed with an error message.
 /// If `attempt < max_attempts`, re-queues as Pending with exponential backoff.
 /// Otherwise leaves as Failed.
@@ -417,6 +446,7 @@ pub struct RecentTask {
     pub attempt: i64,
     pub max_attempts: i64,
     pub last_error: Option<String>,
+    pub progress: Option<TaskProgress>,
     pub manga_title: Option<String>,
     pub chapter_number_raw: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -434,6 +464,7 @@ struct RecentTaskRow {
     attempt: i64,
     max_attempts: i64,
     last_error: Option<String>,
+    payload: Option<String>,
     manga_title: Option<String>,
     chapter_base: Option<i64>,
     chapter_variant: Option<i64>,
@@ -469,7 +500,7 @@ pub async fn get_recent(
     let manga_id_str = manga_id.map(|v| v.to_string());
     sqlx::query_as::<_, RecentTaskRow>(
         "SELECT t.uuid, t.task_type, t.status, t.manga_id, t.chapter_id,
-                t.priority, t.attempt, t.max_attempts, t.last_error,
+                t.priority, t.attempt, t.max_attempts, t.last_error, t.payload,
                 t.created_at, t.updated_at,
                 m.title AS manga_title,
                 c.chapter_base, c.chapter_variant
@@ -507,6 +538,10 @@ pub async fn get_recent(
                     attempt: r.attempt,
                     max_attempts: r.max_attempts,
                     last_error: r.last_error,
+                    progress: r
+                        .payload
+                        .as_deref()
+                        .and_then(|json| serde_json::from_str::<TaskProgress>(json).ok()),
                     manga_title: r.manga_title,
                     chapter_number_raw,
                     created_at: r.created_at,

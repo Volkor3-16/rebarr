@@ -22,3 +22,14 @@ On the series page, you can 'pick' / manually override the match. Scroll down to
 
 Additionally, if you're already on the series on the provider, you can just enter the correct series URL.
 Be careful though, if the url isn't correct it will break.
+
+## Some providers don't work! (Cloudflare)
+
+Cloudflare is a bitch. I've gone to great lengths (vibecoding) to work around it.
+If you do hit cloudflare checks, theres only one thing we can try.
+
+1. Open two tabs, on one, pick a series and go down to a provider that's getting blocked, on the other, go into the Desktop page and unlock the mouse/keyboard
+2. Click 'Pick' on the blocked provider, and quickly (within 20s) go back and click the cloudflare checkbox.
+    - I have some code that tries to click this, but it's mostly untested and who knows how well it works.
+3. If you see search results in the pick dialog, it's worked, and we should have no problems for an unknown amount of time.
+    - Seriously, how long does the cloudflare session last? idk im just happy i got it this far.

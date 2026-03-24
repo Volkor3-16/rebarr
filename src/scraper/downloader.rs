@@ -10,7 +10,9 @@ use log::{debug, info, warn};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
-use crate::db::{chapter as db_chapter, provider as db_provider, settings as db_settings};
+use crate::db::{
+    chapter as db_chapter, provider as db_provider, settings as db_settings, task as db_task,
+};
 use crate::manga::comicinfo;
 use crate::manga::manga::{Chapter, DownloadStatus, Manga};
 use crate::manga::scoring::{ChapterFilter, compute_tier, rank_entries};
@@ -49,6 +51,7 @@ pub enum DownloadError {
 /// 4. If all providers fail, mark as Failed and return Err.
 pub async fn download_chapter(
     pool: &sqlx::SqlitePool,
+    task_id: uuid::Uuid,
     registry: &ProviderRegistry,
     ctx: &ScraperCtx,
     manga: &Manga,
@@ -109,8 +112,9 @@ pub async fn download_chapter(
         registry.all().into_iter().map(|p| (p.name(), p)).collect();
 
     let mut last_err = String::new();
+    let total_providers = entries.len() as i64;
 
-    for entry in &entries {
+    for (provider_idx, entry) in entries.iter().enumerate() {
         // Check for cancellation before each provider attempt
         if cancel_token.is_cancelled() {
             db_chapter::set_status(pool, chapter.id, DownloadStatus::Missing, None).await?;
@@ -136,6 +140,30 @@ pub async fn download_chapter(
             chapter.number_sort(),
             manga.metadata.title
         );
+
+        let _ = db_task::set_progress(
+            pool,
+            task_id,
+            &db_task::TaskProgress {
+                step: Some("download-provider".to_owned()),
+                label: Some(format!(
+                    "Trying provider {} of {}",
+                    provider_idx + 1,
+                    entries.len()
+                )),
+                detail: Some(format!(
+                    "Resolving pages from {} for chapter {}",
+                    provider.name(),
+                    chapter.number_sort()
+                )),
+                provider: Some(provider.name().to_owned()),
+                current: Some((provider_idx + 1) as i64),
+                total: Some(total_providers),
+                unit: Some("provider".to_owned()),
+                ..Default::default()
+            },
+        )
+        .await;
 
         let chapter_url = match ensure_chapter_url(pool, ctx, provider, manga.id, entry).await {
             Some(url) => url,
@@ -173,7 +201,39 @@ pub async fn download_chapter(
             continue;
         }
 
-        match download_pages_via_browser(ctx, &pages, provider.page_delay_ms(), &chapter_url, cancel_token.clone()).await {
+        let _ = db_task::set_progress(
+            pool,
+            task_id,
+            &db_task::TaskProgress {
+                step: Some("download-pages".to_owned()),
+                label: Some(format!("Downloading {} page(s)", pages.len())),
+                detail: Some(format!(
+                    "{} returned {} page(s) for chapter {}",
+                    provider.name(),
+                    pages.len(),
+                    chapter.number_sort()
+                )),
+                provider: Some(provider.name().to_owned()),
+                target: Some(chapter_url.clone()),
+                current: Some(0),
+                total: Some(pages.len() as i64),
+                unit: Some("page".to_owned()),
+            },
+        )
+        .await;
+
+        match download_pages_via_browser(
+            Some(pool),
+            Some(task_id),
+            ctx,
+            Some(provider.name()),
+            &pages,
+            provider.page_delay_ms(),
+            &chapter_url,
+            cancel_token.clone(),
+        )
+        .await
+        {
             Ok(image_data) => {
                 let mut cbz_name = format!("Chapter {}", chapter.number_sort());
                 if let Some(ref t) = chapter.title {
@@ -304,7 +364,10 @@ async fn ensure_chapter_url(
 /// `page_delay_ms` — sleep this many ms between images to avoid rate-limiting.
 /// `chapter_url` — navigated once to establish page context, and used as the `Referer` header.
 pub async fn download_pages_via_browser(
+    pool: Option<&sqlx::SqlitePool>,
+    task_id: Option<uuid::Uuid>,
     ctx: &ScraperCtx,
+    provider_name: Option<&str>,
     pages: &[crate::scraper::PageUrl],
     page_delay_ms: u64,
     chapter_url: &str,
@@ -356,7 +419,9 @@ pub async fn download_pages_via_browser(
     // CDN domain, so skip Tier 1 for all remaining pages.
     let mut tier1_failed = false;
 
-    for page_url in pages {
+    let total_pages = pages.len() as i64;
+
+    for (idx, page_url) in pages.iter().enumerate() {
         if cancel_token.is_cancelled() {
             return Err(DownloadError::Cancelled);
         }
@@ -365,6 +430,24 @@ pub async fn download_pages_via_browser(
         }
         let url = &page_url.url;
         let referrer = page_url.referrer.as_deref().unwrap_or(chapter_url);
+
+        if let (Some(pool), Some(task_id)) = (pool, task_id) {
+            let _ = db_task::set_progress(
+                pool,
+                task_id,
+                &db_task::TaskProgress {
+                    step: Some("download-pages".to_owned()),
+                    label: Some(format!("Downloading page {} of {}", idx + 1, pages.len())),
+                    detail: Some(format!("Fetching page {}", page_url.index)),
+                    provider: provider_name.map(|name| name.to_owned()),
+                    target: Some(url.clone()),
+                    current: Some((idx + 1) as i64),
+                    total: Some(total_pages),
+                    unit: Some("page".to_owned()),
+                },
+            )
+            .await;
+        }
 
         // Tier 1: JS fetch() from the chapter page context.
         // Subrequests are not subject to ERR_BLOCKED_BY_CLIENT. CDP extra headers
@@ -391,23 +474,31 @@ pub async fn download_pages_via_browser(
                 Ok(Some(b64)) => match BASE64.decode(b64.trim()) {
                     Ok(data) if !data.is_empty() => Some(data),
                     Ok(_) => {
-                        debug!("[dl] tier1 empty bytes for {url}, switching to reqwest for remaining pages");
+                        debug!(
+                            "[dl] tier1 empty bytes for {url}, switching to reqwest for remaining pages"
+                        );
                         tier1_failed = true;
                         None
                     }
                     Err(e) => {
-                        debug!("[dl] tier1 base64 decode failed for {url}: {e}, switching to reqwest");
+                        debug!(
+                            "[dl] tier1 base64 decode failed for {url}: {e}, switching to reqwest"
+                        );
                         tier1_failed = true;
                         None
                     }
                 },
                 Ok(None) => {
-                    debug!("[dl] tier1 null for {url} (likely CORS), switching to reqwest for remaining pages");
+                    debug!(
+                        "[dl] tier1 null for {url} (likely CORS), switching to reqwest for remaining pages"
+                    );
                     tier1_failed = true;
                     None
                 }
                 Err(e) => {
-                    debug!("[dl] tier1 eval error for {url}: {e}, switching to reqwest for remaining pages");
+                    debug!(
+                        "[dl] tier1 eval error for {url}: {e}, switching to reqwest for remaining pages"
+                    );
                     tier1_failed = true;
                     None
                 }

@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
-use crate::db::{library as db_library, manga as db_manga, task as db_task};
 use crate::db::task::TaskType;
+use crate::db::{library as db_library, manga as db_manga, task as db_task};
 use crate::manga::comicinfo;
 use crate::manga::manga::{Chapter, DownloadStatus, Manga};
 
@@ -92,7 +92,10 @@ pub struct ImportSummary {
 // Scan
 // ---------------------------------------------------------------------------
 
-pub async fn scan_directory(dir: PathBuf, pool: &SqlitePool) -> Result<Vec<ImportCandidate>, String> {
+pub async fn scan_directory(
+    dir: PathBuf,
+    pool: &SqlitePool,
+) -> Result<Vec<ImportCandidate>, String> {
     // Load manga titles for matching (async DB query)
     let all_titles = db_manga::get_all_titles(pool)
         .await
@@ -189,7 +192,8 @@ fn classify_cbz(path: &Path, all_titles: &[db_manga::MangaSummary]) -> ImportCan
             released_at = info.released_at;
             downloaded_at = info.downloaded_at;
             scraped_at = info.scraped_at;
-        } else if info.title.is_some() || info.chapter_number.is_some() || info.anilist_id.is_some() {
+        } else if info.title.is_some() || info.chapter_number.is_some() || info.anilist_id.is_some()
+        {
             // Tier 2: plain ComicInfo with useful fields
             tier = ImportTier::ComicInfo;
             anilist_id = info.anilist_id;
@@ -361,7 +365,11 @@ pub async fn execute_imports(imports: Vec<ConfirmedImport>, pool: &SqlitePool) -
         let _ = db_task::enqueue(pool, TaskType::ScanDisk, Some(manga_id), None, 5).await;
     }
 
-    ImportSummary { moved, skipped, errors }
+    ImportSummary {
+        moved,
+        skipped,
+        errors,
+    }
 }
 
 async fn process_single_import(imp: ConfirmedImport, pool: &SqlitePool) -> Result<Uuid, String> {
@@ -404,7 +412,10 @@ async fn process_single_import(imp: ConfirmedImport, pool: &SqlitePool) -> Resul
     // Delete source if it differs from target
     if src_path != target_path {
         if let Err(e) = std::fs::remove_file(&src_path) {
-            warn!("[import] Could not delete source {}: {e}", src_path.display());
+            warn!(
+                "[import] Could not delete source {}: {e}",
+                src_path.display()
+            );
         }
     }
 
@@ -504,7 +515,10 @@ fn rewrite_cbz(src: &Path, dst: &Path, manga: &Manga, chapter: &Chapter) -> Resu
 
         // Only carry image files
         let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
-        if matches!(ext.as_str(), "jpg" | "jpeg" | "png" | "gif" | "webp" | "avif") {
+        if matches!(
+            ext.as_str(),
+            "jpg" | "jpeg" | "png" | "gif" | "webp" | "avif"
+        ) {
             let mut data = Vec::new();
             entry.read_to_end(&mut data).map_err(|e| e.to_string())?;
             images.push((name, data));
@@ -524,11 +538,13 @@ fn rewrite_cbz(src: &Path, dst: &Path, manga: &Manga, chapter: &Chapter) -> Resu
 
     let out_file = std::fs::File::create(dst).map_err(|e| e.to_string())?;
     let mut zip = zip::ZipWriter::new(out_file);
-    let opts = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored);
+    let opts =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
-    zip.start_file("ComicInfo.xml", opts).map_err(|e| e.to_string())?;
-    zip.write_all(comic_info.as_bytes()).map_err(|e| e.to_string())?;
+    zip.start_file("ComicInfo.xml", opts)
+        .map_err(|e| e.to_string())?;
+    zip.write_all(comic_info.as_bytes())
+        .map_err(|e| e.to_string())?;
 
     for (name, data) in images {
         zip.start_file(name, opts).map_err(|e| e.to_string())?;

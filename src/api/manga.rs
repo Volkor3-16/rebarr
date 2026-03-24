@@ -3,9 +3,9 @@ use std::path::PathBuf;
 use chrono::Utc;
 use log::{debug, trace, warn};
 use rocket::{State, delete, get, http::Status, patch, post, serde::json::Json};
-use strsim;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
+use strsim;
 use uuid::Uuid;
 
 use crate::{
@@ -769,7 +769,11 @@ pub async fn provider_candidates(
             }
         })
         .collect();
-    candidates.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    candidates.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     Ok(Json(candidates))
 }
@@ -780,10 +784,7 @@ pub async fn provider_candidates(
 
 /// Manually set (or clear) the provider URL for a manga/provider pair.
 /// Clears `last_synced_at` so the next scan re-scrapes from the new URL.
-#[post(
-    "/api/manga/<id>/providers/<name>/url",
-    data = "<body>"
-)]
+#[post("/api/manga/<id>/providers/<name>/url", data = "<body>")]
 pub async fn set_provider_url(
     pool: &State<SqlitePool>,
     id: &str,

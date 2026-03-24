@@ -69,10 +69,7 @@ pub async fn list_chapters(pool: &State<SqlitePool>, id: &str) -> ApiResult<Vec<
 /// Load and shape the full chapter list for a manga:
 /// applies preferred-language filtering, annotates each row with its canonical flag
 /// and tier score, and returns the API response shape.
-async fn build_chapter_list(
-    pool: &SqlitePool,
-    manga_id: Uuid,
-) -> ApiResult<Vec<ChapterListItem>> {
+async fn build_chapter_list(pool: &SqlitePool, manga_id: Uuid) -> ApiResult<Vec<ChapterListItem>> {
     let all_rows = db::chapter::get_all_for_manga(pool, manga_id)
         .await
         .map_err(internal)?;

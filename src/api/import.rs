@@ -33,10 +33,16 @@ pub async fn scan_api(
 ) -> ApiResult<Vec<ImportCandidate>> {
     let dir = PathBuf::from(&body.source_dir);
     if !dir.exists() {
-        return Err(bad_request(format!("directory does not exist: {}", body.source_dir)));
+        return Err(bad_request(format!(
+            "directory does not exist: {}",
+            body.source_dir
+        )));
     }
     if !dir.is_dir() {
-        return Err(bad_request(format!("path is not a directory: {}", body.source_dir)));
+        return Err(bad_request(format!(
+            "path is not a directory: {}",
+            body.source_dir
+        )));
     }
 
     let candidates = importer::scan_directory(dir, pool.inner())

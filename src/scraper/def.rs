@@ -191,11 +191,11 @@ pub enum StepDef {
     /// and store the response body as a string variable. All traffic goes through Chromium.
     Fetch { fetch: FetchDef },
 
-    /// `- graphql: {url: "...", query: "...", variables: {...}, var: name}` — 
+    /// `- graphql: {url: "...", query: "...", variables: {...}, var: name}` —
     /// Sugar over fetch for GraphQL endpoints. Sends POST with JSON body.
     Graphql { graphql: GraphqlDef },
 
-    /// `- from_json: {var: source_var, extract: {...}}` — Map a stored JSON array 
+    /// `- from_json: {var: source_var, extract: {...}}` — Map a stored JSON array
     /// directly to result rows, replacing the extract_js → foreach pattern.
     FromJson { from_json: FromJsonDef },
 }

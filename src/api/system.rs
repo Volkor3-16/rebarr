@@ -1,9 +1,11 @@
 use rocket::{State, get, serde::json::Json};
 use serde::Serialize;
 use sqlx::SqlitePool;
+use std::net::{SocketAddr, TcpStream};
+use std::time::Duration;
 
-use crate::db::settings as db_settings;
 use super::errors::{ApiResult, internal};
+use crate::db::settings as db_settings;
 
 #[derive(Serialize)]
 pub struct SystemInfo {
@@ -23,16 +25,34 @@ pub struct SystemInfo {
     pub queue_paused: bool,
 }
 
+#[derive(Serialize)]
+pub struct DesktopHealth {
+    /// True when Xvfb display socket exists (`/tmp/.X11-unix/X99`).
+    pub xvfb: bool,
+    /// True when local x11vnc TCP listener is reachable.
+    pub vnc: bool,
+    /// True when local noVNC/websockify TCP listener is reachable.
+    pub novnc: bool,
+}
+
 /// Build a map of ppid→[child_pids] by scanning /proc/*/stat.
 fn build_children_map() -> std::collections::HashMap<u32, Vec<u32>> {
     let mut children: std::collections::HashMap<u32, Vec<u32>> = std::collections::HashMap::new();
-    let Ok(proc_dir) = std::fs::read_dir("/proc") else { return children };
+    let Ok(proc_dir) = std::fs::read_dir("/proc") else {
+        return children;
+    };
     for entry in proc_dir.flatten() {
         let name = entry.file_name();
-        let Ok(pid) = name.to_string_lossy().parse::<u32>() else { continue };
-        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else { continue };
+        let Ok(pid) = name.to_string_lossy().parse::<u32>() else {
+            continue;
+        };
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+            continue;
+        };
         // Format: pid (comm) state ppid ... — comm may contain spaces/parens, find last ')'
-        let Some(after_comm) = stat.rfind(')') else { continue };
+        let Some(after_comm) = stat.rfind(')') else {
+            continue;
+        };
         let fields: Vec<&str> = stat[after_comm + 1..].split_whitespace().collect();
         if fields.len() >= 2 {
             if let Ok(ppid) = fields[1].parse::<u32>() {
@@ -59,10 +79,16 @@ fn collect_process_tree(root_pid: u32) -> Vec<u32> {
 
 /// Read VmRSS (kB) for a single PID from /proc/<pid>/status.
 fn read_vmrss_kb(pid: u32) -> u64 {
-    let Ok(content) = std::fs::read_to_string(format!("/proc/{pid}/status")) else { return 0 };
+    let Ok(content) = std::fs::read_to_string(format!("/proc/{pid}/status")) else {
+        return 0;
+    };
     for line in content.lines() {
         if line.starts_with("VmRSS:") {
-            return line.split_whitespace().nth(1).and_then(|v| v.parse().ok()).unwrap_or(0);
+            return line
+                .split_whitespace()
+                .nth(1)
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
         }
     }
     0
@@ -72,6 +98,11 @@ fn read_vmrss_kb(pid: u32) -> u64 {
 fn process_tree_rss_mb() -> u64 {
     let pids = collect_process_tree(std::process::id());
     pids.iter().map(|&pid| read_vmrss_kb(pid)).sum::<u64>() / 1024
+}
+
+fn tcp_listening_on_local(port: u16) -> bool {
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -92,12 +123,11 @@ pub async fn system_info(pool: &State<SqlitePool>) -> ApiResult<SystemInfo> {
         .await
         .map_err(internal)?;
 
-    let downloaded_count: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM Chapters WHERE download_status = 'Downloaded'",
-    )
-    .fetch_one(pool.inner())
-    .await
-    .map_err(internal)?;
+    let downloaded_count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM Chapters WHERE download_status = 'Downloaded'")
+            .fetch_one(pool.inner())
+            .await
+            .map_err(internal)?;
 
     let pending_count: (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM Task WHERE status = 'Pending'")
@@ -128,9 +158,22 @@ pub async fn system_info(pool: &State<SqlitePool>) -> ApiResult<SystemInfo> {
 }
 
 // ---------------------------------------------------------------------------
+// GET /api/system/desktop
+// ---------------------------------------------------------------------------
+
+#[get("/api/system/desktop")]
+pub async fn desktop_health() -> Json<DesktopHealth> {
+    Json(DesktopHealth {
+        xvfb: std::path::Path::new("/tmp/.X11-unix/X99").exists(),
+        vnc: tcp_listening_on_local(5900),
+        novnc: tcp_listening_on_local(16080),
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
 
 pub fn routes() -> Vec<rocket::Route> {
-    rocket::routes![system_info]
+    rocket::routes![system_info, desktop_health]
 }

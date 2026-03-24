@@ -8,6 +8,7 @@ const routes = [
   [/^\/series\/([^/]+)$/, 'viewSeries'],
   [/^\/search$/, 'viewSearch'],
   [/^\/settings$/, 'viewSettings'],
+  [/^\/desktop$/, 'viewDesktop'],
   [/^\/queue$/, 'viewQueue'],
   [/^\/logs$/, 'viewQueue'], // Logs uses queue view
   [/^\/import$/, 'viewImport'],

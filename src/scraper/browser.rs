@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use eoka::{Browser, StealthConfig};
-use eoka::stealth::fingerprint::{Fingerprint, Platform};
 use tokio::sync::Mutex;
 
 use crate::scraper::error::ScraperError;

@@ -11,5 +11,8 @@ else
     echo "[entrypoint] Providers directory already populated — skipping seed."
 fi
 
-# Hand off to the rebarr binary
-exec ./rebarr "$@"
+# Runtime dirs used by nginx when running as non-root.
+mkdir -p /tmp/nginx/client_temp /tmp/nginx/proxy_temp /tmp/nginx/fastcgi_temp /tmp/nginx/uwsgi_temp /tmp/nginx/scgi_temp
+
+# Hand off to supervisor (starts Xvfb, VNC/noVNC, rebarr, nginx)
+exec /usr/bin/supervisord -c /etc/supervisord.conf

@@ -2,10 +2,22 @@
 
 This a informal changelog so i can keep track of what im doing.
 
+## 2026-03-24
+
+- Tested out openai codex by implementing better cloudflare bypassing
+    - (when in docker) We run chromium inside a dummy x server, which is exposed on the /desktop endpoint
+    - This required adding nginx and a bunch of vnc stuff.
+    - If we get cloudflare checked, we can manually click the checkbox (or hope that the bypasser clicks it for us)
+- Added much better status information for tasks.
+    - Provider search gives you info about what provider is searching, and with what title
+    - Disk Scans have some info, but I can't see it because it runs too fast lmao
+    - Chapter downloads have per-page download progress shown
+
 ## 2026-03-23
 
 - Add date scraping because i forgot to do that for the providers added yesterday
 - Simplify docker build pipeline (removed arm64 builds.. my poor poor garage orange pi....)
+- Docker now runs a virtual desktop stack (`Xvfb + x11vnc + noVNC`) with a new `/desktop` web view.
 - Split `scan_manga()` into like 5 different functions, make it betterer and simples
 - Bypass clownflare again! (imagine having a bad useragent and all the stealth stuff disabled)
 - Reduce memory usage by actually exiting browser sessions after we're done with them.. lol

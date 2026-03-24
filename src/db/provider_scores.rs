@@ -22,13 +22,12 @@ pub async fn get_series_score(
     provider_name: &str,
     manga_id: Uuid,
 ) -> Result<Option<i32>, sqlx::Error> {
-    let row: Option<(i32,)> = sqlx::query_as(
-        "SELECT score FROM Providers WHERE provider_name = ? AND manga_id = ?",
-    )
-    .bind(provider_name)
-    .bind(manga_id.to_string())
-    .fetch_optional(pool)
-    .await?;
+    let row: Option<(i32,)> =
+        sqlx::query_as("SELECT score FROM Providers WHERE provider_name = ? AND manga_id = ?")
+            .bind(provider_name)
+            .bind(manga_id.to_string())
+            .fetch_optional(pool)
+            .await?;
     Ok(row.map(|(score,)| score))
 }
 
@@ -38,13 +37,12 @@ pub async fn get_enabled(
     provider_name: &str,
     manga_id: Uuid,
 ) -> Result<bool, sqlx::Error> {
-    let row: Option<(i64,)> = sqlx::query_as(
-        "SELECT enabled FROM Providers WHERE provider_name = ? AND manga_id = ?",
-    )
-    .bind(provider_name)
-    .bind(manga_id.to_string())
-    .fetch_optional(pool)
-    .await?;
+    let row: Option<(i64,)> =
+        sqlx::query_as("SELECT enabled FROM Providers WHERE provider_name = ? AND manga_id = ?")
+            .bind(provider_name)
+            .bind(manga_id.to_string())
+            .fetch_optional(pool)
+            .await?;
     Ok(row.map(|(e,)| e != 0).unwrap_or(true))
 }
 
@@ -143,20 +141,18 @@ pub async fn load_effective_scores(
     yaml_defaults: &HashMap<String, i32>,
 ) -> Result<HashMap<String, i32>, sqlx::Error> {
     // Fetch all global rows
-    let global_rows: Vec<(String, i32)> = sqlx::query_as(
-        "SELECT provider_name, score FROM Providers WHERE manga_id IS NULL",
-    )
-    .fetch_all(pool)
-    .await?;
+    let global_rows: Vec<(String, i32)> =
+        sqlx::query_as("SELECT provider_name, score FROM Providers WHERE manga_id IS NULL")
+            .fetch_all(pool)
+            .await?;
     let global_map: HashMap<String, i32> = global_rows.into_iter().collect();
 
     // Fetch all series-specific rows for this manga
-    let series_rows: Vec<(String, i32)> = sqlx::query_as(
-        "SELECT provider_name, score FROM Providers WHERE manga_id = ?",
-    )
-    .bind(manga_id.to_string())
-    .fetch_all(pool)
-    .await?;
+    let series_rows: Vec<(String, i32)> =
+        sqlx::query_as("SELECT provider_name, score FROM Providers WHERE manga_id = ?")
+            .bind(manga_id.to_string())
+            .fetch_all(pool)
+            .await?;
     let series_map: HashMap<String, i32> = series_rows.into_iter().collect();
 
     // Merge: series > global > yaml_default
@@ -185,12 +181,11 @@ pub async fn get_all_series_overrides(
     pool: &SqlitePool,
     manga_id: Uuid,
 ) -> Result<HashMap<String, (i32, bool)>, sqlx::Error> {
-    let rows: Vec<(String, i32, i64)> = sqlx::query_as(
-        "SELECT provider_name, score, enabled FROM Providers WHERE manga_id = ?",
-    )
-    .bind(manga_id.to_string())
-    .fetch_all(pool)
-    .await?;
+    let rows: Vec<(String, i32, i64)> =
+        sqlx::query_as("SELECT provider_name, score, enabled FROM Providers WHERE manga_id = ?")
+            .bind(manga_id.to_string())
+            .fetch_all(pool)
+            .await?;
     Ok(rows
         .into_iter()
         .map(|(name, score, enabled)| (name, (score, enabled != 0)))
