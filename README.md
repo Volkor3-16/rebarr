@@ -16,12 +16,13 @@ I'll remove this when I've got the first public release out, this is just a quic
     - 2026-03-20: It refreshed automatically when my pc came out of sleep! noice!
     - 2026-03-23: I've chucked it on the server, i'll import a fuckload of manga for it to try.
 - We should save the reason why we upgrade a chapter (so we can debug bad upgrades easily)
-- MangaDex doesn't filter for unavailable chapters from MangaPlus - also doesn't have a release date for them?
+- Automatically updated providiers from the container -> but don't overwrite providers modified by the user
+- Implement provider e2e testing.
+    - Have asserts with expected stuff, and match. obviously
 
 ### Providers
 
 - Providers steps shouldn't need a random ass `- open` and then hit another endpoint why have the open step at all?
-
 - [ ] Get Mangago working
 
 ## Features
@@ -34,32 +35,6 @@ I'll remove this when I've got the first public release out, this is just a quic
 - New sites are just a .yaml with some html selectors (and maybe some javascript). No rust knowledge needed.
     - Hell half the providers were just me giving chatgpt the yaml schema and an example.
 - REST API, so someone with a workable knowledge of frontend design can implement their own (PRs welcome!)
-
-### Minimum Viable Release
-
-This is all the stuff I haven't started working on yet, but will be in before a 0.1 release.
-
-#### New Database/User Wizard
-First-run modal that shows on fresh install. Saves `wizard_completed` flag to settings table when complete. Users can revisit from settings if needed.
-
-Steps:
-1. **Library Setup**: Create first library or skip if configured via environment variables
-   - Select default monitor status for new series (monitored vs unmonitored by default)
-2. **Provider Configuration**: Enable/disable providers with suggested defaults
-   - Show recommended provider scores based on everythingmoe-style trust list
-   - User can adjust scores here
-3. **Download Priority**: Select preferred tier order (default: Official > Named Scanlation Group > Unknown > Aggregator)
-   - Allows filtering to specific scanlators or only official releases
-4. **Import Existing Library** (optional): "Do you have an existing rebarr library?" yes/no
-   - Scan all subdirectories recursively for .cbz files
-   - Process one by one: for each file, parse ComicInfo.xml for metadata
-   - Run AniList search with parsed title, show results to user
-   - User confirms correct match → runs RefreshMetadata
-   - User configures provider enables/disables and aliases
-   - Queue BuildFullChapterList and ScanDisk tasks
-   - Repeat until all directories processed
-5. **Quick Tutorial**: Brief overview of UI
-
 
 #### Extended ComicInfo.xml Support
 
@@ -108,9 +83,6 @@ This is in addition to the above.
     - Maybe some fancy stuff later, use tags or whatever?
     - AI slop suggestions?
     - something else?
-- [ ] Anti-scraping prevention
-    - 'random' useragent (pick a random one from the `n` most common UA's)
-    - Seriously how do they figure out im using a automated browser surely we can fix that
 - [ ] Tachiyomi/Mihon backup importer (Add libraries)
 - [ ] Various site list scrape + importer
 - [ ] Fallback mode? use single provider as grand source of metadata?
@@ -144,11 +116,17 @@ Open `/desktop` in Rebarr to view the browser session.
 
 Requires rust/cargo and whatever else i add
 
-1. `cargo run --bin rebarr`
+1. `CHROME_HEADLESS=false cargo run --bin rebarr`
+
+CHROME_HEADLESS=false is helpful to see the status of the web scraper without the vnc fuckery that exists in docker
 
 for testing a provider, use
 
-`cargo run --bin scraper_test -- "mangasearchterm"`
+`cargo run --bin cli -- -V -k -p MangaProvider -H "Manga Title" -d`
+
+This runs a full implementation test, searching, chapter list, and page downloads.
+Additionally, for even more debugging it saves scraper_dump_N.html for each step in the provider
+and even screenshots!
 
 ## Thanks
 

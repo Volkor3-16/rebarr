@@ -195,9 +195,13 @@ pub enum StepDef {
     /// Sugar over fetch for GraphQL endpoints. Sends POST with JSON body.
     Graphql { graphql: GraphqlDef },
 
-    /// `- from_json: {var: source_var, extract: {...}}` — Map a stored JSON array
-    /// directly to result rows, replacing the extract_js → foreach pattern.
-    FromJson { from_json: FromJsonDef },
+/// `- from_json: {var: source_var, extract: {...}}` — Map a stored JSON array
+/// directly to result rows, replacing the extract_js → foreach pattern.
+FromJson { from_json: FromJsonDef },
+
+/// `- filter_json: {var: source_var, condition: {...}}` — Filter a JSON array in-place,
+/// removing items that match the condition. Used to exclude unwanted records.
+FilterJson { filter_json: FilterJsonDef },
 }
 
 // ---------------------------------------------------------------------------
@@ -370,6 +374,37 @@ pub struct FromJsonDef {
     /// Optional per-field prefixes (e.g. to prepend base_url to URLs).
     #[serde(default)]
     pub prefix: HashMap<String, String>,
+    /// Optional strftime format for date fields. Keys are field names, values are format strings.
+    /// Example: { "date": "%+" } to parse ISO 8601 dates.
+    #[serde(default)]
+    pub date_format: HashMap<String, String>,
+    /// Optional filter condition to skip records. If the condition matches, the record is excluded.
+    /// Example: { "field": "attributes.externalUrl", "exists": true } to exclude records with externalUrl.
+    #[serde(default)]
+    pub filter: Option<FilterConditionDef>,
+}
+
+/// Filter condition for from_json records.
+#[derive(Debug, Clone, Deserialize)]
+pub struct FilterConditionDef {
+    /// JSON path to the field to check (e.g., "attributes.externalUrl").
+    pub field: String,
+    /// If true, skip records where the field exists and is not null.
+    /// If false, skip records where the field does not exist or is null.
+    #[serde(default)]
+    pub exists: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Filter JSON step (filter JSON array in-place)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FilterJsonDef {
+    /// Name of the variable containing the JSON array string.
+    pub var: String,
+    /// Filter condition to apply.
+    pub condition: FilterConditionDef,
 }
 
 // ---------------------------------------------------------------------------
@@ -385,6 +420,7 @@ pub struct PaginationDef {
     #[serde(default = "default_current_page_field")]
     pub current_page_field: String,
     /// Field in metadata containing last page number (default: "last_page").
+    /// If set to "total", the engine will calculate last_page from total and limit.
     #[serde(default = "default_last_page_field")]
     pub last_page_field: String,
     /// Field in metadata containing total count (default: "total").
@@ -402,6 +438,10 @@ pub struct PaginationDef {
     /// Maximum number of pages to fetch (default: 20, safety limit).
     #[serde(default = "default_max_pages")]
     pub max_pages: u32,
+    /// If true, calculate last_page as ceil(total / limit).
+    /// Used when API returns total items instead of total pages.
+    #[serde(default)]
+    pub calculate_last_page: bool,
 }
 
 impl Default for PaginationDef {
@@ -415,6 +455,7 @@ impl Default for PaginationDef {
             page_param: default_page_param(),
             start_page: default_start_page(),
             max_pages: default_max_pages(),
+            calculate_last_page: false,
         }
     }
 }

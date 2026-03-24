@@ -3,6 +3,7 @@
 import { providers, settings, trustedGroups, providerScores } from '../api.js';
 import { render } from '../router.js';
 import { escape, skeleton, showToast } from '../utils.js';
+import { showWizard } from './wizard.js';
 
 export async function viewSettings() {
   render(`<div class="settings">${skeleton(5)}</div>`);
@@ -46,6 +47,15 @@ export async function viewSettings() {
 
     render(`
       <h2>Settings</h2>
+
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <iconify-icon icon="mdi:magic-staff" width="20" height="20"></iconify-icon>
+          <h3>Setup Wizard</h3>
+        </div>
+        <p class="settings-card-desc">Re-run the guided setup to configure your library, providers, and download preferences.</p>
+        <button class="btn btn-sm btn-outline" onclick="runSetupWizard()">Run Setup Wizard</button>
+      </div>
 
       <div class="settings-card">
         <div class="settings-card-header">
@@ -312,3 +322,7 @@ window.removeTrustedGroup = async function(name) {
 };
 
 window.viewSettings = viewSettings;
+
+window.runSetupWizard = function() {
+  showWizard(() => viewSettings());
+};

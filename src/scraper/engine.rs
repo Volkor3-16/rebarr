@@ -11,8 +11,8 @@ use scraper::{ElementRef, Html, Selector};
 
 use crate::scraper::{
     def::{
-        ActionDef, ContentKind, FetchDef, FieldDef, ForeachDef, FromJsonDef, GraphqlDef,
-        InterceptDef, ProviderDef, StepDef,
+        ActionDef, ContentKind, FetchDef, FieldDef, FilterJsonDef, ForeachDef, FromJsonDef,
+        GraphqlDef, InterceptDef, ProviderDef, StepDef,
     },
     error::ScraperError,
     {PageUrl, Provider, ProviderChapterInfo, ProviderSearchResult, ScraperCtx},
@@ -86,21 +86,22 @@ impl YamlProvider {
                 // Get base value
                 let base_val = vars.get(var_name).cloned().unwrap_or_default();
 
-                // Apply modifiers in order
-                let mut result = base_val;
-                for mod_name in modifiers.split('|') {
-                    result = match mod_name {
-                        "strip_last_segment" => result
-                            .rfind('/')
-                            .filter(|&i| i > 0)
-                            .map_or(result.clone(), |i| result[..i].to_string()),
-                        "basename" => result
-                            .rfind('/')
-                            .map(|i| result[i + 1..].to_string())
-                            .unwrap_or(result),
-                        _ => result,
-                    };
-                }
+                        // Apply modifiers in order
+                        let mut result = base_val;
+                        for mod_name in modifiers.split('|') {
+                            result = match mod_name {
+                                "strip_last_segment" => result
+                                    .rfind('/')
+                                    .filter(|&i| i > 0)
+                                    .map_or(result.clone(), |i| result[..i].to_string()),
+                                "basename" => result
+                                    .rfind('/')
+                                    .map(|i| result[i + 1..].to_string())
+                                    .unwrap_or(result),
+                                "js_escape" => js_escape(&result),
+                                _ => result,
+                            };
+                        }
 
                 s = s.replace(full_match, &result);
                 changed = true;
@@ -708,17 +709,30 @@ impl YamlProvider {
                                     if let Ok(json) =
                                         serde_json::from_str::<serde_json::Value>(&response)
                                     {
-                                        // Extract pagination metadata if configured
-                                        if let Some(ref meta_path) = pagination.meta_path {
-                                            let meta = parse_json_value(&json, meta_path);
-                                            if let Some(last_page_val) =
-                                                meta.get(&pagination.last_page_field)
-                                            {
-                                                if let Some(lp) = last_page_val.as_u64() {
-                                                    last_page = lp as u32;
-                                                }
+                                    // Extract pagination metadata if configured
+                                    if let Some(ref meta_path) = pagination.meta_path {
+                                        let meta = parse_json_value(&json, meta_path);
+                                        if pagination.calculate_last_page {
+                                            // Calculate last_page from total and limit
+                                            let total = meta
+                                                .get(&pagination.total_field)
+                                                .and_then(|v| v.as_u64())
+                                                .unwrap_or(0);
+                                            let limit = meta
+                                                .get(&pagination.per_page_field)
+                                                .and_then(|v| v.as_u64())
+                                                .unwrap_or(100);
+                                            if limit > 0 {
+                                                last_page = ((total + limit - 1) / limit) as u32;
+                                            }
+                                        } else if let Some(last_page_val) =
+                                            meta.get(&pagination.last_page_field)
+                                        {
+                                            if let Some(lp) = last_page_val.as_u64() {
+                                                last_page = lp as u32;
                                             }
                                         }
+                                    }
 
                                         // Extract data items
                                         let data_path =
@@ -980,6 +994,33 @@ impl YamlProvider {
                         })?;
 
                     for item in json_array {
+                        // Apply filter if configured
+                        if let Some(ref filter) = from_json_def.filter {
+                            let field_value = extract_json_value(&item, &filter.field);
+                            let has_field = field_value.is_some()
+                                && field_value.as_deref() != Some("null")
+                                && !field_value.as_deref().unwrap_or("").is_empty();
+                            // Skip record if filter condition matches
+                            if filter.exists && has_field {
+                                if ctx.verbose {
+                                    eprintln!(
+                                        "[step] from_json → filtered out record with field '{}'",
+                                        filter.field
+                                    );
+                                }
+                                continue;
+                            }
+                            if !filter.exists && !has_field {
+                                if ctx.verbose {
+                                    eprintln!(
+                                        "[step] from_json → filtered out record missing field '{}'",
+                                        filter.field
+                                    );
+                                }
+                                continue;
+                            }
+                        }
+
                         let mut record: HashMap<String, String> = HashMap::new();
                         for (output_key, json_key) in &from_json_def.extract {
                             // Handle both object-based and plain string arrays
@@ -992,10 +1033,18 @@ impl YamlProvider {
                             };
 
                             if let Some(val) = value {
-                                // Apply prefix if not absolute URL
-                                let final_val = if let Some(prefix) =
+                                // Apply date format if configured for this field
+                                let final_val = if let Some(date_fmt) =
+                                    from_json_def.date_format.get(output_key)
+                                {
+                                    match parse_date(&val, date_fmt) {
+                                        Some(ts) => ts.to_string(),
+                                        None => val,
+                                    }
+                                } else if let Some(prefix) =
                                     from_json_def.prefix.get(output_key)
                                 {
+                                    // Apply prefix if not absolute URL
                                     let expanded_prefix = self.expand(prefix, &vars);
                                     if val.starts_with("http://") || val.starts_with("https://") {
                                         val
@@ -1016,6 +1065,61 @@ impl YamlProvider {
                     if ctx.verbose {
                         eprintln!("[step] from_json → {} records extracted", results.len());
                     }
+                }
+
+                StepDef::FilterJson {
+                    filter_json: filter_def,
+                } => {
+                    if ctx.verbose {
+                        eprintln!("[step] filter_json → var={}", filter_def.var);
+                    }
+
+                    let json_str = vars.get(&filter_def.var).ok_or_else(|| {
+                        ScraperError::Parse(format!(
+                            "filter_json: variable '{}' not found",
+                            filter_def.var
+                        ))
+                    })?;
+
+                    let mut json_array: Vec<serde_json::Value> = serde_json::from_str(json_str)
+                        .map_err(|e| {
+                            ScraperError::Parse(format!(
+                                "filter_json: failed to parse JSON: {e}"
+                            ))
+                        })?;
+
+                    let original_count = json_array.len();
+                    let condition = &filter_def.condition;
+
+                    json_array.retain(|item| {
+                        let field_value = extract_json_value(item, &condition.field);
+                        let has_field = field_value.is_some()
+                            && field_value.as_deref() != Some("null")
+                            && !field_value.as_deref().unwrap_or("").is_empty();
+
+                        // Keep record if filter condition does NOT match
+                        if condition.exists && has_field {
+                            false // Remove records where field exists
+                        } else if !condition.exists && !has_field {
+                            false // Remove records where field does not exist
+                        } else {
+                            true // Keep the record
+                        }
+                    });
+
+                    let filtered_count = original_count - json_array.len();
+                    if ctx.verbose {
+                        eprintln!(
+                            "[step] filter_json → removed {} records ({} remaining)",
+                            filtered_count,
+                            json_array.len()
+                        );
+                    }
+
+                    // Store filtered array back
+                    let value = serde_json::to_string(&json_array)
+                        .unwrap_or_else(|_| "[]".to_string());
+                    vars.insert(filter_def.var.clone(), value);
                 }
             }
         }

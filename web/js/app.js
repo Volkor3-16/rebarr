@@ -9,9 +9,10 @@ import './views/settings.js';
 import './views/queue.js';
 import './views/import.js';
 import './views/desktop.js';
+import { showWizard } from './views/wizard.js';
 
 import { initTheme } from './theme.js';
-import { initRouter } from './router.js';
+import { initRouter, navigate } from './router.js';
 import { updateRelTimes } from './utils.js';
 import { tasks, settings, system } from './api.js';
 
@@ -229,12 +230,28 @@ async function updateSystemStats() {
 }
 
 // Initialize the application
-function init() {
+async function init() {
   // Initialize theme
   initTheme();
 
   // Initialize router (which will load the initial view)
   initRouter();
+
+  // Show first-run wizard if setup has not been completed.
+  // The wizard renders as a full-screen overlay above the initial route.
+  try {
+    const appSettings = await settings.get();
+    if (!appSettings.wizard_completed) {
+      await new Promise(resolve => {
+        showWizard((goImport) => {
+          resolve();
+          if (goImport) navigate('/import');
+        });
+      });
+    }
+  } catch (_) {
+    // Non-critical — proceed without wizard if the settings fetch fails.
+  }
 
   // Start the relative time updater (updates every 30 seconds)
   setInterval(updateRelTimes, 30000);

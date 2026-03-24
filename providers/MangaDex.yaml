@@ -55,31 +55,74 @@ chapters:
         var: manga_id
         script: "window.location.pathname.split('/')[2]"
     - fetch:
-        url: "https://api.mangadex.org/manga/{manga_id}/feed"
+        url: "https://api.mangadex.org/manga/{manga_id}/feed?includes[]=scanlation_group"
         method: GET
         var: chapters_response
         json_path: "data"
         pagination:
           meta_path: ""
           current_page_field: "current_page"
-          last_page_field: "last_page"
-          total_field: "total"
+          last_page_field: "total"
+          total_field: "total" 
           per_page_field: "limit"
           page_param: "offset"
           start_page: 0
           max_pages: 20
+          calculate_last_page: true
+    - extract_js:
+        var: chapters_processed
+        script: |
+          (function() {
+            try {
+              var raw = '{chapters_response|js_escape}';
+              var chapters = JSON.parse(raw);
+              if (!Array.isArray(chapters)) {
+                return '[]';
+              }
+              var processed = [];
+              chapters.forEach(function(ch) {
+                // Skip chapters hosted externally (e.g., MangaPlus)
+                if (ch.attributes && ch.attributes.externalUrl) {
+                  return;
+                }
+                // Extract scanlator group name from relationships
+                var groupName = '';
+                var rels = ch.relationships || [];
+                for (var i = 0; i < rels.length; i++) {
+                  if (rels[i].type === 'scanlation_group' && rels[i].attributes && rels[i].attributes.name) {
+                    groupName = rels[i].attributes.name;
+                    break;
+                  }
+                }
+                processed.push({
+                  number_raw: (ch.attributes && ch.attributes.chapter) || '',
+                  title: (ch.attributes && ch.attributes.title) || '',
+                  volume: (ch.attributes && ch.attributes.volume) || '',
+                  url: ch.id || '',
+                  scanlator_group: groupName,
+                  language: (ch.attributes && ch.attributes.translatedLanguage) || '',
+                  date: (ch.attributes && ch.attributes.updatedAt) || ''
+                });
+              });
+              return JSON.stringify(processed);
+            } catch(e) {
+              return '[]';
+            }
+          })()
     - from_json:
-        var: chapters_response
+        var: chapters_processed
         extract:
-          number_raw: "attributes.chapter"
-          title: "attributes.title"
-          volume: "attributes.volume"
-          url: "id"
-          scanlator_group: "relationships[?type=='scanlation_group'].attributes.name"
-          language: "attributes.translatedLanguage"
-          date: "attributes.updatedAt"
+          number_raw: "number_raw"
+          title: "title"
+          volume: "volume"
+          url: "url"
+          scanlator_group: "scanlator_group"
+          language: "language"
+          date: "date"
         prefix:
           url: "https://mangadex.org/chapter/"
+        date_format:
+          date: "%+"
 
 pages:
   steps:
