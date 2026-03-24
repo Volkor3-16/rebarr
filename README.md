@@ -16,17 +16,13 @@ I'll remove this when I've got the first public release out, this is just a quic
     - 2026-03-20: It refreshed automatically when my pc came out of sleep! noice!
     - 2026-03-23: I've chucked it on the server, i'll import a fuckload of manga for it to try.
 - We should save the reason why we upgrade a chapter (so we can debug bad upgrades easily)
+- MangaDex doesn't filter for unavailable chapters from MangaPlus - also doesn't have a release date for them?
 
 ### Providers
 
-I think we need to rework how pages are downloaded:
-- Downloads report status by page (to show progress in frontend)
-- We shouldn't let the browser disconnect and crash? Do we start a new browser session on each task, and close it during completion?
 - Providers steps shouldn't need a random ass `- open` and then hit another endpoint why have the open step at all?
 
-- [ ] Get Mangakakalot working
 - [ ] Get Mangago working
-- [ ] Get AllManga Working
 
 ## Features
 

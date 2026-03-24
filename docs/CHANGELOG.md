@@ -12,6 +12,7 @@ This a informal changelog so i can keep track of what im doing.
     - Provider search gives you info about what provider is searching, and with what title
     - Disk Scans have some info, but I can't see it because it runs too fast lmao
     - Chapter downloads have per-page download progress shown
+- Mangakakalot provider is now working, since we can bypass cloudflare properly
 
 ## 2026-03-23
 

@@ -12,23 +12,34 @@ rate_limit:
 search:
   steps:
     - open: "{base_url}"
-    - graphql:
-        url: "https://api.allanime.day/api"
-        query: |
-          query($search: SearchInput, $size: Int, $page: Int, $translationType: VaildTranslationTypeMangaEnumType, $countryOrigin: VaildCountryOriginEnumType) {
-            mangas(search: $search, limit: $size, page: $page, translationType: $translationType, countryOrigin: $countryOrigin) {
-              edges { _id name thumbnail }
-            }
-          }
-        variables:
-          search:
-            query: "{query_raw}"
-            allowAdult: false
-            allowUnknown: false
-          size: 20
-          page: 1
-          translationType: "sub"
-          countryOrigin: "ALL"
+    - extract_js:
+        var: search_api_url
+        script: |
+          (function() {
+            var variables = JSON.stringify({
+              search: { query: '{query_raw}', allowAdult: false, allowUnknown: false },
+              limit: 20,
+              page: 1,
+              translationType: 'sub',
+              countryOrigin: 'ALL'
+            });
+            var extensions = JSON.stringify({
+              persistedQuery: {
+                version: 1,
+                sha256Hash: '2d48e19fb67ddcac42fbb885204b6abb0a84f406f15ef83f36de4a66f49f651a'
+              }
+            });
+            return 'https://api.allanime.day/api?variables=' + encodeURIComponent(variables) + '&extensions=' + encodeURIComponent(extensions);
+          })()
+    - fetch:
+        url: "{search_api_url}"
+        method: GET
+        headers:
+          Accept: "*/*"
+          Accept-Language: "en-US,en;q=0.9"
+          Referer: "https://allmanga.to/"
+          Origin: "https://allmanga.to"
+          User-Agent: "Mozilla/5.0 (X11; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0"
         var: search_results
         json_path: "data.mangas.edges"
     - from_json:
@@ -46,29 +57,72 @@ chapters:
     - extract_js:
         var: manga_id
         script: "window.location.pathname.split('/manga/')[1]?.split('/')[0] || ''"
+    - intercept:
+        url_contains: "api.allanime.day/api"
+        var: chapters_api_response
+    - script: |
+        fetch('https://api.allanime.day/api', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': '*/*',
+            'Origin': 'https://allmanga.to',
+            'Referer': 'https://allmanga.to/'
+          },
+          body: JSON.stringify({
+            query: 'query ($id: String!) { episodeInfos(showId: $id, episodeNumStart: 0, episodeNumEnd: 9999) { episodeIdNum notes uploadDates } }',
+            variables: { id: 'manga@{manga_id}' }
+          })
+        }).then(r => r.json()).then(data => {
+          window.__rebarr_chapters_data = data;
+        });
+    - sleep: 2000
     - extract_js:
-        var: chapters_data
+        var: chapters_list
         script: |
-          const boxes = document.querySelectorAll('#chapterList-collapse-sub div.simple-box.hyper-link');
-          const chapters = [];
-          boxes.forEach(box => {
-            const numDiv = box.querySelector('div');
-            if (numDiv) {
-              const num = numDiv.textContent.trim();
-              if (num) {
-                chapters.push({ chapterNum: num + '-sub', notes: '' });
-              }
+          (function() {
+            try {
+              var data = window.__rebarr_chapters_data;
+              if (!data || !data.data || !data.data.episodeInfos) return '[]';
+              var episodes = data.data.episodeInfos;
+              var mangaId = '{manga_id}';
+              var baseUrl = '{base_url}';
+              var chapters = [];
+              episodes.forEach(function(ep) {
+                var uploadDates = ep.uploadDates || {};
+                Object.keys(uploadDates).forEach(function(lang) {
+                  var chapterNum = ep.episodeIdNum;
+                  var notes = ep.notes || '';
+                  var title = notes || ('Chapter ' + chapterNum);
+                  var dateStr = uploadDates[lang] || '';
+                  var dateTimestamp = '';
+                  if (dateStr) {
+                    try {
+                      dateTimestamp = Math.floor(new Date(dateStr).getTime() / 1000).toString();
+                    } catch(e) {}
+                  }
+                  chapters.push({
+                    number_raw: chapterNum.toString(),
+                    title: title,
+                    language: lang === 'sub' ? 'en' : lang,
+                    url: baseUrl + '/manga/' + mangaId + '/chapter-' + chapterNum.toString() + '-' + lang,
+                    date: dateTimestamp
+                  });
+                });
+              });
+              return JSON.stringify(chapters);
+            } catch(e) {
+              return '[]';
             }
-          });
-          JSON.stringify(chapters);
+          })()
     - from_json:
-        var: chapters_data
+        var: chapters_list
         extract:
-          number_raw: chapterNum
-          title: notes
-          url: chapterNum
-        prefix:
-          url: "{base_url}/manga/{manga_id}/chapter-"
+          number_raw: number_raw
+          title: title
+          url: url
+          language: language
+          date: date
 
 # We have to hardcode some stuff here, this could break. its very bad.
 pages:

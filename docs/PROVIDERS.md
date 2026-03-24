@@ -9,7 +9,7 @@ If you're here because you're hoping for your favourite site to be added, make a
 | TCB Scans      | tcbonepiecechapters.com | **WORKING** | No search, but all series on one page, wordpress scraping is easy. |
 | MangaDex       | mangadex.org            | **WORKING** | Searching Works, chapter list and pages does not. |
 | AsuraComic     | asuracomic.net          | BROKEN      | These cunts re-order their pages, and tinker with the site to stop scraper. Their scans are available elsewhere. |
-| Comix          | comix.to                | **WORKING** | NextJS app, works by injecting scripts instad of normal selector scraping. |
+| Comix          | comix.to                | **WORKING** | Large library, graphql |
 | AllManga       | allmanga.to             | **WORKING** | Large Library, uses graphql to fuck us over a bit.  |
 | MangaBall      | mangaball.net           | **WORKING** | Massive scanlator hub, Working but incredibly low quality metadata and rips. |
 | Atsumaru       | atsu.moe                | **WORKING** | Decent Aggregator, well organised library. |
@@ -22,11 +22,12 @@ If you're here because you're hoping for your favourite site to be added, make a
 | MangaKatana    | mangakatana.com         | N/A         | Good sized lib, batch downloads. |
 | KaliScan       | kaliscan.com            | N/A         | Giant Library, but bad search and slow updates. |
 | MangaBuddy     | mangabuddy.me           | N/A         | Large library, lots of alt domains |
-| Mangakakalot   | ?                       | BROKEN      | My personal addition. Low quality, slow but large library. Great backup, but broken due to cloudflare blocks, will fix when they lower blocks |
+| Mangakakalot   | ?                       | **WORKING** | My personal addition. Low quality, slow but large library. Great backup, but broken due to cloudflare blocks, will fix when they lower blocks |
 | Kagane         | ?                       | N/A         | Decent Library, good tagging, good quality. Worth it. (and lots of hentai for the gooners)|
 | MangaFire      | ?                       | N/A         | Older library, meh quality and tags. |
 | MangaHub       | ?                       | **WORKING** | Large library, uses names of taken down sites. |
 | ReadComicOnline| ?                       | N/A         | Good site for Western Comics |
+| MangaPlus      | https://mangaplus.shueisha.co.jp | N/A | Official? |
 
 
 requests_per_minute - How many requests you can make to this provider (for any action)
