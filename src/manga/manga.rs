@@ -460,7 +460,7 @@ impl From<Media> for Manga {
             .map(|tags| tags.iter().filter_map(|t| t.name.clone()).collect())
             .unwrap_or_default();
         trace!("Extracted Tags: {tags:?}");
-        let genre = Some(media.genres.unwrap_or_default().first().unwrap().clone());
+        let genre = Some(media.genres.unwrap_or_default().first().map_or("".to_string(), |v| v.to_string()).clone());
         trace!("Extracted Genre: {genre:?}");
 
         // Community rating %
