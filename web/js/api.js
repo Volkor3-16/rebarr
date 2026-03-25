@@ -34,7 +34,7 @@ export async function api(method, path, body) {
 export const get = (path) => api('GET', path);
 export const post = (path, body) => api('POST', path, body);
 export const put = (path, body) => api('PUT', path, body);
-export const del = (path) => api('DELETE', path);
+export const del = (path, body) => api('DELETE', path, body);
 export const patch = (path, body) => api('PATCH', path, body);
 
 // Library API
@@ -53,7 +53,7 @@ export const manga = {
   create: (data) => post('/api/manga', data),
   createManual: (data) => post('/api/manga/manual', data),
   update: (id, data) => patch(`/api/manga/${id}`, data),
-  delete: (id) => del(`/api/manga/${id}`),
+  delete: (id, data) => del(`/api/manga/${id}`, data),
   chapters: (id) => get(`/api/manga/${id}/chapters`),
   providers: (id) => get(`/api/manga/${id}/providers`),
   providerCandidates: (id, name) => get(`/api/manga/${id}/providers/${encodeURIComponent(name)}/candidates`),
@@ -114,6 +114,22 @@ export const system = {
 export const importApi = {
   scan: (source_dir) => post('/api/import/scan', { source_dir }),
   execute: (imports) => post('/api/import/execute', { imports }),
+};
+
+// Cover API
+export const coverApi = {
+  uploadUrl: (mangaId, url) => post(`/api/manga/${mangaId}/cover`, { url }),
+  uploadFile: async (mangaId, file) => {
+    const r = await fetch(`/api/manga/${mangaId}/cover/upload`, {
+      method: 'POST',
+      body: file,
+    });
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({ error: r.statusText }));
+      throw new Error(e.error || r.statusText);
+    }
+    return r.json();
+  },
 };
 
 // Provider scores API

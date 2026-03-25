@@ -2,6 +2,7 @@ use rocket::{State, get, http::Status, put, serde::json::Json};
 use serde::{Deserialize, Serialize};
 
 use crate::db;
+use crate::scraper::ScraperCtx;
 
 use super::errors::{ApiError, ApiResult, bad_request, internal};
 
@@ -13,6 +14,7 @@ use super::errors::{ApiError, ApiResult, bad_request, internal};
 pub struct SettingsResponse {
     pub scan_interval_hours: u64,
     pub queue_paused: bool,
+    pub browser_worker_count: u64,
     /// BCP 47 language code to prefer when selecting a provider (e.g. "en"). `null` = accept any.
     pub preferred_language: Option<String>,
     /// Comma-separated list of language codes to filter from synonym searches
@@ -29,6 +31,7 @@ pub struct SettingsResponse {
 pub struct UpdateSettingsRequest {
     pub scan_interval_hours: Option<u64>,
     pub queue_paused: Option<bool>,
+    pub browser_worker_count: Option<u64>,
     /// Set to a BCP 47 code (e.g. "en") to filter downloads to that language, or "" to clear.
     pub preferred_language: Option<String>,
     /// Comma-separated list of language codes to filter from synonym searches (e.g. "zh,vi,ru")
@@ -54,6 +57,12 @@ pub async fn get_settings(pool: &State<sqlx::SqlitePool>) -> ApiResult<SettingsR
         .await
         .map_err(internal)?
         == "true";
+    let browser_worker_count = db::settings::get(pool.inner(), "browser_worker_count", "3")
+        .await
+        .map_err(internal)?
+        .parse::<u64>()
+        .unwrap_or(3)
+        .clamp(1, 16);
     let lang_raw = db::settings::get(pool.inner(), "preferred_language", "")
         .await
         .map_err(internal)?;
@@ -84,6 +93,7 @@ pub async fn get_settings(pool: &State<sqlx::SqlitePool>) -> ApiResult<SettingsR
     Ok(Json(SettingsResponse {
         scan_interval_hours: hours,
         queue_paused,
+        browser_worker_count,
         preferred_language,
         synonym_filter_languages: filter_langs,
         wizard_completed,
@@ -99,6 +109,7 @@ pub async fn get_settings(pool: &State<sqlx::SqlitePool>) -> ApiResult<SettingsR
 #[put("/api/settings", data = "<body>")]
 pub async fn update_settings(
     pool: &State<sqlx::SqlitePool>,
+    ctx: &State<ScraperCtx>,
     body: Json<UpdateSettingsRequest>,
 ) -> Result<Status, (Status, Json<ApiError>)> {
     if let Some(hours) = body.scan_interval_hours {
@@ -117,6 +128,15 @@ pub async fn update_settings(
         )
         .await
         .map_err(internal)?;
+    }
+    if let Some(count) = body.browser_worker_count {
+        if !(1..=16).contains(&count) {
+            return Err(bad_request("browser_worker_count must be 1–16"));
+        }
+        db::settings::set(pool.inner(), "browser_worker_count", &count.to_string())
+            .await
+            .map_err(internal)?;
+        ctx.executor.set_browser_worker_count(count as usize).await;
     }
     if let Some(ref lang) = body.preferred_language {
         db::settings::set(pool.inner(), "preferred_language", lang.trim())

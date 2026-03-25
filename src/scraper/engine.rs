@@ -1220,6 +1220,10 @@ impl Provider for YamlProvider {
         self.def.rate_limit.page_delay_ms
     }
 
+    fn max_concurrency(&self) -> u32 {
+        self.def.concurrency.workers.max(1)
+    }
+
     fn version(&self) -> Option<&str> {
         self.def.version.as_deref()
     }

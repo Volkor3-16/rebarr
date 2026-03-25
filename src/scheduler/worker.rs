@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use log::{debug, error, info, warn};
 use sqlx::SqlitePool;
@@ -47,7 +47,6 @@ pub fn start(
     });
 
     tokio::spawn(async move {
-        let mut rate_limiter = RateLimiter::new(&registry);
         loop {
             // Honour the global queue-pause setting
             let paused = db_settings::get(&pool, "queue_paused", "false")
@@ -65,9 +64,6 @@ pub fn start(
                         "[worker] Claimed task {:?} (id={})",
                         task.task_type, task.id
                     );
-
-                    // Throttle based on provider(s) involved
-                    throttle_for_task(&pool, &registry, &task, &mut rate_limiter).await;
 
                     // Register a cancellation token for this task
                     let token = CancellationToken::new();
@@ -349,98 +345,6 @@ async fn dispatch(
                 task.task_type
             );
             Ok(())
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Rate limiting
-// ---------------------------------------------------------------------------
-
-/// Per-provider rate limiter. Tracks the last time we dispatched a task that
-/// used each provider, and enforces the minimum inter-request interval derived
-/// from `requests_per_minute`.
-struct RateLimiter {
-    /// provider_name → minimum interval between tasks
-    intervals: HashMap<String, Duration>,
-    /// provider_name → when we last dispatched a task for it
-    last_used: HashMap<String, Instant>,
-}
-
-impl RateLimiter {
-    fn new(registry: &ProviderRegistry) -> Self {
-        let mut intervals = HashMap::new();
-        for provider in registry.all() {
-            // Minimum interval = 60_000ms / rpm  (floor at 100ms)
-            let rpm = provider.rate_limit_rpm();
-            let millis = if rpm > 0 {
-                (60_000u64 / rpm as u64).max(100)
-            } else {
-                2_000
-            };
-            intervals.insert(provider.name().to_owned(), Duration::from_millis(millis));
-        }
-        Self {
-            intervals,
-            last_used: HashMap::new(),
-        }
-    }
-
-    /// Sleep if we need to wait before making another request to `provider_name`.
-    async fn throttle(&mut self, provider_name: &str) {
-        let Some(&interval) = self.intervals.get(provider_name) else {
-            return;
-        };
-        if let Some(&last) = self.last_used.get(provider_name) {
-            let elapsed = last.elapsed();
-            if elapsed < interval {
-                tokio::time::sleep(interval - elapsed).await;
-            }
-        }
-        self.last_used
-            .insert(provider_name.to_owned(), Instant::now());
-    }
-}
-
-/// Throttle for all provider names associated with the target manga of a task.
-async fn throttle_for_task(
-    pool: &SqlitePool,
-    registry: &ProviderRegistry,
-    task: &Task,
-    limiter: &mut RateLimiter,
-) {
-    // If task has a manga_id, throttle based on its cached providers
-    if let Some(manga_id) = task.manga_id {
-        if let Ok(entries) = crate::db::provider::get_all_for_manga(pool, manga_id).await {
-            for entry in entries {
-                // Only throttle if this provider is actually loaded
-                if registry
-                    .all()
-                    .iter()
-                    .any(|p| p.name() == entry.provider_name)
-                {
-                    limiter.throttle(&entry.provider_name).await;
-                }
-            }
-            return;
-        }
-    }
-    // For chapter tasks, look up manga_id via chapter
-    if let Some(chapter_id) = task.chapter_id {
-        if let Ok(Some(chapter)) = db_chapter::get_by_id(pool, chapter_id).await {
-            if let Ok(entries) =
-                crate::db::provider::get_all_for_manga(pool, chapter.manga_id).await
-            {
-                for entry in entries {
-                    if registry
-                        .all()
-                        .iter()
-                        .any(|p| p.name() == entry.provider_name)
-                    {
-                        limiter.throttle(&entry.provider_name).await;
-                    }
-                }
-            }
         }
     }
 }

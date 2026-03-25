@@ -182,7 +182,7 @@ pub async fn download_chapter(
             }
         };
 
-        let pages = match provider.pages(ctx, &chapter_url).await {
+        let pages = match ctx.executor.pages(ctx, provider, &chapter_url).await {
             Ok(p) => p,
             Err(e) => {
                 warn!("[dl] pages() failed on {}: {e}", provider.name());
@@ -343,7 +343,7 @@ async fn ensure_chapter_url(
         provider.name()
     );
 
-    let infos = provider.chapters(ctx, manga_url).await.ok()?;
+    let infos = ctx.executor.chapters(ctx, provider, manga_url).await.ok()?;
 
     // Write the re-scraped data back to Chapters
     let _ = db_chapter::upsert_from_scrape(pool, manga_id, provider.name(), &infos).await;
@@ -374,6 +374,7 @@ pub async fn download_pages_via_browser(
     cancel_token: CancellationToken,
 ) -> Result<Vec<(u32, Vec<u8>)>, DownloadError> {
     let mut results = Vec::with_capacity(pages.len());
+    let _browser_slot = ctx.executor.acquire_browser_slot().await;
 
     let browser = ctx
         .browser

@@ -26,7 +26,7 @@ export async function viewLibraries() {
           <td>
             <button class="btn btn-sm btn-ghost" onclick="editLibrary('${lib.uuid}')">Edit</button>
             <button class="btn btn-sm btn-error btn-outline" onclick="deleteLibrary('${lib.uuid}')">Delete</button>
-            <button class="btn btn-sm btn-primary btn-outline" onclick="navigate('/search?library_id=${lib.uuid}')">Add Manga</button>
+            <a href="/search?library_id=${lib.uuid}" data-path="/search?library_id=${lib.uuid}" class="btn btn-sm btn-primary btn-outline">Add Manga</a>
           </td>
         </tr>
       `;

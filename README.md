@@ -19,11 +19,16 @@ I'll remove this when I've got the first public release out, this is just a quic
 - Automatically updated providiers from the container -> but don't overwrite providers modified by the user
 - Implement provider e2e testing.
     - Have asserts with expected stuff, and match. obviously
+- Flag Anilist 'Completed' manga as unmonitored?
+- Cloudflare DNS from docker? (to bypass morons who can't switch dns) DNS over https?
+
+### Frontend
 
 ### Providers
 
 - Providers steps shouldn't need a random ass `- open` and then hit another endpoint why have the open step at all?
 - [ ] Get Mangago working
+- Weebdex has broken released_at dates, along with scanlator groups (copy mangadex, since its similar)
 
 ## Features
 
@@ -81,6 +86,7 @@ This is in addition to the above.
     - Deduplicate against series already in library
     - Show them all, in order of how often they show up.
     - Maybe some fancy stuff later, use tags or whatever?
+    - We should show relations (prequels/sequels/whatever), sorta like sonarr/radarrs 'collections' feature
     - AI slop suggestions?
     - something else?
 - [ ] Tachiyomi/Mihon backup importer (Add libraries)
@@ -94,23 +100,11 @@ This is in addition to the above.
 
 ## Installation
 
-1. Download the following:
-    - Any wanted providers from `/providers`
-    - `docker-compose.yaml`
+1. Download / copy `docker-compose.yaml` to your server
 2. Edit the docker-compose.yaml to your liking
 3. `docker compose up -d`
 
 If you don't trust the docker image i host, build it yourself nerd
-
-### Docker Desktop Viewer
-
-Docker now runs a virtual desktop stack for Chromium:
-- `Xvfb` + `x11vnc` + `noVNC`
-- `nginx` reverse-proxy so everything stays same-origin on port `8000`
-
-Open `/desktop` in Rebarr to view the browser session.
-- Starts in **view-only**
-- Click **Unlock Controls** for manual interaction
 
 ### Dev Install
 

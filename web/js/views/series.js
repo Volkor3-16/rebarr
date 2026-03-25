@@ -1,6 +1,6 @@
 // Series detail view - manga info + chapters + live task status
 
-import { manga as mangaApi, tasks, trustedGroups, providerScores } from '../api.js';
+import { manga as mangaApi, tasks, trustedGroups, providerScores, coverApi } from '../api.js';
 import { render, setPoll, navigate } from '../router.js';
 import { escape, relTime, statusBadge, taskBadge, tierBadgeHtml, skeleton, showToast, truncateMiddle, formatFileSize, renderTaskProgress } from '../utils.js';
 
@@ -11,8 +11,109 @@ let providersCache = []; // Cache provider names for filtering
 let currentSort = { field: 'chapter', direction: 'desc' };
 let currentFilter = { search: '', status: '', provider: '' };
 
+// Loading overlay / banner state
+let tipsCache = null;
+let currentTipIndex = 0;
+let tipTimer = null;
+let loadingLogs = [];
+let overlayRendered = false;
+let chaptersEverLoaded = false;
+
+// Friendly task names
+const FRIENDLY_NAMES = {
+  'BuildFullChapterList': 'Initial Provider Search',
+  'CheckNewChapter': 'Checking for New Chapters',
+  'DownloadChapter': 'Downloading Chapter',
+  'RefreshMetadata': 'Refreshing Metadata',
+  'ScanDisk': 'Scanning Disk',
+  'OptimiseChapter': 'Optimising Chapter',
+};
+
+function friendlyName(taskType) {
+  return FRIENDLY_NAMES[taskType] || taskType;
+}
+
+// SVG spinner helper - always spins endlessly
+function spinnerSvg(percent, size = 64) {
+  const r = (size - 6) / 2;
+  const circ = 2 * Math.PI * r;
+  return `<svg class="spinner-svg spinning" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+    <circle class="spinner-track" cx="${size/2}" cy="${size/2}" r="${r}"/>
+    <circle class="spinner-fill" cx="${size/2}" cy="${size/2}" r="${r}"
+      stroke-dasharray="${circ}" stroke-dashoffset="${circ * 0.25}"/>
+  </svg>`;
+}
+
+// Load tips from JSON file
+async function loadTips() {
+  if (tipsCache) return tipsCache;
+  try {
+    const resp = await fetch('/web/js/tips.json');
+    tipsCache = await resp.json();
+  } catch(e) {
+    tipsCache = [{ text: 'While you wait, why not check your provider settings?' }];
+  }
+  return tipsCache;
+}
+
+// Start cycling tips (returns cleanup function)
+function startTipCycling(containerEl) {
+  stopTipCycling();
+  const tips = tipsCache || [];
+  if (tips.length === 0) return () => {};
+
+  currentTipIndex = Math.floor(Math.random() * tips.length);
+
+  function showNext() {
+    if (!containerEl || !document.contains(containerEl)) { stopTipCycling(); return; }
+    containerEl.classList.add('fading');
+    setTimeout(() => {
+      currentTipIndex = (currentTipIndex + 1) % tips.length;
+      containerEl.textContent = tips[currentTipIndex].text;
+      containerEl.classList.remove('fading');
+    }, 400);
+  }
+
+  // Show first tip immediately
+  containerEl.textContent = tips[currentTipIndex].text;
+
+  tipTimer = setInterval(showNext, 16000);
+  return stopTipCycling;
+}
+
+function stopTipCycling() {
+  if (tipTimer) { clearInterval(tipTimer); tipTimer = null; }
+}
+
+// Add a log entry (keeps last 6, deduplicates by message)
+function addLog(message) {
+  if (loadingLogs.length > 0 && loadingLogs[0].message === message) return;
+  const now = new Date();
+  const time = now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  loadingLogs.unshift({ time, message });
+  if (loadingLogs.length > 6) loadingLogs.pop();
+}
+
+function renderLogsHtml() {
+  if (loadingLogs.length === 0) return '';
+  return `<div class="loading-overlay-logs">${loadingLogs.map(l =>
+    `<div class="loading-overlay-log-entry"><span class="log-time">${l.time}</span>${escape(l.message)}</div>`
+  ).join('')}</div>`;
+}
+
+// Clear all loading UI
+function clearLoadingUI() {
+  stopTipCycling();
+  loadingLogs = [];
+  overlayRendered = false;
+  const banner = document.getElementById('tasks-banner');
+  if (banner) banner.innerHTML = '';
+}
+
 export async function viewSeries(id) {
   currentMangaId = id;
+  chaptersEverLoaded = false; // Reset when viewing a new series
+  overlayRendered = false; // Reset overlay state
   render(`<div class="series">${skeleton(5)}</div>`);
   
   try {
@@ -30,8 +131,11 @@ export async function viewSeries(id) {
     const total = m.chapter_count != null ? m.chapter_count : '?';
     
     const thumb = m.thumbnail_url 
-      ? `<img class="cover-lg" src="${escape(m.thumbnail_url)}" alt="cover">`
-      : '';
+      ? `<img class="cover-lg" src="${escape(m.thumbnail_url)}" alt="cover" onclick="showCoverUpload('${m.id}')" title="Click to change cover">`
+      : `<div class="cover-placeholder" onclick="showCoverUpload('${m.id}')">
+          <iconify-icon class="cover-placeholder-icon" icon="mdi:image-plus"></iconify-icon>
+          <span class="cover-placeholder-text">Add Cover</span>
+        </div>`;
     
     const tags = (meta.tags ?? []).map(t => `<span class="badge badge-neutral">${escape(t)}</span>`).join(' ');
     const aniLink = m.anilist_id 
@@ -53,6 +157,10 @@ export async function viewSeries(id) {
               <input type="checkbox" id="monitored-cb" ${isMonitored ? 'checked' : ''} onchange="toggleMonitored('${m.id}', this.checked)"> 
               <iconify-icon icon="mdi:${isMonitored ? 'bookmark' : 'bookmark-outline'}" width="24" height="24"></iconify-icon>
             </label>
+            <button class="btn btn-sm btn-danger" onclick='showDeleteSeriesModal("${m.id}", ${JSON.stringify(meta.title ?? "Series")})'>
+              <iconify-icon icon="mdi:delete" width="18" height="18"></iconify-icon>
+              Delete Series
+            </button>
           </div>
           
           <div class="series-meta">
@@ -143,11 +251,12 @@ export async function viewSeries(id) {
       <div id="providers-list"><p>Loading...</p></div>
       
       <div class="mt-3">
-        <a onclick="navigate('/library')">[Back to Libraries]</a>
+        <a href="/library" data-path="/library">[Back to Libraries]</a>
       </div>
     `);
 
-    loadChapters(m.id);
+    // Load chapters, providers, and tips, then start polling
+    await Promise.all([loadChapters(m.id), loadTips()]);
     loadProviders(m.id);
 
     // Poll for active tasks every 3s
@@ -157,27 +266,107 @@ export async function viewSeries(id) {
         const taskList = await tasks.list({ manga_id: m.id, limit: 20 });
         const active = taskList.filter(t => t.status === 'Running' || t.status === 'Pending');
         const banner = document.getElementById('tasks-banner');
-        if (!banner) return;
+        const chaptersEl = document.getElementById('chapters-list');
+        if (!banner || !chaptersEl) return;
+
+        // Find relevant scan tasks for this manga - prioritize RUNNING over PENDING
+        const scanTask = active.find(t =>
+          t.status === 'Running' &&
+          (t.task_type === 'BuildFullChapterList' || t.task_type === 'CheckNewChapter') &&
+          t.manga_id === m.id
+        ) || active.find(t =>
+          t.status === 'Pending' &&
+          (t.task_type === 'BuildFullChapterList' || t.task_type === 'CheckNewChapter') &&
+          t.manga_id === m.id
+        );
+
         if (active.length > 0) {
-          const lines = active.map(t => {
-            let taskInfo = escape(t.task_type);
-            if (t.manga_title) {
-              taskInfo += ` ${escape(t.manga_title)}`;
+          if (scanTask && scanTask.status === 'Running') {
+            // FANCY OVERLAY: Scan task is actively running
+            banner.innerHTML = ''; // Clear tasks-banner
+            const progress = scanTask.progress;
+            const percent = progress?.current != null && progress?.total != null
+              ? Math.round((progress.current / progress.total) * 100)
+              : null;
+
+            // Build activity log (only when running)
+            let logsHtml = '';
+            if (progress?.detail) {
+              addLog(progress.detail);
+              logsHtml = renderLogsHtml();
             }
-            if (t.chapter_number_raw && (t.task_type === 'DownloadChapter' || t.task_type === 'CheckNewChapter')) {
-              taskInfo += ` <small style="color:#888">(Ch. ${escape(t.chapter_number_raw)})</small>`;
+
+            // Only render overlay HTML once, then update parts
+            if (!overlayRendered) {
+              chaptersEl.innerHTML = `
+                <div class="loading-overlay-card">
+                  ${spinnerSvg(percent)}
+                  <div class="loading-overlay-title">${friendlyName(scanTask.task_type)}</div>
+                  <div class="loading-overlay-subtitle" id="loading-subtitle">${progress?.label || 'Working...'}</div>
+                  <div class="loading-overlay-tips" id="loading-tip"></div>
+                  <div id="loading-logs">${logsHtml}</div>
+                </div>
+              `;
+
+              // Start tip cycling once
+              const tipContainer = document.getElementById('loading-tip');
+              if (tipContainer && tipsCache) {
+                startTipCycling(tipContainer);
+              }
+              overlayRendered = true;
+            } else {
+              // Update dynamic parts only
+              const subtitle = document.getElementById('loading-subtitle');
+              if (subtitle) {
+                subtitle.textContent = progress?.label || 'Working...';
+              }
+              const logsDiv = document.getElementById('loading-logs');
+              if (logsDiv) {
+                logsDiv.innerHTML = logsHtml;
+              }
             }
-            return `
-              <div class="task-banner-item">
-                <div><b>${taskInfo}</b>: ${taskBadge(t.status)}</div>
-                ${renderTaskProgress(t.progress)}
+          } else if (scanTask && scanTask.status === 'Pending' && chapterDataCache.length > 0) {
+            // COMPACT BANNER: Scan task is queued and there are existing chapters
+            stopTipCycling();
+            loadingLogs = [];
+            const progress = scanTask.progress;
+            const percent = progress?.current != null && progress?.total != null
+              ? Math.round((progress.current / progress.total) * 100)
+              : null;
+
+            banner.innerHTML = `
+              <div class="loading-banner">
+                ${spinnerSvg(percent, 24)}
+                <div class="loading-banner-info">
+                  <div class="loading-banner-title">${friendlyName(scanTask.task_type)}</div>
+                  <div class="loading-banner-detail">${progress?.detail || progress?.label || 'Working...'}</div>
+                </div>
               </div>
             `;
-          }).join('');
-          banner.innerHTML = `<div class="task-banner">${lines}</div>`;
+          } else {
+            // FALLBACK: Other tasks (downloads, etc.) — show original banner
+            stopTipCycling();
+            loadingLogs = [];
+            banner.innerHTML = '';
+            const lines = active.map(t => {
+              let taskInfo = friendlyName(t.task_type);
+              if (t.chapter_number_raw && (t.task_type === 'DownloadChapter' || t.task_type === 'CheckNewChapter')) {
+                taskInfo += ` <small style="color:#888">(Ch. ${escape(t.chapter_number_raw)})</small>`;
+              }
+              return `
+                <div class="task-banner-item">
+                  <div><b>${taskInfo}</b>: ${taskBadge(t.status)}</div>
+                  ${renderTaskProgress(t.progress)}
+                </div>
+              `;
+            }).join('');
+            banner.innerHTML = `<div class="task-banner">${lines}</div>`;
+          }
           prevHadActive = true;
         } else {
           banner.innerHTML = '';
+          stopTipCycling();
+          loadingLogs = [];
           if (prevHadActive) { prevHadActive = false; loadChapters(m.id); }
         }
       } catch(e) { console.warn('Task poll error:', e); }
@@ -555,6 +744,7 @@ export async function loadChapters(mangaId) {
   try {
     const chapters = await mangaApi.chapters(mangaId);
     chapterDataCache = chapters; // Cache for filtering
+    chaptersEverLoaded = true; // Mark that we've loaded chapters at least once
     
     if (chapters.length === 0) {
       el.innerHTML = `
@@ -1113,6 +1303,51 @@ window.doDeleteChapter = async function(mangaId, base, variant) {
   }
 };
 
+window.showDeleteSeriesModal = function(mangaId, title) {
+  const existingModal = document.getElementById('delete-series-modal');
+  if (existingModal) existingModal.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'delete-series-modal';
+  modal.className = 'modal-overlay';
+  modal.innerHTML = `
+    <div class="modal-box">
+      <h3 class="modal-title">Delete Series</h3>
+      <div class="delete-series-modal">
+        <p>Choose how you want to delete <strong>${escape(title || 'this series')}</strong>.</p>
+        <p>You can remove only the database records, or remove the database records and delete the whole series folder on disk.</p>
+        <p class="delete-series-warning">Deleting files will remove the entire series folder, including any extra or manual files inside it.</p>
+      </div>
+      <div class="modal-footer delete-series-actions">
+        <button class="btn btn-sm btn-danger" data-delete-mode="db" onclick="confirmDeleteSeries('${escape(mangaId)}', false)">Delete from DB</button>
+        <button class="btn btn-sm btn-danger" data-delete-mode="files" onclick="confirmDeleteSeries('${escape(mangaId)}', true)">Delete DB + Files</button>
+        <button class="btn btn-sm btn-ghost" data-delete-mode="cancel" onclick="document.getElementById('delete-series-modal')?.remove()">Cancel</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+};
+
+window.confirmDeleteSeries = async function(mangaId, deleteFiles) {
+  const modal = document.getElementById('delete-series-modal');
+  if (!modal) return;
+
+  const buttons = modal.querySelectorAll('button');
+  buttons.forEach(btn => { btn.disabled = true; });
+
+  try {
+    await mangaApi.delete(mangaId, { delete_files: deleteFiles });
+    modal.remove();
+    showToast(deleteFiles ? 'Series and files deleted' : 'Series deleted from database');
+    navigate('/library');
+  } catch(e) {
+    buttons.forEach(btn => { btn.disabled = false; });
+    showToast('Delete failed: ' + e.message, 'error');
+  }
+};
+
 window.doToggleExtra = async function(mangaId, base, variant) {
   try {
     await mangaApi.toggleExtra(mangaId, base, variant);
@@ -1301,6 +1536,20 @@ window.addSynonym = function() {
   });
 };
 
+// Refresh only the synonym list in-place (no full page reload)
+async function refreshSynonyms(mangaId) {
+  try {
+    const m = await mangaApi.get(mangaId);
+    const meta = m.metadata ?? {};
+    const synonyms = meta.other_titles || [];
+    const el = document.getElementById('synonyms-list');
+    if (!el) return;
+    el.innerHTML = renderSynonyms(synonyms);
+  } catch(e) {
+    showToast('Error refreshing synonyms: ' + e.message, 'error');
+  }
+}
+
 window.confirmAddSynonym = async function() {
   const input = document.getElementById('add-synonym-input');
   const title = input?.value?.trim();
@@ -1309,7 +1558,7 @@ window.confirmAddSynonym = async function() {
     await mangaApi.updateSynonyms(currentMangaId, { add: [title] });
     showToast('Synonym added');
     document.getElementById('add-synonym-row')?.remove();
-    viewSeries(currentMangaId);
+    refreshSynonyms(currentMangaId);
   } catch(e) {
     showToast('Error adding synonym: ' + e.message, 'error');
   }
@@ -1349,8 +1598,76 @@ window.removeSynonym = async function(title, isManual, isHidden) {
       return;
     }
   }
-  // Reload to show updated synonyms
-  viewSeries(currentMangaId);
+  // Refresh synonyms in-place (no full page reload)
+  refreshSynonyms(currentMangaId);
+};
+
+// Cover upload modal
+window.showCoverUpload = function(mangaId) {
+  const existingModal = document.getElementById('cover-upload-modal');
+  if (existingModal) existingModal.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'cover-upload-modal';
+  modal.className = 'modal-overlay';
+  modal.innerHTML = `
+    <div class="modal-box">
+      <h3 class="modal-title">Change Cover</h3>
+      <div class="cover-upload-modal">
+        <label>Download from URL</label>
+        <div class="cover-url-row">
+          <input type="url" id="cover-url-input" placeholder="https://example.com/cover.jpg" class="input input-sm">
+          <button class="btn btn-sm btn-primary" onclick="doCoverUploadUrl('${escape(mangaId)}')">Download</button>
+        </div>
+        <div class="cover-upload-divider">— or —</div>
+        <label>Upload from device</label>
+        <input type="file" id="cover-file-input" class="cover-file-input" accept="image/jpeg,image/png,image/webp">
+        <button class="btn btn-sm" onclick="document.getElementById('cover-file-input').click()">
+          <iconify-icon icon="mdi:upload" width="16" height="16"></iconify-icon>
+          Choose File
+        </button>
+        <span id="cover-file-name" style="font-size:0.8rem;color:var(--text-muted);margin-left:0.5rem"></span>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-sm btn-ghost" onclick="document.getElementById('cover-upload-modal').remove()">Cancel</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  // Close on backdrop click
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+
+  // File input change handler
+  const fileInput = document.getElementById('cover-file-input');
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    document.getElementById('cover-file-name').textContent = file.name;
+    try {
+      showToast('Uploading cover...');
+      await coverApi.uploadFile(mangaId, file);
+      document.getElementById('cover-upload-modal')?.remove();
+      showToast('Cover updated');
+      viewSeries(mangaId);
+    } catch(e) {
+      showToast('Upload failed: ' + e.message, 'error');
+    }
+  });
+};
+
+window.doCoverUploadUrl = async function(mangaId) {
+  const url = document.getElementById('cover-url-input')?.value?.trim();
+  if (!url) { showToast('Please enter a URL', 'error'); return; }
+  try {
+    showToast('Downloading cover...');
+    await coverApi.uploadUrl(mangaId, url);
+    document.getElementById('cover-upload-modal')?.remove();
+    showToast('Cover updated');
+    viewSeries(mangaId);
+  } catch(e) {
+    showToast('Download failed: ' + e.message, 'error');
+  }
 };
 
 window.viewSeries = viewSeries;

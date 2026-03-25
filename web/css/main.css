@@ -455,6 +455,9 @@ img.cover-lg {
   overflow: hidden;
   transition: transform var(--transition), box-shadow var(--transition);
   cursor: pointer;
+  text-decoration: none;
+  color: inherit;
+  display: block;
 }
 
 .manga-card:hover {
@@ -823,6 +826,11 @@ img.cover-lg {
 .modal-footer {
   display: flex;
   justify-content: flex-end;
+}
+
+.modal-footer button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* Relative time */
@@ -1953,4 +1961,249 @@ nav.header-collapsed a {
 .score-input:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+/* ===== Loading Overlay Card (in-place, for no-chapters state) ===== */
+
+.loading-overlay-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 2rem 2.5rem;
+  text-align: center;
+  max-width: 440px;
+  margin: 2rem auto;
+}
+
+.loading-overlay-card .spinner-svg {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 1rem;
+}
+
+.loading-overlay-card .spinner-track {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 4;
+}
+
+.loading-overlay-card .spinner-fill {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 4;
+  stroke-linecap: round;
+  transform-origin: center;
+  transition: stroke-dashoffset 0.35s ease;
+}
+
+.loading-overlay-card .spinner-svg.spinning .spinner-fill {
+  animation: circularSpin 1.2s linear infinite;
+}
+
+@keyframes circularSpin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.loading-overlay-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin-bottom: 0.35rem;
+  color: var(--text);
+}
+
+.loading-overlay-subtitle {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin-bottom: 1rem;
+}
+
+.loading-overlay-tips {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  min-height: 2.5em;
+  line-height: 1.5;
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--border-light);
+  transition: opacity 0.4s ease;
+}
+
+.loading-overlay-tips.fading {
+  opacity: 0;
+}
+
+.loading-overlay-logs {
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-size: 0.72rem;
+  max-height: 130px;
+  overflow-y: auto;
+  text-align: left;
+  margin-top: 0.75rem;
+  padding: 0.5rem 0.6rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+}
+
+.loading-overlay-log-entry {
+  padding: 0.15rem 0;
+  word-break: break-word;
+}
+
+.loading-overlay-log-entry .log-time {
+  color: var(--text-muted);
+  margin-right: 0.5rem;
+}
+
+/* ===== Compact Loading Banner (for when chapters exist) ===== */
+
+.loading-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 1rem;
+  margin-bottom: 1rem;
+  background: var(--banner-bg);
+  border: 1px solid var(--banner-border);
+  border-radius: var(--radius);
+}
+
+.loading-banner .spinner-svg {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.loading-banner .spinner-track {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 3;
+}
+
+.loading-banner .spinner-fill {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 3;
+  stroke-linecap: round;
+  transform-origin: center;
+  transition: stroke-dashoffset 0.35s ease;
+}
+
+.loading-banner .spinner-svg.spinning .spinner-fill {
+  animation: circularSpin 1.2s linear infinite;
+}
+
+.loading-banner-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.loading-banner-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.loading-banner-detail {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.loading-banner .task-progress {
+  margin-top: 0.3rem;
+}
+
+.loading-banner .task-progress-bar {
+  margin-top: 0.2rem;
+}
+
+/* ===== Cover Placeholder ===== */
+
+.cover-placeholder {
+  width: 100px;
+  height: 140px;
+  background: var(--bg-secondary);
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: border-color 0.2s, color 0.2s;
+  gap: 0.35rem;
+}
+
+.cover-placeholder:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.cover-placeholder-icon {
+  font-size: 1.5rem;
+}
+
+.cover-placeholder-text {
+  font-size: 0.7rem;
+  font-weight: 500;
+}
+
+/* Cover upload modal */
+.cover-upload-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.delete-series-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.delete-series-modal p {
+  margin: 0;
+}
+
+.delete-series-warning {
+  padding: 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--error) 35%, var(--border));
+  background: color-mix(in srgb, var(--error) 10%, var(--bg));
+  border-radius: var(--radius);
+}
+
+.delete-series-actions {
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.cover-upload-modal label {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.15rem;
+}
+
+.cover-url-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.cover-url-row input {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.cover-file-input {
+  display: none;
+}
+
+.cover-upload-divider {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.8rem;
 }

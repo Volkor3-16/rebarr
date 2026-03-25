@@ -3,6 +3,7 @@ pub mod def;
 pub mod downloader;
 pub mod engine;
 pub mod error;
+pub mod executor;
 
 use async_trait::async_trait;
 use log::{info, warn};
@@ -12,6 +13,7 @@ use browser::BrowserPool;
 use def::{ProviderDef, ProviderTag};
 use engine::YamlProvider;
 use error::ScraperError;
+use executor::ProviderExecutor;
 
 // If you're reading this. I'm so sorry.
 
@@ -71,6 +73,8 @@ pub struct ScraperCtx {
     /// Lazily-started headless browser pool. Only materialised if a
     /// provider calls `browser.get()`.
     pub browser: BrowserPool,
+    /// Shared scheduler for provider calls.
+    pub executor: Arc<ProviderExecutor>,
     /// When true, dump page HTML to `./scraper_dump_N.html` after every `open` step.
     /// Useful for debugging provider YAML issues.
     pub dump_html: bool,
@@ -80,10 +84,15 @@ pub struct ScraperCtx {
 }
 
 impl ScraperCtx {
-    pub fn new(http: reqwest::Client, browser: BrowserPool) -> Self {
+    pub fn new(
+        http: reqwest::Client,
+        browser: BrowserPool,
+        executor: Arc<ProviderExecutor>,
+    ) -> Self {
         Self {
             http,
             browser,
+            executor,
             dump_html: false,
             verbose: false,
         }
@@ -127,6 +136,11 @@ pub trait Provider: Send + Sync {
     /// Defaults to 0 (no delay).
     fn page_delay_ms(&self) -> u64 {
         0
+    }
+
+    /// Maximum number of concurrent jobs to run for this provider within a process.
+    fn max_concurrency(&self) -> u32 {
+        1
     }
 
     /// Provider version string, if declared in the YAML (e.g. "1", "2.1").
@@ -235,5 +249,10 @@ impl ProviderRegistry {
 
     pub fn is_empty(&self) -> bool {
         self.providers.is_empty()
+    }
+
+    #[cfg(test)]
+    pub fn from_providers_for_tests(providers: Vec<Arc<dyn Provider>>) -> Self {
+        Self { providers }
     }
 }

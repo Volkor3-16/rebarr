@@ -2,6 +2,7 @@ use chrono::Utc;
 use log::{debug, info, warn};
 use sqlx::SqlitePool;
 use thiserror::Error;
+use tokio::task::JoinSet;
 
 use crate::db::provider::MangaProvider;
 use crate::db::task::TaskType;
@@ -10,7 +11,7 @@ use crate::db::{
     settings as db_settings, task as db_task,
 };
 use crate::manga::manga::{DownloadStatus, Manga};
-use crate::scraper::{Provider, ProviderRegistry, ScraperCtx};
+use crate::scraper::{ProviderRegistry, ProviderSearchResult, ScraperCtx};
 
 /// Error for scary times
 #[derive(Debug, Error)]
@@ -55,7 +56,7 @@ pub async fn scan_manga(
     task_id: uuid::Uuid,
 ) -> Result<ScanResult, ScanError> {
     // Fallback to the other titles in case of emergency.
-    let mut search_titles: Vec<&str> = vec![manga.metadata.title.as_str()];
+    let mut search_titles: Vec<String> = vec![manga.metadata.title.clone()];
 
     // Add all other_titles (synonyms, romaji, native, etc.)
     if let Some(ref other) = manga.metadata.other_titles {
@@ -66,18 +67,14 @@ pub async fn scan_manga(
             }
 
             if !synonym.title.trim().is_empty() {
-                search_titles.push(synonym.title.as_str());
+                search_titles.push(synonym.title.clone());
             }
         }
     }
 
-    // Deduplicate using HashSet
-    search_titles = search_titles
-        .into_iter()
-        .filter(|t| !t.trim().is_empty())
-        .collect::<std::collections::HashSet<_>>()
-        .into_iter()
-        .collect();
+    search_titles.retain(|t| !t.trim().is_empty());
+    search_titles.sort();
+    search_titles.dedup();
 
     debug!(
         "[scan] Search titles for '{}': {:?}",
@@ -86,11 +83,7 @@ pub async fn scan_manga(
 
     let globally_disabled = db_scores::get_globally_disabled(pool).await?;
 
-    // For every provider...
-    let search_provider_count = registry.all().len() as i64;
-    let search_title_count = search_titles.len() as i64;
-    let mut searched_providers = 0i64;
-
+    let mut providers_to_search = Vec::new();
     for provider in registry.all() {
         // Skip globally disabled providers.
         if globally_disabled.contains(provider.name()) {
@@ -111,119 +104,105 @@ pub async fn scan_manga(
             continue;
         }
 
-        info!(
-            "[scan] Searching '{}' for '{}'…",
-            provider.name(),
-            manga.metadata.title
-        );
+        providers_to_search.push((*provider).clone());
+    }
 
-        searched_providers += 1;
+    let total_search_providers = providers_to_search.len() as i64;
+    if total_search_providers > 0 {
+        let mut join_set = JoinSet::new();
+        for provider in providers_to_search {
+            let ctx = ctx.clone();
+            let search_titles = search_titles.clone();
+            join_set.spawn(async move {
+                let mut results = Vec::new();
+                let mut last_error = None;
 
-        let mut results = Vec::new();
+                for title in &search_titles {
+                    match ctx.executor.search(&ctx, &provider, title).await {
+                        Ok(r) if !r.is_empty() => {
+                            let best = best_match(&search_titles, &r);
+                            if let Some((score, _)) = best {
+                                if score >= 0.85 {
+                                    results = r;
+                                    break;
+                                }
+                                debug!(
+                                    "[scan] Search for '{}' on {} returned results but best score ({:.2}) below threshold, trying next synonym.",
+                                    title,
+                                    provider.name(),
+                                    score
+                                );
+                            }
+                        }
+                        Ok(_) => continue,
+                        Err(e) => {
+                            last_error = Some(e.to_string());
+                            break;
+                        }
+                    }
+                }
 
-        // For each title, search for any results
-        // Continue to next synonym if results don't meet threshold
-        for (title_idx, title) in search_titles.iter().enumerate() {
+                (provider, results, last_error, search_titles)
+            });
+        }
+
+        let mut completed = 0i64;
+        while let Some(joined) = join_set.join_next().await {
+            let (provider, results, last_error, search_titles) =
+                joined.map_err(|e| ScanError::Scraper(crate::scraper::error::ScraperError::Browser(e.to_string())))?;
+            completed += 1;
+
             let _ = db_task::set_progress(
                 pool,
                 task_id,
                 &db_task::TaskProgress {
                     step: Some("provider-search".to_owned()),
                     label: Some(format!(
-                        "Searching provider {searched_providers}/{search_provider_count}"
+                        "Searched {completed} of {total_search_providers} providers"
                     )),
-                    detail: Some(format!("{} searching for \"{}\"", provider.name(), title)),
+                    detail: Some(format!("Finished provider search on {}", provider.name())),
                     provider: Some(provider.name().to_owned()),
-                    target: Some(title.to_string()),
-                    current: Some((title_idx + 1) as i64),
-                    total: Some(search_title_count),
-                    unit: Some("title".to_owned()),
+                    current: Some(completed),
+                    total: Some(total_search_providers),
+                    unit: Some("provider".to_owned()),
+                    ..Default::default()
                 },
             )
             .await;
 
-            match provider.search(ctx, title).await {
-                Ok(r) if !r.is_empty() => {
-                    // Score results against all synonyms to find best match
-                    let best = r
-                        .iter()
-                        .map(|res| {
-                            let score = search_titles
-                                .iter()
-                                .map(|t| {
-                                    strsim::jaro_winkler(
-                                        &res.title.to_lowercase(),
-                                        &t.to_lowercase(),
-                                    )
-                                })
-                                .fold(0.0f64, f64::max);
-                            (score, res)
-                        })
-                        .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-
-                    if let Some((score, _)) = best {
-                        if score >= 0.85 {
-                            // Good match found! Use these results and break early
-                            results = r;
-                            break;
-                        }
-                        // Below threshold - continue to next synonym
-                        debug!(
-                            "[scan] Search for '{}' on {} returned results but best score ({:.2}) below threshold, trying next synonym.",
-                            title,
-                            provider.name(),
-                            score
-                        );
-                    }
-                    // If no best score, continue to next synonym
-                }
-                Ok(_) => continue,
-                Err(e) => {
-                    warn!("[scan] Search error on {}: {e}", provider.name());
-                    break;
-                }
+            if let Some(err) = last_error {
+                warn!("[scan] Search error on {}: {err}", provider.name());
             }
-        }
 
-        // If theres no good results after scanning all synonyms, give up!
-        if results.is_empty() {
-            info!("[scan] No results on {} for this manga.", provider.name());
-            db_provider::upsert_not_found(pool, manga.id, provider.name()).await?;
-            continue;
-        }
+            if results.is_empty() {
+                info!("[scan] No results on {} for this manga.", provider.name());
+                db_provider::upsert_not_found(pool, manga.id, provider.name()).await?;
+                continue;
+            }
 
-        // We have good results (score >= 0.85), extract best match for logging/db
-        let best = results
-            .iter()
-            .map(|r| {
-                let score = search_titles
-                    .iter()
-                    .map(|t| strsim::jaro_winkler(&r.title.to_lowercase(), &t.to_lowercase()))
-                    .fold(0.0f64, f64::max);
-                (score, r)
-            })
-            .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-
-        if let Some((score, result)) = best {
-            info!(
-                "[scan] Matched '{}' → '{}' on {} (score {:.2})",
-                manga.metadata.title,
-                result.title,
-                provider.name(),
-                score
-            );
-            db_provider::upsert(
-                pool,
-                &MangaProvider {
-                    manga_id: manga.id,
-                    enabled: true,
-                    provider_name: provider.name().to_owned(),
-                    provider_url: Some(result.url.clone()),
-                    last_synced_at: None,
-                    search_attempted_at: Some(Utc::now().timestamp()),
-                },
-            )
-            .await?;
+            if let Some((score, result)) = best_match(&search_titles, &results) {
+                info!(
+                    "[scan] Matched '{}' → '{}' on {} (score {:.2})",
+                    manga.metadata.title,
+                    result.title,
+                    provider.name(),
+                    score
+                );
+                db_provider::upsert(
+                    pool,
+                    &MangaProvider {
+                        manga_id: manga.id,
+                        enabled: true,
+                        provider_name: provider.name().to_owned(),
+                        provider_url: Some(result.url.clone()),
+                        last_synced_at: None,
+                        search_attempted_at: Some(Utc::now().timestamp()),
+                    },
+                )
+                .await?;
+            } else {
+                db_provider::upsert_not_found(pool, manga.id, provider.name()).await?;
+            }
         }
     }
 
@@ -288,20 +267,21 @@ async fn scrape_chapters(
     provider_entries: &[crate::db::provider::MangaProvider],
     task_id: uuid::Uuid,
 ) -> Result<(usize, std::collections::HashSet<uuid::Uuid>), ScanError> {
-    let provider_map: std::collections::HashMap<&str, &std::sync::Arc<dyn Provider>> =
-        registry.all().into_iter().map(|p| (p.name(), p)).collect();
+    let provider_map: std::collections::HashMap<String, std::sync::Arc<dyn crate::scraper::Provider>> =
+        registry
+            .all()
+            .into_iter()
+            .map(|p| (p.name().to_owned(), (*p).clone()))
+            .collect();
 
     let mut total_new = 0usize;
     let mut new_ids: std::collections::HashSet<uuid::Uuid> = std::collections::HashSet::new();
 
+    let mut join_set = JoinSet::new();
     let total_providers = provider_entries.len() as i64;
 
-    for (idx, entry) in provider_entries.iter().enumerate() {
-        // Track whether this provider has been synced before so we can skip
-        // back-catalogue auto-downloads on first sync.
-        let was_previously_synced = entry.last_synced_at.is_some();
-
-        let Some(provider) = provider_map.get(entry.provider_name.as_str()) else {
+    for entry in provider_entries.iter().cloned() {
+        let Some(provider) = provider_map.get(entry.provider_name.as_str()).cloned() else {
             warn!(
                 "[scan] Provider '{}' is in DB but not loaded — skipping.",
                 entry.provider_name
@@ -309,36 +289,38 @@ async fn scrape_chapters(
             continue;
         };
 
-        info!(
-            "[scan] Fetching chapters from {} for '{}'…",
-            entry.provider_name, manga.metadata.title
-        );
+        let ctx = ctx.clone();
+        join_set.spawn(async move {
+            let provider_url = entry.provider_url.clone().unwrap_or_default();
+            let result = ctx.executor.chapters(&ctx, &provider, &provider_url).await;
+            (entry, result)
+        });
+    }
+
+    let mut completed = 0i64;
+    while let Some(joined) = join_set.join_next().await {
+        let (entry, result) =
+            joined.map_err(|e| ScanError::Scraper(crate::scraper::error::ScraperError::Browser(e.to_string())))?;
+        completed += 1;
 
         let _ = db_task::set_progress(
             pool,
             task_id,
             &db_task::TaskProgress {
                 step: Some("chapter-sync".to_owned()),
-                label: Some(format!(
-                    "Syncing provider {} of {}",
-                    idx + 1,
-                    provider_entries.len()
-                )),
-                detail: Some(format!(
-                    "Fetching chapter list from {}",
-                    entry.provider_name
-                )),
+                label: Some(format!("Synced {completed} of {total_providers} providers")),
+                detail: Some(format!("Finished chapter sync for {}", entry.provider_name)),
                 provider: Some(entry.provider_name.clone()),
                 target: entry.provider_url.clone(),
-                current: Some((idx + 1) as i64),
+                current: Some(completed),
                 total: Some(total_providers),
                 unit: Some("provider".to_owned()),
             },
         )
         .await;
 
-        let provider_url = entry.provider_url.as_deref().unwrap();
-        match provider.chapters(ctx, provider_url).await {
+        let was_previously_synced = entry.last_synced_at.is_some();
+        match result {
             Ok(infos) => {
                 let inserted_ids =
                     db_chapter::upsert_from_scrape(pool, manga.id, &entry.provider_name, &infos)
@@ -369,15 +351,28 @@ async fn scrape_chapters(
                 .await?;
             }
             Err(e) => {
-                warn!(
-                    "[scan] Chapter fetch failed on {}: {e}",
-                    entry.provider_name
-                );
+                warn!("[scan] Chapter fetch failed on {}: {e}", entry.provider_name);
             }
         }
     }
 
     Ok((total_new, new_ids))
+}
+
+fn best_match<'a>(
+    search_titles: &[String],
+    results: &'a [ProviderSearchResult],
+) -> Option<(f64, &'a ProviderSearchResult)> {
+    results
+        .iter()
+        .map(|res| {
+            let score = search_titles
+                .iter()
+                .map(|t| strsim::jaro_winkler(&res.title.to_lowercase(), &t.to_lowercase()))
+                .fold(0.0f64, f64::max);
+            (score, res)
+        })
+        .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
 }
 
 /// Enqueue DownloadChapter tasks for canonical chapters that were newly discovered.

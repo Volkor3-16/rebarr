@@ -19,6 +19,7 @@ use crate::http::anilist::ALClient;
 use crate::scheduler::worker::{self, CancelMap};
 use crate::scraper::{
     browser::BrowserPool,
+    executor::ProviderExecutor,
     {ProviderRegistry, ScraperCtx},
 };
 
@@ -48,6 +49,13 @@ async fn main() -> Result<(), rocket::Error> {
             .await
             .expect("Failed to load providers"),
     );
+    let browser_worker_count = db::settings::get(&pool, "browser_worker_count", "3")
+        .await
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(3)
+        .clamp(1, 16);
+    let executor = Arc::new(ProviderExecutor::new(&registry, browser_worker_count));
 
     // Pre-warm Chromium if any provider needs it, so errors surface at
     // startup rather than on the first scrape request.
@@ -59,7 +67,7 @@ async fn main() -> Result<(), rocket::Error> {
         }
     }
 
-    let scraper_ctx = ScraperCtx::new(http_client.clone(), browser_pool);
+    let scraper_ctx = ScraperCtx::new(http_client.clone(), browser_pool, executor);
 
     // Background Task Handler start
     let cancel_map: CancelMap = Arc::new(Mutex::new(HashMap::new()));

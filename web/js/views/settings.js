@@ -69,6 +69,11 @@ export async function viewSettings() {
             <input type="number" id="scan-interval" class="input input-bordered input-sm" min="1" max="168" value="${escape(appSettings.scan_interval_hours)}" style="width:80px">
           </label>
           <label class="flex gap-1 align-center">
+            <span>Browser workers:</span>
+            <input type="number" id="browser-worker-count" class="input input-bordered input-sm" min="1" max="16" value="${escape(appSettings.browser_worker_count || 3)}" style="width:80px"
+              title="Maximum number of concurrent browser-backed provider jobs. Higher values are faster but use more RAM/CPU.">
+          </label>
+          <label class="flex gap-1 align-center">
             <span>Preferred language (BCP 47):</span>
             <input type="text" id="preferred-language" class="input input-bordered input-sm" placeholder="e.g. en" value="${escape(appSettings.preferred_language || '')}" style="width:80px"
               title="Chapters in this language are preferred. Leave blank to accept any language.">
@@ -125,7 +130,7 @@ export async function viewSettings() {
           <iconify-icon icon="mdi:folder-multiple-outline" width="20" height="20"></iconify-icon>
           <h3>Libraries</h3>
         </div>
-        <p class="settings-card-desc">Manage libraries (add, edit paths, delete) on the <a onclick="navigate('/library')">Libraries page</a>.</p>
+        <p class="settings-card-desc">Manage libraries (add, edit paths, delete) on the <a href="/library" data-path="/library">Libraries page</a>.</p>
       </div>
     `);
 
@@ -136,6 +141,7 @@ export async function viewSettings() {
     document.getElementById('settings-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const hours = parseInt(document.getElementById('scan-interval').value, 10);
+      const browserWorkers = parseInt(document.getElementById('browser-worker-count').value, 10);
       const lang = document.getElementById('preferred-language').value.trim();
       const statusEl = document.getElementById('settings-status');
 
@@ -143,9 +149,17 @@ export async function viewSettings() {
         statusEl.innerHTML = '<p class="error">Interval must be 1–168 hours.</p>';
         return;
       }
+      if (!browserWorkers || browserWorkers < 1 || browserWorkers > 16) {
+        statusEl.innerHTML = '<p class="error">Browser workers must be 1–16.</p>';
+        return;
+      }
 
       try {
-        await settings.update({ scan_interval_hours: hours, preferred_language: lang || null });
+        await settings.update({
+          scan_interval_hours: hours,
+          browser_worker_count: browserWorkers,
+          preferred_language: lang || null,
+        });
         showToast('Settings saved');
         statusEl.innerHTML = '';
       } catch(err) {

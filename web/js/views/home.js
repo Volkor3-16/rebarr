@@ -74,13 +74,13 @@ function buildCards(mangas) {
     const thumb = m.thumbnail_url
       ? `<img src="${escape(m.thumbnail_url)}" alt="${escape(title)}" loading="lazy">`
       : `<div class="skeleton" style="aspect-ratio: 2/3"></div>`;
-    return `<div class="manga-card" onclick="navigate('/series/${m.id}')">
+    return `<a class="manga-card" href="/series/${m.id}" data-path="/series/${m.id}">
       ${thumb}
       <div class="info">
         <div class="title">${escape(title)}</div>
         <div class="meta">${dl} / ${total} chapters</div>
       </div>
-    </div>`;
+    </a>`;
   }).join('')}</div>`;
 }
 
@@ -95,7 +95,7 @@ export async function viewHome() {
         <div class="welcome">
           <h2>Welcome to REBARR</h2>
           <p>No libraries configured yet.</p>
-          <button onclick="navigate('/library')">Add a Library</button>
+          <a href="/library" data-path="/library" class="btn">Add a Library</a>
         </div>
       `);
       return;
@@ -119,7 +119,7 @@ function renderHome(libs, mangaLists) {
     html += `<section class="library-section mt-3">`;
     html += `<h3>${escape(lib.root_path)} <small>[${type}]</small></h3>`;
     if (mangas.length === 0) {
-      html += `<p><small>No manga yet. <a onclick="navigate('/search?library_id=${lib.uuid}')">Add some!</a></small></p>`;
+      html += `<p><small>No manga yet. <a href="/search?library_id=${lib.uuid}" data-path="/search?library_id=${lib.uuid}">Add some!</a></small></p>`;
     } else {
       html += buildCards(mangas);
     }

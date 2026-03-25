@@ -2,6 +2,17 @@
 
 This a informal changelog so i can keep track of what im doing.
 
+## 2026-03-25
+
+- Series Tasks now look better on the frontend
+    - Progress bars, loading tips / messages, logging
+    - Added yogurt (snark)
+- You can now delete series (either from db or both db and chapters-on-disk)
+- You can now middle click series on the homepage.
+- Reimplemented (yet again) the scraper/queue system
+    - We run a worker for each provider, that can run in parallel to drastically improve scanning chapters.
+    - Also set it up for the future to potentially run multiple browsers at once, for even faster speedups (but more ram usage :s )
+
 ## 2026-03-24
 
 - Tested out openai codex by implementing better cloudflare bypassing

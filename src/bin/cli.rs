@@ -29,7 +29,7 @@
 use std::process;
 
 use log::info;
-use rebarr::scraper::{ProviderRegistry, ScraperCtx, browser::BrowserPool};
+use rebarr::scraper::{ProviderRegistry, ScraperCtx, browser::BrowserPool, executor::ProviderExecutor};
 use strsim::jaro_winkler;
 
 #[tokio::main]
@@ -101,9 +101,6 @@ async fn main() {
         .user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
         .build()
         .expect("failed to build HTTP client");
-    let mut ctx = ScraperCtx::new(http.clone(), BrowserPool::new());
-    ctx.dump_html = dump_html;
-    ctx.verbose = true;
 
     // Load providers from disk
     info!("Loading providers...");
@@ -116,6 +113,11 @@ async fn main() {
         eprintln!("No providers loaded. Make sure ./providers/ contains YAML files.");
         process::exit(1);
     }
+
+    let executor = std::sync::Arc::new(ProviderExecutor::new(&registry, 3));
+    let mut ctx = ScraperCtx::new(http.clone(), BrowserPool::new(), executor);
+    ctx.dump_html = dump_html;
+    ctx.verbose = true;
 
     let all = registry.all();
 

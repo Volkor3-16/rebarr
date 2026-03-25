@@ -33,6 +33,10 @@ pub struct ProviderDef {
     #[serde(default)]
     pub rate_limit: RateLimitDef,
 
+    /// Per-provider scheduler concurrency.
+    #[serde(default)]
+    pub concurrency: ProviderConcurrencyDef,
+
     /// Steps to search for a manga by title.
     pub search: Option<ActionDef>,
 
@@ -105,6 +109,24 @@ impl Default for RateLimitDef {
 
 fn default_rpm() -> u32 {
     30
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProviderConcurrencyDef {
+    #[serde(default = "default_provider_workers")]
+    pub workers: u32,
+}
+
+impl Default for ProviderConcurrencyDef {
+    fn default() -> Self {
+        Self {
+            workers: default_provider_workers(),
+        }
+    }
+}
+
+fn default_provider_workers() -> u32 {
+    1
 }
 
 // ---------------------------------------------------------------------------

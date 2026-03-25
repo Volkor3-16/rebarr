@@ -208,7 +208,7 @@ window.showAddManga = async function(anilistId, pathSafeTitle) {
   try {
     const libs = await libraries.list();
     if (libs.length === 0) {
-      render('<p class="error">No libraries found. <a onclick="navigate(\'/library\')">Add one first.</a></p>');
+      render('<p class="error">No libraries found. <a href="/library" data-path="/library">Add one first.</a></p>');
       return;
     }
     
@@ -228,7 +228,7 @@ window.showAddManga = async function(anilistId, pathSafeTitle) {
         <input type="text" id="am-path" value="${escape(pathSafeTitle)}">
         
         <button type="submit" class="btn btn-primary">Add to Library</button>
-        <a onclick="navigate('/search')" class="btn btn-ghost">Cancel</a>
+        <a href="/search" data-path="/search" class="btn btn-ghost">Cancel</a>
       </form>
       <div id="am-status"></div>
     `);

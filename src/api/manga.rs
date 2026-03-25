@@ -51,6 +51,11 @@ struct PatchMangaRequest {
     monitored: Option<bool>,
 }
 
+#[derive(Deserialize, Default)]
+pub struct DeleteMangaRequest {
+    delete_files: Option<bool>,
+}
+
 #[derive(Serialize)]
 struct ProviderInfo {
     name: String,
@@ -82,6 +87,11 @@ pub struct ProviderCandidate {
 struct SetProviderUrlRequest {
     /// Pass `null` to clear the mapping for this provider.
     url: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct SetCoverUrlRequest {
+    pub url: String,
 }
 
 /// Request to add/remove/hide synonyms for a manga
@@ -343,12 +353,37 @@ pub async fn get_manga(pool: &State<SqlitePool>, id: &str) -> ApiResult<Manga> {
 // DELETE /api/manga/<id>
 // ---------------------------------------------------------------------------
 
-#[delete("/api/manga/<id>")]
+#[delete("/api/manga/<id>", data = "<body>")]
 pub async fn delete_manga(
     pool: &State<SqlitePool>,
     id: &str,
+    body: Option<Json<DeleteMangaRequest>>,
 ) -> Result<Status, (Status, Json<ApiError>)> {
     let uuid = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    let delete_files = body
+        .as_ref()
+        .and_then(|body| body.delete_files)
+        .unwrap_or(false);
+
+    let manga = db::manga::get_by_id(pool.inner(), uuid)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("manga not found"))?;
+
+    if delete_files {
+        let library = db::library::get_by_id(pool.inner(), manga.library_id)
+            .await
+            .map_err(internal)?
+            .ok_or_else(|| not_found("library not found"))?;
+
+        let series_dir = library.root_path.join(&manga.relative_path);
+        if series_dir.exists() {
+            tokio::fs::remove_dir_all(&series_dir)
+                .await
+                .map_err(|e| internal(format!("failed to delete series files: {e}")))?;
+        }
+    }
+
     db::manga::delete(pool.inner(), uuid)
         .await
         .map_err(internal)?;
@@ -738,7 +773,7 @@ pub async fn provider_candidates(
     // Try each title until we get some results
     let mut raw_results = Vec::new();
     for title in &search_titles {
-        match provider.search(ctx.inner(), title).await {
+        match ctx.executor.search(ctx.inner(), provider, title).await {
             Ok(r) if !r.is_empty() => {
                 raw_results = r;
                 break;
@@ -818,11 +853,130 @@ pub async fn set_provider_url(
 }
 
 // ---------------------------------------------------------------------------
+// POST /api/manga/<id>/cover — download cover from URL
+// ---------------------------------------------------------------------------
+
+#[post("/api/manga/<id>/cover", data = "<body>")]
+pub async fn upload_cover_url(
+    pool: &State<SqlitePool>,
+    http: &State<reqwest::Client>,
+    id: &str,
+    body: Json<SetCoverUrlRequest>,
+) -> ApiResult<Manga> {
+    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    let mut manga = db::manga::get_by_id(pool.inner(), manga_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("manga not found"))?;
+
+    let library = db::library::get_by_id(pool.inner(), manga.library_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("library not found"))?;
+
+    let series_dir = library.root_path.join(&manga.relative_path);
+    manga.thumbnail_url = covers::download_cover(http.inner(), &body.url, manga.id, &series_dir)
+        .await
+        .or(Some(body.url.clone()));
+
+    manga.metadata_updated_at = Utc::now().timestamp();
+    db::manga::update_metadata(pool.inner(), &manga)
+        .await
+        .map_err(internal)?;
+
+    db::manga::get_by_id(pool.inner(), manga_id)
+        .await
+        .map_err(internal)?
+        .map(Json)
+        .ok_or_else(|| not_found("manga not found after update"))
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/manga/<id>/cover/upload — upload cover file directly
+// ---------------------------------------------------------------------------
+
+#[post("/api/manga/<id>/cover/upload", data = "<data>")]
+pub async fn upload_cover_file(
+    pool: &State<SqlitePool>,
+    id: &str,
+    data: rocket::data::Data<'_>,
+) -> ApiResult<Manga> {
+    use rocket::data::ToByteUnit;
+
+    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    let mut manga = db::manga::get_by_id(pool.inner(), manga_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("manga not found"))?;
+
+    let library = db::library::get_by_id(pool.inner(), manga.library_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("library not found"))?;
+
+    // Read up to 10MB
+    let bytes = data
+        .open(10.mebibytes())
+        .into_bytes()
+        .await
+        .map_err(|e| bad_request(&format!("failed to read upload: {e}")))?;
+
+    if !bytes.is_complete() {
+        return Err(bad_request("file too large (max 10MB)"));
+    }
+
+    let bytes = bytes.into_inner();
+
+    // Detect image type from magic bytes
+    let ext = if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
+        "png"
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        "jpg"
+    } else if bytes.starts_with(&[0x52, 0x49, 0x46, 0x46]) && bytes.len() > 12 && &bytes[8..12] == b"WEBP" {
+        "webp"
+    } else {
+        return Err(bad_request("unsupported image format (use jpg, png, or webp)"));
+    };
+
+    let series_dir = library.root_path.join(&manga.relative_path);
+    tokio::fs::create_dir_all(&series_dir)
+        .await
+        .map_err(|e| internal(format!("failed to create series dir: {e}")))?;
+
+    // Remove old cover files
+    for old_ext in &["jpg", "jpeg", "png", "webp", "avif"] {
+        let old_path = series_dir.join(format!("cover.{old_ext}"));
+        if old_path.exists() {
+            let _ = tokio::fs::remove_file(&old_path).await;
+        }
+    }
+
+    let dest = series_dir.join(format!("cover.{ext}"));
+    tokio::fs::write(&dest, &bytes)
+        .await
+        .map_err(|e| internal(format!("failed to write cover: {e}")))?;
+
+    manga.thumbnail_url = Some(format!("/api/manga/{manga_id}/cover"));
+    manga.metadata_updated_at = Utc::now().timestamp();
+    db::manga::update_metadata(pool.inner(), &manga)
+        .await
+        .map_err(internal)?;
+
+    db::manga::get_by_id(pool.inner(), manga_id)
+        .await
+        .map_err(internal)?
+        .map(Json)
+        .ok_or_else(|| not_found("manga not found after update"))
+}
+
+// ---------------------------------------------------------------------------
 // Routes aggregation
 // ---------------------------------------------------------------------------
 
 pub fn routes() -> Vec<rocket::Route> {
     rocket::routes![
+        upload_cover_url,
+        upload_cover_file,
         search_manga,
         add_manga,
         add_manga_manual,
