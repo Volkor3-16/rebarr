@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
+use crate::http::webhook;
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -93,7 +95,7 @@ struct TaskRow {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-fn task_type_str(t: &TaskType) -> &'static str {
+pub fn task_type_str(t: &TaskType) -> &'static str {
     match t {
         TaskType::BuildFullChapterList => "BuildFullChapterList",
         TaskType::RefreshMetadata => "RefreshMetadata",
@@ -102,6 +104,16 @@ fn task_type_str(t: &TaskType) -> &'static str {
         TaskType::ScanDisk => "ScanDisk",
         TaskType::OptimiseChapter => "OptimiseChapter",
         TaskType::Backup => "Backup",
+    }
+}
+
+fn task_status_str(status: &TaskStatus) -> &'static str {
+    match status {
+        TaskStatus::Pending => "Pending",
+        TaskStatus::Running => "Running",
+        TaskStatus::Completed => "Completed",
+        TaskStatus::Failed => "Failed",
+        TaskStatus::Cancelled => "Cancelled",
     }
 }
 
@@ -224,6 +236,7 @@ pub async fn enqueue_with_queue(
     .bind(now)
     .execute(pool)
     .await?;
+    webhook::dispatch_task_event(id, task_type_str(&task_type), "Pending");
     Ok(id)
 }
 
@@ -262,7 +275,9 @@ pub async fn claim_next_for_queue(
 
     tx.commit().await?;
 
-    task_from_row(row).map(Some)
+    let task = task_from_row(row)?;
+    webhook::dispatch_task_event(task.id, task_type_str(&task.task_type), "Running");
+    Ok(Some(task))
 }
 
 /// Atomically claim the next runnable Pending task (lowest priority value,
@@ -300,16 +315,22 @@ pub async fn claim_next(pool: &SqlitePool) -> Result<Option<Task>, sqlx::Error> 
 
     tx.commit().await?;
 
-    task_from_row(row).map(Some)
+    let task = task_from_row(row)?;
+    webhook::dispatch_task_event(task.id, task_type_str(&task.task_type), "Running");
+    Ok(Some(task))
 }
 
 /// Mark a task as Completed.
 pub async fn complete(pool: &SqlitePool, task_id: Uuid) -> Result<(), sqlx::Error> {
+    let task = get_by_id(pool, task_id).await?;
     sqlx::query("UPDATE Task SET status = 'Completed', updated_at = ? WHERE uuid = ?")
         .bind(Utc::now())
         .bind(task_id.to_string())
         .execute(pool)
         .await?;
+    if let Some(task) = task {
+        webhook::dispatch_task_event(task.id, task_type_str(&task.task_type), "Completed");
+    }
     Ok(())
 }
 
@@ -335,6 +356,7 @@ pub async fn set_progress(
 /// Otherwise leaves as Failed.
 pub async fn fail(pool: &SqlitePool, task_id: Uuid, error: &str) -> Result<(), sqlx::Error> {
     let now = Utc::now();
+    let task = get_by_id(pool, task_id).await?;
 
     // Fetch current attempt / max_attempts
     let (attempt, max_attempts): (i64, i64) =
@@ -361,6 +383,13 @@ pub async fn fail(pool: &SqlitePool, task_id: Uuid, error: &str) -> Result<(), s
         .bind(task_id.to_string())
         .execute(pool)
         .await?;
+        if let Some(task) = task {
+            webhook::dispatch_task_event(
+                task.id,
+                task_type_str(&task.task_type),
+                task_status_str(&TaskStatus::Pending),
+            );
+        }
     } else {
         sqlx::query(
             "UPDATE Task SET status = 'Failed', attempt = ?, last_error = ?, updated_at = ?
@@ -372,6 +401,13 @@ pub async fn fail(pool: &SqlitePool, task_id: Uuid, error: &str) -> Result<(), s
         .bind(task_id.to_string())
         .execute(pool)
         .await?;
+        if let Some(task) = task {
+            webhook::dispatch_task_event(
+                task.id,
+                task_type_str(&task.task_type),
+                task_status_str(&TaskStatus::Failed),
+            );
+        }
     }
     Ok(())
 }
@@ -392,6 +428,7 @@ pub async fn reset_running_tasks(pool: &SqlitePool) -> Result<u64, sqlx::Error> 
 
 /// Cancel a Pending or Running task. Has no effect on Completed/Failed/Cancelled tasks.
 pub async fn cancel(pool: &SqlitePool, task_id: Uuid) -> Result<(), sqlx::Error> {
+    let task = get_by_id(pool, task_id).await?;
     sqlx::query(
         "UPDATE Task SET status = 'Cancelled', updated_at = ? WHERE uuid = ? AND status IN ('Pending', 'Running')",
     )
@@ -399,7 +436,25 @@ pub async fn cancel(pool: &SqlitePool, task_id: Uuid) -> Result<(), sqlx::Error>
     .bind(task_id.to_string())
     .execute(pool)
     .await?;
+    if let Some(task) = task {
+        webhook::dispatch_task_event(task.id, task_type_str(&task.task_type), "Cancelled");
+    }
     Ok(())
+}
+
+pub async fn get_by_id(pool: &SqlitePool, task_id: Uuid) -> Result<Option<Task>, sqlx::Error> {
+    let row = sqlx::query_as::<_, TaskRow>(
+        "SELECT uuid, task_type, status, queue, library_id, manga_id, chapter_id,
+                priority, payload, attempt, max_attempts, last_error,
+                created_at, updated_at, run_after
+         FROM Task
+         WHERE uuid = ?",
+    )
+    .bind(task_id.to_string())
+    .fetch_optional(pool)
+    .await?;
+
+    row.map(task_from_row).transpose()
 }
 
 /// Get UUIDs of all Running DownloadChapter tasks for a specific chapter (for cancellation signalling).
@@ -421,6 +476,15 @@ pub async fn get_running_for_chapter(
 
 /// Cancel all Pending or Running DownloadChapter tasks for a specific chapter.
 pub async fn cancel_by_chapter(pool: &SqlitePool, chapter_id: Uuid) -> Result<(), sqlx::Error> {
+    let tasks: Vec<(String, String)> = sqlx::query_as(
+        "SELECT uuid, task_type
+         FROM Task
+         WHERE chapter_id = ? AND task_type = 'DownloadChapter' AND status IN ('Pending', 'Running')",
+    )
+    .bind(chapter_id.to_string())
+    .fetch_all(pool)
+    .await?;
+
     sqlx::query(
         "UPDATE Task SET status = 'Cancelled', updated_at = ? WHERE chapter_id = ? AND task_type = 'DownloadChapter' AND status IN ('Pending', 'Running')",
     )
@@ -428,6 +492,12 @@ pub async fn cancel_by_chapter(pool: &SqlitePool, chapter_id: Uuid) -> Result<()
     .bind(chapter_id.to_string())
     .execute(pool)
     .await?;
+
+    for (id, task_type) in tasks {
+        if let Ok(task_id) = Uuid::parse_str(&id) {
+            webhook::dispatch_task_event(task_id, &task_type, "Cancelled");
+        }
+    }
     Ok(())
 }
 

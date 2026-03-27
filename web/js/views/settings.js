@@ -1,6 +1,6 @@
 // Settings view
 
-import { providers, settings, trustedGroups, providerScores } from '../api.js';
+import { providers, settings, trustedGroups, providerScores, webhooks } from '../api.js';
 import { render } from '../router.js';
 import { escape, skeleton, showToast } from '../utils.js';
 import { showWizard } from './wizard.js';
@@ -78,6 +78,10 @@ export async function viewSettings() {
             <input type="text" id="preferred-language" class="input input-bordered input-sm" placeholder="e.g. en" value="${escape(appSettings.preferred_language || '')}" style="width:80px"
               title="Chapters in this language are preferred. Leave blank to accept any language.">
           </label>
+          <label class="flex gap-1 align-center">
+            <input type="checkbox" id="auto-unmonitor-completed" class="checkbox checkbox-sm" ${appSettings.auto_unmonitor_completed ? 'checked' : ''}>
+            <span>Auto-unmonitor completed AniList series</span>
+          </label>
           <button type="submit" class="btn btn-primary btn-sm">Save</button>
         </form>
         <div id="settings-status"></div>
@@ -108,6 +112,60 @@ export async function viewSettings() {
           <tbody id="provider-scores-body">${pRows}</tbody>
         </table>
         <div id="provider-scores-status"></div>
+      </div>
+
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <iconify-icon icon="mdi:webhook" width="20" height="20"></iconify-icon>
+          <h3>Task Webhooks</h3>
+        </div>
+        <p class="settings-card-desc">Send task lifecycle events to external services. Each endpoint can subscribe to specific task types and statuses.</p>
+        <div id="webhooks-list"><p>Loading...</p></div>
+        <div style="display:grid;gap:0.6rem;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-top:0.75rem">
+          <input type="hidden" id="webhook-edit-id">
+          <label>
+            <div style="font-size:0.8rem;opacity:0.75;margin-bottom:0.2rem">Webhook URL</div>
+            <input type="url" id="webhook-url" class="input input-bordered input-sm" placeholder="https://example.com/rebarr">
+          </label>
+          <label>
+            <div style="font-size:0.8rem;opacity:0.75;margin-bottom:0.2rem">Task Types</div>
+            <select id="webhook-task-types" class="select select-bordered select-sm" multiple size="5">
+              <option value="BuildFullChapterList">BuildFullChapterList</option>
+              <option value="RefreshMetadata">RefreshMetadata</option>
+              <option value="CheckNewChapter">CheckNewChapter</option>
+              <option value="DownloadChapter">DownloadChapter</option>
+              <option value="ScanDisk">ScanDisk</option>
+              <option value="OptimiseChapter">OptimiseChapter</option>
+              <option value="Backup">Backup</option>
+            </select>
+          </label>
+          <label>
+            <div style="font-size:0.8rem;opacity:0.75;margin-bottom:0.2rem">Task Statuses</div>
+            <select id="webhook-task-statuses" class="select select-bordered select-sm" multiple size="5">
+              <option value="Pending">Pending</option>
+              <option value="Running">Running</option>
+              <option value="Completed">Completed</option>
+              <option value="Failed">Failed</option>
+              <option value="Cancelled">Cancelled</option>
+            </select>
+          </label>
+        </div>
+        <div style="margin-top:0.75rem">
+          <label>
+            <div style="font-size:0.8rem;opacity:0.75;margin-bottom:0.2rem">Body template <span style="opacity:0.6">(optional — leave blank to send raw JSON)</span></div>
+            <textarea id="webhook-body-template" class="input input-bordered input-sm" rows="4" style="width:100%;font-family:monospace;font-size:0.78rem" placeholder='{"embeds":[{"title":"{{task_type}} — {{status}}","description":"{{manga_title}} Ch.{{chapter_number_raw}}"}]}'></textarea>
+            <div style="font-size:0.72rem;opacity:0.55;margin-top:0.2rem">Variables: {{task_id}} {{task_type}} {{status}} {{queue}} {{priority}} {{attempt}} {{max_attempts}} {{last_error}} {{manga_id}} {{manga_title}} {{chapter_id}} {{chapter_number_raw}} {{created_at}} {{updated_at}}</div>
+          </label>
+        </div>
+        <label style="display:flex;gap:0.5rem;align-items:center;margin-top:0.75rem">
+          <input type="checkbox" id="webhook-enabled" class="checkbox checkbox-sm" checked>
+          <span>Enabled</span>
+        </label>
+        <div class="mt-2 flex gap-1">
+          <button class="btn btn-sm btn-primary" onclick="saveWebhook()">Save Webhook</button>
+          <button class="btn btn-sm btn-ghost" onclick="resetWebhookForm()">Clear</button>
+        </div>
+        <div id="webhooks-status"></div>
       </div>
 
       <div class="settings-card">
@@ -143,6 +201,7 @@ export async function viewSettings() {
       const hours = parseInt(document.getElementById('scan-interval').value, 10);
       const browserWorkers = parseInt(document.getElementById('browser-worker-count').value, 10);
       const lang = document.getElementById('preferred-language').value.trim();
+      const autoUnmonitorCompleted = document.getElementById('auto-unmonitor-completed').checked;
       const statusEl = document.getElementById('settings-status');
 
       if (!hours || hours < 1 || hours > 168) {
@@ -159,6 +218,7 @@ export async function viewSettings() {
           scan_interval_hours: hours,
           browser_worker_count: browserWorkers,
           preferred_language: lang || null,
+          auto_unmonitor_completed: autoUnmonitorCompleted,
         });
         showToast('Settings saved');
         statusEl.innerHTML = '';
@@ -168,6 +228,7 @@ export async function viewSettings() {
     });
 
     loadTrustedGroups();
+    loadWebhooks();
   } catch(e) {
     render(`<p class="error">Error: ${escape(e.message)}</p>`);
   }
@@ -277,6 +338,7 @@ window.removeFilterLanguage = async function(code) {
 };
 
 let _trustedGroupsCache = [];
+let _webhookCache = [];
 
 function renderTrustedGroupPills(filter = '') {
   const el = document.getElementById('trusted-groups-list');
@@ -339,4 +401,113 @@ window.viewSettings = viewSettings;
 
 window.runSetupWizard = function() {
   showWizard(() => viewSettings());
+};
+
+function selectedOptions(id) {
+  const el = document.getElementById(id);
+  return el ? [...el.selectedOptions].map(opt => opt.value) : [];
+}
+
+function setSelectedOptions(id, values) {
+  const selected = new Set(values || []);
+  const el = document.getElementById(id);
+  if (!el) return;
+  [...el.options].forEach(opt => {
+    opt.selected = selected.has(opt.value);
+  });
+}
+
+window.resetWebhookForm = function() {
+  const ids = ['webhook-edit-id', 'webhook-url', 'webhook-body-template'];
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  const enabled = document.getElementById('webhook-enabled');
+  if (enabled) enabled.checked = true;
+  setSelectedOptions('webhook-task-types', []);
+  setSelectedOptions('webhook-task-statuses', []);
+};
+
+async function loadWebhooks() {
+  const el = document.getElementById('webhooks-list');
+  if (!el) return;
+  try {
+    _webhookCache = await webhooks.list();
+    if (_webhookCache.length === 0) {
+      el.innerHTML = '<p><small>No webhooks configured yet.</small></p>';
+      return;
+    }
+    el.innerHTML = `
+      <table>
+        <thead><tr><th>URL</th><th>Task Types</th><th>Statuses</th><th>Enabled</th><th></th></tr></thead>
+        <tbody>
+          ${_webhookCache.map(hook => `
+            <tr>
+              <td style="max-width:280px;word-break:break-word">${escape(hook.target_url)}</td>
+              <td>${escape(hook.task_types.join(', '))}</td>
+              <td>${escape(hook.task_statuses.join(', '))}</td>
+              <td>${hook.enabled ? 'Yes' : 'No'}</td>
+              <td style="white-space:nowrap">
+                <button class="btn btn-xs" onclick="editWebhook('${hook.id}')">Edit</button>
+                <button class="btn btn-xs btn-error" onclick="deleteWebhook('${hook.id}')">Delete</button>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  } catch (e) {
+    el.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
+  }
+}
+
+window.editWebhook = function(id) {
+  const hook = _webhookCache.find(entry => entry.id === id);
+  if (!hook) return;
+  document.getElementById('webhook-edit-id').value = hook.id;
+  document.getElementById('webhook-url').value = hook.target_url;
+  document.getElementById('webhook-enabled').checked = !!hook.enabled;
+  document.getElementById('webhook-body-template').value = hook.body_template || '';
+  setSelectedOptions('webhook-task-types', hook.task_types);
+  setSelectedOptions('webhook-task-statuses', hook.task_statuses);
+};
+
+window.saveWebhook = async function() {
+  const status = document.getElementById('webhooks-status');
+  const id = document.getElementById('webhook-edit-id').value;
+  const bodyTemplate = document.getElementById('webhook-body-template').value.trim();
+  const payload = {
+    target_url: document.getElementById('webhook-url').value.trim(),
+    enabled: document.getElementById('webhook-enabled').checked,
+    task_types: selectedOptions('webhook-task-types'),
+    task_statuses: selectedOptions('webhook-task-statuses'),
+    body_template: bodyTemplate || null,
+  };
+
+  try {
+    if (id) {
+      await webhooks.update(id, payload);
+      showToast('Webhook updated');
+    } else {
+      await webhooks.create(payload);
+      showToast('Webhook created');
+    }
+    if (status) status.innerHTML = '';
+    resetWebhookForm();
+    loadWebhooks();
+  } catch (e) {
+    if (status) status.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
+  }
+};
+
+window.deleteWebhook = async function(id) {
+  try {
+    await webhooks.delete(id);
+    showToast('Webhook deleted');
+    loadWebhooks();
+  } catch (e) {
+    const status = document.getElementById('webhooks-status');
+    if (status) status.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
+  }
 };

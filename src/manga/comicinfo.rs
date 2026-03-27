@@ -1,4 +1,4 @@
-use std::io::Read as _;
+use std::io::{Read as _, Write as _};
 use std::path::Path;
 
 use crate::manga::manga::{Chapter, Manga, Synonym, SynonymSource};
@@ -210,6 +210,48 @@ pub fn read_cbz_comicinfo(cbz_path: &Path) -> Option<ParsedComicInfo> {
         }
         Err(_) => None,
     }
+}
+
+/// Read the raw ComicInfo.xml contents from a CBZ, if present.
+pub fn read_cbz_comicinfo_xml(cbz_path: &Path) -> Option<String> {
+    if !cbz_path.exists() || !cbz_path.is_file() {
+        return None;
+    }
+
+    let file = std::fs::File::open(cbz_path).ok()?;
+    let mut archive = zip::ZipArchive::new(file).ok()?;
+
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).ok()?;
+        let name = entry.name().to_ascii_lowercase();
+        if name == "comicinfo.xml" || name.ends_with("/comicinfo.xml") {
+            let mut contents = String::new();
+            entry.read_to_string(&mut contents).ok()?;
+            return Some(contents);
+        }
+    }
+
+    None
+}
+
+/// Count non-ComicInfo file entries inside a CBZ as page files.
+pub fn read_cbz_page_count(cbz_path: &Path) -> Option<usize> {
+    if !cbz_path.exists() || !cbz_path.is_file() {
+        return None;
+    }
+
+    let file = std::fs::File::open(cbz_path).ok()?;
+    let mut archive = zip::ZipArchive::new(file).ok()?;
+    let mut count = 0usize;
+    for i in 0..archive.len() {
+        let entry = archive.by_index(i).ok()?;
+        let name = entry.name().to_ascii_lowercase();
+        if name == "comicinfo.xml" || name.ends_with("/comicinfo.xml") || name.ends_with('/') {
+            continue;
+        }
+        count += 1;
+    }
+    Some(count)
 }
 
 /// Escape characters that are special in XML text content.
@@ -577,4 +619,47 @@ pub async fn write_series_comicinfo(series_dir: &Path, manga: &Manga) -> std::io
     let path = series_dir.join("ComicInfo.xml");
     let xml = generate_series_xml(manga);
     tokio::fs::write(path, xml).await
+}
+
+/// Replace the ComicInfo.xml inside an existing CBZ while preserving all other files.
+pub async fn rewrite_chapter_comicinfo(cbz_path: &Path, comic_info_xml: &str) -> std::io::Result<()> {
+    let src = cbz_path.to_owned();
+    let xml = comic_info_xml.to_owned();
+    let tmp = cbz_path.with_extension("cbz.tmp");
+    let dst = tmp.clone();
+
+    tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+        let src_file = std::fs::File::open(&src)?;
+        let mut archive = zip::ZipArchive::new(src_file)?;
+
+        let out_file = std::fs::File::create(&dst)?;
+        let mut zip = zip::ZipWriter::new(out_file);
+        let opts =
+            zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+
+        zip.start_file("ComicInfo.xml", opts)?;
+        zip.write_all(xml.as_bytes())?;
+
+        for i in 0..archive.len() {
+            let mut entry = archive.by_index(i)?;
+            let name = entry.name().to_string();
+            let name_lower = name.to_ascii_lowercase();
+            if name_lower == "comicinfo.xml" || name_lower.ends_with("/comicinfo.xml") {
+                continue;
+            }
+
+            let mut data = Vec::new();
+            entry.read_to_end(&mut data)?;
+            zip.start_file(name, opts)?;
+            zip.write_all(&data)?;
+        }
+
+        zip.finish()?;
+        std::fs::rename(&dst, &src)?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| std::io::Error::other(e.to_string()))??;
+
+    Ok(())
 }

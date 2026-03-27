@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 use crate::db::{
     chapter as db_chapter, provider as db_provider, settings as db_settings, task as db_task,
 };
-use crate::manga::comicinfo;
+use crate::manga::{comicinfo, files};
 use crate::manga::manga::{Chapter, DownloadStatus, Manga};
 use crate::manga::scoring::{ChapterFilter, compute_tier, rank_entries};
 use crate::scraper::{ProviderRegistry, ScraperCtx};
@@ -235,29 +235,8 @@ pub async fn download_chapter(
         .await
         {
             Ok(image_data) => {
-                let mut cbz_name = format!("Chapter {}", chapter.number_sort());
-                if let Some(ref t) = chapter.title {
-                    if !t.is_empty() {
-                        cbz_name.push_str(&format!(" - {t}"));
-                    }
-                }
-                if let Some(g) = chapter.scanlator_group.as_deref().filter(|s| !s.is_empty()) {
-                    cbz_name.push_str(&format!(" [{g}]"));
-                }
-                let cbz_name: String = cbz_name
-                    .chars()
-                    // TODO: surely there's a better path-safe conversion thing that already exists in rust.
-                    .map(|c| {
-                        if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
-                            '_'
-                        } else {
-                            c
-                        }
-                    })
-                    .collect();
-                let cbz_path = lib_root
-                    .join(&manga.relative_path)
-                    .join(format!("{cbz_name}.cbz"));
+                let cbz_path =
+                    files::chapter_cbz_path(&files::series_dir(lib_root, manga), chapter);
 
                 if let Err(e) = write_cbz(&cbz_path, manga, chapter, image_data).await {
                     warn!("[dl] CBZ write failed: {e}");

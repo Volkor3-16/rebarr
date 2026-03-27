@@ -18,8 +18,9 @@ use crate::db::{
 };
 use crate::http::anilist::ALClient;
 use crate::library::scanner::scan_existing_chapters;
-use crate::manga::covers;
+use crate::manga::{comicinfo, covers, files};
 use crate::manga::merge;
+use crate::manga::manga::{DownloadStatus, Manga, PublishingStatus};
 use crate::scheduler::optimiser;
 use crate::scraper::downloader;
 use crate::scraper::{ProviderRegistry, ScraperCtx};
@@ -27,6 +28,42 @@ use crate::scraper::{ProviderRegistry, ScraperCtx};
 /// Shared map of task UUID → CancellationToken for in-flight tasks.
 /// The cancel API endpoint signals the token; the running task checks it.
 pub type CancelMap = Arc<Mutex<HashMap<Uuid, CancellationToken>>>;
+
+async fn rewrite_downloaded_comicinfo(
+    pool: &SqlitePool,
+    manga: &Manga,
+    library_root: &std::path::Path,
+) -> Result<(), String> {
+    let series_dir = files::series_dir(library_root, manga);
+    let chapters = db_chapter::get_all_for_manga(pool, manga.id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    for chapter in chapters
+        .iter()
+        .filter(|chapter| chapter.download_status == DownloadStatus::Downloaded)
+    {
+        let cbz_path = files::chapter_cbz_path(&series_dir, chapter);
+        if !cbz_path.exists() {
+            continue;
+        }
+
+        let expected_xml = comicinfo::generate_chapter_xml(
+            manga,
+            chapter,
+            comicinfo::read_cbz_page_count(&cbz_path).unwrap_or(0),
+            chapter.provider_name.as_deref(),
+        );
+        let current_xml = comicinfo::read_cbz_comicinfo_xml(&cbz_path).unwrap_or_default();
+        if current_xml != expected_xml {
+            comicinfo::rewrite_chapter_comicinfo(&cbz_path, &expected_xml)
+                .await
+                .map_err(|e| format!("failed to rewrite {}: {e}", cbz_path.display()))?;
+        }
+    }
+
+    Ok(())
+}
 
 // Workers
 // This file handles all the queue and tasks.
@@ -292,14 +329,22 @@ async fn dispatch(
                     fresh.monitored = manga.monitored;
                     fresh.created_at = manga.created_at;
                     fresh.metadata_updated_at = chrono::Utc::now().timestamp();
+                    if db_settings::get(pool, "auto_unmonitor_completed", "false")
+                        .await
+                        .map(|v| v == "true")
+                        .unwrap_or(false)
+                        && matches!(fresh.metadata.publishing_status, PublishingStatus::Completed)
+                    {
+                        fresh.monitored = false;
+                    }
 
                     // Re-download cover if the URL changed
+                    let library = db_library::get_by_id(pool, manga.library_id)
+                        .await
+                        .map_err(|e| e.to_string())?
+                        .ok_or_else(|| format!("library {} not found", manga.library_id))?;
                     if let Some(url) = fresh.thumbnail_url.take() {
-                        let library = db_library::get_by_id(pool, manga.library_id)
-                            .await
-                            .map_err(|e| e.to_string())?
-                            .ok_or_else(|| format!("library {} not found", manga.library_id))?;
-                        let series_dir = library.root_path.join(&manga.relative_path);
+                        let series_dir = files::series_dir(&library.root_path, &manga);
                         fresh.thumbnail_url =
                             covers::download_cover(&ctx.http, &url, manga.id, &series_dir)
                                 .await
@@ -309,6 +354,11 @@ async fn dispatch(
                     db_manga::update_metadata(pool, &fresh)
                         .await
                         .map_err(|e| e.to_string())?;
+                    let series_dir = files::series_dir(&library.root_path, &fresh);
+                    comicinfo::write_series_comicinfo(&series_dir, &fresh)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    rewrite_downloaded_comicinfo(pool, &fresh, &library.root_path).await?;
 
                     info!(
                         "[worker] Refreshed AniList metadata for '{}'.",

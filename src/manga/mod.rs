@@ -4,6 +4,7 @@
 pub(crate) mod comicinfo;
 /// Download handler for cover images
 pub(crate) mod covers;
+pub(crate) mod files;
 /// Core Manga Stuffs
 pub(crate) mod manga;
 /// Merging provider-supplied chapter lists into a merged list for viewing

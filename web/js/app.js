@@ -9,6 +9,7 @@ import './views/settings.js';
 import './views/queue.js';
 import './views/import.js';
 import './views/desktop.js';
+import './views/suggested.js';
 import { showWizard } from './views/wizard.js';
 
 import { initTheme } from './theme.js';

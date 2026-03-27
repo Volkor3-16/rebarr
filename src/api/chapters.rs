@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::{
     db,
-    manga::{manga::DownloadStatus, scoring},
+    manga::{files, manga::DownloadStatus, scoring},
     scheduler::worker::CancelMap,
 };
 
@@ -207,46 +207,8 @@ pub async fn delete_chapter_api(
             .map_err(internal)?
             .ok_or_else(|| not_found("library not found"))?;
 
-        // Chapter file naming: "Chapter XX" or "Chapter XX.Y" + optional title + optional group
-        let mut cbz_name = if chapter.chapter_variant == 0 {
-            format!("Chapter {}", chapter.chapter_base)
-        } else {
-            format!(
-                "Chapter {}.{}",
-                chapter.chapter_base, chapter.chapter_variant
-            )
-        };
-
-        // Add title if present and non-empty
-        if let Some(ref title) = chapter.title {
-            if !title.is_empty() {
-                cbz_name.push_str(&format!(" - {title}"));
-            }
-        }
-
-        // Add scanlator group if present and non-empty
-        if let Some(ref group) = chapter.scanlator_group {
-            if !group.is_empty() {
-                cbz_name.push_str(&format!(" [{group}]"));
-            }
-        }
-
-        // Sanitize filename
-        let cbz_name: String = cbz_name
-            .chars()
-            .map(|c| {
-                if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
-                    '_'
-                } else {
-                    c
-                }
-            })
-            .collect();
-
-        let chapter_path = library
-            .root_path
-            .join(&manga.relative_path)
-            .join(format!("{cbz_name}.cbz"));
+        let chapter_path =
+            files::chapter_cbz_path(&files::series_dir(&library.root_path, &manga), &chapter);
 
         if chapter_path.exists() {
             if let Err(e) = std::fs::remove_file(&chapter_path) {

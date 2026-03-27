@@ -15,20 +15,22 @@ I'll remove this when I've got the first public release out, this is just a quic
 - Full test of new chapter refresh -> chapter downloading
     - 2026-03-20: It refreshed automatically when my pc came out of sleep! noice!
     - 2026-03-23: I've chucked it on the server, i'll import a fuckload of manga for it to try.
+    - 2026-03-25: It's downloading new non-canonical chapters! why tf it downloading chapter 76.1 for?
 - We should save the reason why we upgrade a chapter (so we can debug bad upgrades easily)
-- Automatically updated providiers from the container -> but don't overwrite providers modified by the user
 - Implement provider e2e testing.
     - Have asserts with expected stuff, and match. obviously
-- Flag Anilist 'Completed' manga as unmonitored?
 - Cloudflare DNS from docker? (to bypass morons who can't switch dns) DNS over https?
+- Webhooks no worky (discord), isn't there a fancy library for this?
+    `WARN  rebarr::http::webhook] [webhook] delivery to https://discord.com/api/webhooks/... failed with HTTP 400 Bad Request`
 
 ### Frontend
+
+- Add a hover on the chapter name/title saying that A comic reader will be coming soon
 
 ### Providers
 
 - Providers steps shouldn't need a random ass `- open` and then hit another endpoint why have the open step at all?
 - [ ] Get Mangago working
-- Weebdex has broken released_at dates, along with scanlator groups (copy mangadex, since its similar)
 
 ## Features
 

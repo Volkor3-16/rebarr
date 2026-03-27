@@ -408,7 +408,7 @@ function chapterRow(mangaId, ch, isVariant = false, altCount = 0, extraActions =
   const titleHtml = rawTitle 
     ? ` — <span class="ch-title" title="${escape(rawTitle)}">${escape(truncatedTitle)}</span>` 
     : '';
-  const chapterLabel = `<b>${chNum}</b>${titleHtml}`;
+  const chapterLabel = `<b title="A comic reader will be coming soon">${chNum}</b>${titleHtml}`;
 
   const tierHtml = tierBadgeHtml(ch.tier || 4);
 

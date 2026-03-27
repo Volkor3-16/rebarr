@@ -16,6 +16,7 @@ mod scraper;
 
 use crate::api::{api_routes, frontend_routes};
 use crate::http::anilist::ALClient;
+use crate::http::webhook::WebhookDispatcher;
 use crate::scheduler::worker::{self, CancelMap};
 use crate::scraper::{
     browser::BrowserPool,
@@ -41,6 +42,7 @@ async fn main() -> Result<(), rocket::Error> {
 
     let al_client = ALClient::new();
     let http_client = reqwest::Client::new();
+    WebhookDispatcher::new(pool.clone(), http_client.clone()).install();
 
     // Setup browser scraper
     let browser_pool = BrowserPool::new();

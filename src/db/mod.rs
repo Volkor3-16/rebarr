@@ -8,6 +8,7 @@ pub(crate) mod provider;
 pub(crate) mod provider_scores;
 pub(crate) mod settings;
 pub(crate) mod task;
+pub(crate) mod webhook;
 
 /// Initialise the database pool.
 ///

@@ -103,6 +103,9 @@ export function showWizard(onComplete) {
     document.getElementById('wizard-default-monitored')?.addEventListener('change', e => {
       pendingSettings.default_monitored = e.target.checked;
     });
+    document.getElementById('wizard-auto-unmonitor-completed')?.addEventListener('change', e => {
+      pendingSettings.auto_unmonitor_completed = e.target.checked;
+    });
 
     document.querySelectorAll('input[name="wizard-min-tier"]').forEach(radio => {
       radio.addEventListener('change', e => {
@@ -168,6 +171,7 @@ export function showWizard(onComplete) {
 
   function step1Html() {
     const monitored = pendingSettings.default_monitored !== false;
+    const autoUnmonitorCompleted = pendingSettings.auto_unmonitor_completed === true;
     return `
       <div class="settings-card">
         <div class="settings-card-header">
@@ -209,6 +213,14 @@ export function showWizard(onComplete) {
           </label>
           <p style="font-size:0.78rem;opacity:0.65;margin:0.2rem 0 0 1.6rem">
             When enabled, newly-added manga will automatically be checked for chapter updates.
+          </p>
+          <label style="display:flex;gap:0.5rem;align-items:center;cursor:pointer;margin-top:0.85rem">
+            <input type="checkbox" id="wizard-auto-unmonitor-completed" class="checkbox checkbox-sm"
+              ${autoUnmonitorCompleted ? 'checked' : ''}>
+            <span>Automatically unmonitor completed AniList manga</span>
+          </label>
+          <p style="font-size:0.78rem;opacity:0.65;margin:0.2rem 0 0 1.6rem">
+            Completed series stop scheduled checks and auto-download monitoring when they are added or refreshed.
           </p>
         </div>
       </div>

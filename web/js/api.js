@@ -83,6 +83,13 @@ export const settings = {
   update: (data) => put('/api/settings', data),
 };
 
+export const webhooks = {
+  list: () => get('/api/webhooks'),
+  create: (data) => post('/api/webhooks', data),
+  update: (id, data) => put(`/api/webhooks/${id}`, data),
+  delete: (id) => del(`/api/webhooks/${id}`),
+};
+
 // Providers API
 export const providers = {
   list: () => get('/api/providers'),

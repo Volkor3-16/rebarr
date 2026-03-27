@@ -13,6 +13,7 @@ pub(crate) mod settings;
 pub(crate) mod system;
 pub(crate) mod tasks;
 pub(crate) mod trusted_groups;
+pub(crate) mod webhooks;
 
 // Frontend HTML
 pub(crate) mod frontend;
@@ -28,6 +29,7 @@ pub use settings::routes as settings_routes;
 pub use system::routes as system_routes;
 pub use tasks::routes as task_routes;
 pub use trusted_groups::routes as trusted_group_routes;
+pub use webhooks::routes as webhook_routes;
 
 /// All API routes combined
 pub fn api_routes() -> Vec<rocket::Route> {
@@ -41,5 +43,6 @@ pub fn api_routes() -> Vec<rocket::Route> {
     routes.extend(trusted_group_routes());
     routes.extend(provider_score_routes());
     routes.extend(system_routes());
+    routes.extend(webhook_routes());
     routes
 }

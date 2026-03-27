@@ -33,3 +33,13 @@ If you do hit cloudflare checks, theres only one thing we can try.
     - I have some code that tries to click this, but it's mostly untested and who knows how well it works.
 3. If you see search results in the pick dialog, it's worked, and we should have no problems for an unknown amount of time.
     - Seriously, how long does the cloudflare session last? idk im just happy i got it this far.
+
+## I've edited some providers, but they get deleted when I restart rebarr wtf??
+
+You've run into a problem that I'm not exactly happy with.
+
+Every time rebarr starts, we replace the providers that exist on disk with the stock providers.
+
+If you want to have your own provider, just make sure it doesn't have the same name of one that exists. You can always disable one globally in the settings.
+
+Sorry.

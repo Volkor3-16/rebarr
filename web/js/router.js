@@ -12,6 +12,7 @@ const routes = [
   [/^\/queue$/, 'viewQueue'],
   [/^\/logs$/, 'viewQueue'], // Logs uses queue view
   [/^\/import$/, 'viewImport'],
+  [/^\/suggested$/, 'viewSuggested'],
 ];
 
 // Current poll handle for live updates

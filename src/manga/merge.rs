@@ -392,8 +392,19 @@ async fn enqueue_auto_downloads(
             return;
         }
     };
+    // If a whole chapter (variant=0) is canonical for a given base, skip its split
+    // sub-parts (variant>0) — they cover the same content.
+    let whole_chapter_bases: std::collections::HashSet<i32> = canonical
+        .iter()
+        .filter(|ch| ch.chapter_variant == 0)
+        .map(|ch| ch.chapter_base)
+        .collect();
+
     let mut enqueued = 0usize;
     for ch in &canonical {
+        if ch.chapter_variant > 0 && whole_chapter_bases.contains(&ch.chapter_base) {
+            continue;
+        }
         if new_ids.contains(&ch.id) {
             match db_task::enqueue(
                 pool,

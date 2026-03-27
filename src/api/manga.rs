@@ -12,7 +12,7 @@ use crate::{
     db,
     http::anilist::ALClient,
     manga::{
-        comicinfo, covers,
+        comicinfo, covers, files,
         manga::{Manga, MangaMetadata, MangaSource, PublishingStatus, Synonym, SynonymSource},
     },
     scraper::{ProviderRegistry, ScraperCtx},
@@ -105,6 +105,17 @@ pub struct UpdateSynonymsRequest {
     pub remove: Option<Vec<String>>,
 }
 
+async fn auto_unmonitor_completed_if_enabled(
+    pool: &SqlitePool,
+    manga: &mut Manga,
+) -> Result<(), sqlx::Error> {
+    let enabled = db::settings::get(pool, "auto_unmonitor_completed", "false").await? == "true";
+    if enabled && matches!(manga.metadata.publishing_status, PublishingStatus::Completed) {
+        manga.monitored = false;
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // GET /api/manga/search?q=
 // ---------------------------------------------------------------------------
@@ -178,10 +189,13 @@ pub async fn add_manga(
     manga.relative_path = PathBuf::from(body.relative_path.trim());
     manga.created_at = Utc::now().timestamp();
     manga.metadata_updated_at = Utc::now().timestamp();
+    auto_unmonitor_completed_if_enabled(pool.inner(), &mut manga)
+        .await
+        .map_err(internal)?;
 
     // Download cover into the manga's series folder; fall back to original URL on failure
     if let Some(url) = manga.thumbnail_url.take() {
-        let series_dir = library.root_path.join(&manga.relative_path);
+        let series_dir = files::series_dir(&library.root_path, &manga);
         manga.thumbnail_url = covers::download_cover(http.inner(), &url, manga.id, &series_dir)
             .await
             .or(Some(url));
@@ -192,7 +206,7 @@ pub async fn add_manga(
         .map_err(internal)?;
 
     // Write series-level ComicInfo.xml into the series folder
-    let series_dir = library.root_path.join(&manga.relative_path);
+    let series_dir = files::series_dir(&library.root_path, &manga);
     if let Err(e) = comicinfo::write_series_comicinfo(&series_dir, &manga).await {
         warn!(
             "[api] Failed to write ComicInfo.xml for '{}': {e}",
@@ -298,10 +312,13 @@ pub async fn add_manga_manual(
         metadata_updated_at: Utc::now().timestamp(),
         last_checked_at: None,
     };
+    auto_unmonitor_completed_if_enabled(pool.inner(), &mut manga)
+        .await
+        .map_err(internal)?;
 
     // Download cover if a URL was provided
     if let Some(url) = manga.thumbnail_url.take() {
-        let series_dir = library.root_path.join(&manga.relative_path);
+        let series_dir = files::series_dir(&library.root_path, &manga);
         manga.thumbnail_url = covers::download_cover(http.inner(), &url, manga.id, &series_dir)
             .await
             .or(Some(url));
@@ -312,7 +329,7 @@ pub async fn add_manga_manual(
         .map_err(internal)?;
 
     // Write series-level ComicInfo.xml
-    let series_dir = library.root_path.join(&manga.relative_path);
+    let series_dir = files::series_dir(&library.root_path, &manga);
     if let Err(e) = comicinfo::write_series_comicinfo(&series_dir, &manga).await {
         warn!(
             "[api] Failed to write ComicInfo.xml for '{}': {e}",

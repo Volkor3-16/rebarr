@@ -25,6 +25,8 @@ pub struct SettingsResponse {
     pub default_monitored: bool,
     /// Minimum scanlator tier to consider when downloading (1=Official only, 4=all sources).
     pub min_tier: u64,
+    /// Whether AniList-completed series should be unmonitored on add/refresh.
+    pub auto_unmonitor_completed: bool,
 }
 
 #[derive(Deserialize)]
@@ -40,6 +42,7 @@ pub struct UpdateSettingsRequest {
     pub default_monitored: Option<bool>,
     /// 1–4: minimum scanlator tier.
     pub min_tier: Option<u64>,
+    pub auto_unmonitor_completed: Option<bool>,
 }
 
 // ---------------------------------------------------------------------------
@@ -90,6 +93,11 @@ pub async fn get_settings(pool: &State<sqlx::SqlitePool>) -> ApiResult<SettingsR
         .parse::<u64>()
         .unwrap_or(4)
         .clamp(1, 4);
+    let auto_unmonitor_completed =
+        db::settings::get(pool.inner(), "auto_unmonitor_completed", "false")
+            .await
+            .unwrap_or_else(|_| "false".to_string())
+            == "true";
     Ok(Json(SettingsResponse {
         scan_interval_hours: hours,
         queue_paused,
@@ -99,6 +107,7 @@ pub async fn get_settings(pool: &State<sqlx::SqlitePool>) -> ApiResult<SettingsR
         wizard_completed,
         default_monitored,
         min_tier,
+        auto_unmonitor_completed,
     }))
 }
 
@@ -173,6 +182,15 @@ pub async fn update_settings(
         db::settings::set(pool.inner(), "min_tier", &tier.to_string())
             .await
             .map_err(internal)?;
+    }
+    if let Some(enabled) = body.auto_unmonitor_completed {
+        db::settings::set(
+            pool.inner(),
+            "auto_unmonitor_completed",
+            if enabled { "true" } else { "false" },
+        )
+        .await
+        .map_err(internal)?;
     }
     Ok(Status::NoContent)
 }

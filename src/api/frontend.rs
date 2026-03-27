@@ -56,6 +56,11 @@ pub fn import_page() -> RawHtml<String> {
     serve_index()
 }
 
+#[get("/suggested")]
+pub fn suggested_page() -> RawHtml<String> {
+    serve_index()
+}
+
 // ---------------------------------------------------------------------------
 // Route list
 // ---------------------------------------------------------------------------
@@ -70,6 +75,7 @@ pub fn routes() -> Vec<rocket::Route> {
         queue_page,
         desktop_page,
         logs_page,
-        import_page
+        import_page,
+        suggested_page
     ]
 }

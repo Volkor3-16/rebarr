@@ -51,17 +51,51 @@ chapters:
           page_param: "page"
           start_page: 1
           max_pages: 20
+    - extract_js:
+        var: chapters_processed
+        script: |
+          (function() {
+            try {
+              var raw = '{chapters_response|js_escape}';
+              var chapters = JSON.parse(raw);
+              if (!Array.isArray(chapters)) {
+                return '[]';
+              }
+              var processed = chapters.map(function(ch) {
+                var relationships = ch.relationships || {};
+                var groups = relationships.groups || [];
+                var groupName = '';
+                if (Array.isArray(groups) && groups.length > 0) {
+                  var first = groups[0] || {};
+                  groupName = first.name || '';
+                }
+                return {
+                  number_raw: ch.chapter || '',
+                  title: ch.title || '',
+                  url: ch.id || '',
+                  language: ch.language || '',
+                  scanlator_group: groupName,
+                  date: ch.updated_at || ''
+                };
+              });
+              return JSON.stringify(processed);
+            } catch (e) {
+              return '[]';
+            }
+          })()
     - from_json:
-        var: chapters_response
+        var: chapters_processed
         extract:
-          number_raw: "chapter"
+          number_raw: "number_raw"
           title: "title"
-          url: "id"
+          url: "url"
           language: "language"
-          scanlator_group: "relationships.groups"
-          date: "updated_at"
+          scanlator_group: "scanlator_group"
+          date: "date"
         prefix:
           url: "https://weebdex.org/chapter/"
+        date_format:
+          date: "%+"
 
 pages:
   steps:

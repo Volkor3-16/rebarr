@@ -2,6 +2,11 @@
 
 This a informal changelog so i can keep track of what im doing.
 
+## 2026-03-27
+
+- Potentially better canonical chapter downloading. Maybe?
+- Discord webhooks.... maybe?
+
 ## 2026-03-25
 
 - Series Tasks now look better on the frontend
