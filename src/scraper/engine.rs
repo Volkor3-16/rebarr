@@ -310,27 +310,35 @@ impl YamlProvider {
                         }
 
                         // Check current HTML for Cloudflare challenge
-                        if let Ok(html) = p.content().await {
+                        match p.content().await {
+                            Err(e) => warn!("[cf:poll] p.content() failed at {elapsed:.1?}: {e}"),
+                            Ok(html) => {
                             let is_challenge = is_cf_challenge(&html);
+                            debug!(
+                                "[cf:poll] t={elapsed:.1?} is_challenge={is_challenge} html_len={}",
+                                html.len()
+                            );
                             if is_challenge {
                                 if !cloudflare_detected {
-                                    debug!(
+                                    info!(
                                         "Cloudflare challenge detected at {url}, waiting for auto-bypass..."
                                     );
                                     cloudflare_detected = true;
+                                    // Prime the cooldown so the first click happens ~1s after
+                                    // detection rather than immediately — the widget needs time
+                                    // to finish rendering before a click will register.
+                                    last_cf_click_attempt = Some(
+                                        std::time::Instant::now()
+                                            - Duration::from_millis(1_000),
+                                    );
                                 }
 
-                                // Some CF flows require a user-triggered checkbox click.
-                                // Nudge likely controls periodically while challenge HTML remains.
                                 let should_try_click = last_cf_click_attempt
                                     .map(|t| t.elapsed() >= Duration::from_secs(2))
                                     .unwrap_or(true);
                                 if should_try_click {
-                                    if try_cf_checkbox_click(p).await {
-                                        debug!(
-                                            "Cloudflare checkbox click attempt triggered at {url}"
-                                        );
-                                    }
+                                    debug!("[cf:click] attempting checkbox click at t={elapsed:.1?}");
+                                    try_cf_checkbox_click(p).await;
                                     last_cf_click_attempt = Some(std::time::Instant::now());
                                 }
                             } else if cloudflare_detected {
@@ -345,7 +353,8 @@ impl YamlProvider {
                                 p.wait_for_network_idle(1000, remaining_ms).await.ok();
                                 break;
                             }
-                        }
+                            } // Ok(html) arm
+                        } // match p.content()
 
                         tokio::time::sleep(poll_interval).await;
                     }
@@ -1478,70 +1487,75 @@ fn is_cf_challenge(html: &str) -> bool {
         || (html.contains("Just a moment") && html.contains("cloudflare"))
 }
 
-/// Attempt to click likely Cloudflare challenge controls (checkbox/turnstile widgets).
+/// Attempt to click the Cloudflare Turnstile checkbox.
 ///
-/// Returns true if a click attempt was dispatched.
+/// The widget renders inside a closed shadow root so CSS selectors can't reach
+/// it. We click at the screen coordinates where the checkbox visually appears,
+/// using a human-like mouse sequence (move → press → release with varied delays)
+/// so CF's behavioural scoring doesn't flag the interaction as synthetic.
 async fn try_cf_checkbox_click(page: &eoka::Page) -> bool {
-    // First try direct DOM selectors that might exist in same-origin challenge pages.
-    let click_selectors = [
-        "input[type='checkbox']",
-        "button[type='submit']",
-        "label.ctp-checkbox-label",
-        "iframe[title*='challenge']",
-        "iframe[title*='Cloudflare']",
-        "iframe[title*='Turnstile']",
-        "iframe[src*='challenges.cloudflare.com']",
+    // Layout on 1366×768: widget is horizontally centred (~300px wide),
+    // left edge ≈ 533px, checkbox icon ≈ 25px from left edge → target x ≈ 558.
+    // Widget appears roughly vertically centred, typically 300–430px from top.
+    // Candidates spread across that area; varied delays between each attempt.
+    let session = page.session();
+
+    let targets: &[(f64, f64)] = &[
+        (548.0, 334.0),
+        (563.0, 350.0),
+        (553.0, 384.0),
+        (568.0, 310.0),
+        (543.0, 415.0),
     ];
 
-    for sel in click_selectors {
-        if page.human_click(sel).await.is_ok() {
-            debug!("[cf] clicked selector '{sel}'");
-            return true;
+    for (i, &(x, y)) in targets.iter().enumerate() {
+        // Approach from a slightly offset start so the move path looks natural.
+        let ax = x - 14.0 - (i as f64 * 2.5);
+        let ay = y + 9.0 - (i as f64 * 1.5);
+
+        session
+            .dispatch_mouse_event(eoka::cdp::MouseEventType::MouseMoved, ax, ay, None, None)
+            .await
+            .ok();
+        tokio::time::sleep(Duration::from_millis(18 + i as u64 * 6)).await;
+
+        session
+            .dispatch_mouse_event(eoka::cdp::MouseEventType::MouseMoved, x, y, None, None)
+            .await
+            .ok();
+        tokio::time::sleep(Duration::from_millis(32 + i as u64 * 9)).await;
+
+        if let Err(e) = session
+            .dispatch_mouse_event(
+                eoka::cdp::MouseEventType::MousePressed,
+                x,
+                y,
+                Some(eoka::cdp::MouseButton::Left),
+                Some(1),
+            )
+            .await
+        {
+            warn!("[cf:click] mousedown at ({x:.0},{y:.0}) failed: {e}");
+            continue;
         }
+        tokio::time::sleep(Duration::from_millis(68 + i as u64 * 11)).await;
+
+        session
+            .dispatch_mouse_event(
+                eoka::cdp::MouseEventType::MouseReleased,
+                x,
+                y,
+                Some(eoka::cdp::MouseButton::Left),
+                Some(1),
+            )
+            .await
+            .ok();
+
+        debug!("[cf:click] human click at ({x:.0},{y:.0})");
+        tokio::time::sleep(Duration::from_millis(90)).await;
     }
 
-    // Fallback: click the center point of likely challenge frames/elements via JS.
-    let js = r#"(function() {
-        const candidates = [
-          "iframe[title*='challenge']",
-          "iframe[title*='Cloudflare']",
-          "iframe[title*='Turnstile']",
-          "iframe[src*='challenges.cloudflare.com']",
-          "input[type='checkbox']",
-          "[role='checkbox']"
-        ];
-        for (const sel of candidates) {
-          const el = document.querySelector(sel);
-          if (!el) continue;
-          const rect = el.getBoundingClientRect();
-          if (!rect || rect.width <= 0 || rect.height <= 0) continue;
-          const x = Math.floor(rect.left + rect.width / 2);
-          const y = Math.floor(rect.top + rect.height / 2);
-          const target = document.elementFromPoint(x, y) || el;
-          const events = ["mousemove", "mousedown", "mouseup", "click"];
-          for (const type of events) {
-            target.dispatchEvent(new MouseEvent(type, {
-              bubbles: true,
-              cancelable: true,
-              view: window,
-              clientX: x,
-              clientY: y,
-              button: 0
-            }));
-          }
-          if (typeof target.click === "function") target.click();
-          return true;
-        }
-        return false;
-    })()"#;
-
-    match page.evaluate::<bool>(js).await {
-        Ok(true) => {
-            debug!("[cf] clicked via JS fallback");
-            true
-        }
-        _ => false,
-    }
+    false
 }
 
 // ---------------------------------------------------------------------------
