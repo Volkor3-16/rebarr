@@ -57,15 +57,15 @@ chapters:
     - extract_js:
         var: manga_slug
         script: "window.location.pathname.split('/manga/')[1]?.split('/')[0] || ''"
-    - graphql:
+    - fetch:
         url: "https://api.mghcdn.com/graphql"
-        query: 'query ($slug: String) { manga(x: m01, slug: $slug) { chapters { number, title, createdAt } } }'
-        variables:
-          slug: "{manga_slug}"
+        method: POST
         headers:
+          Content-Type: "application/json"
           x-mhub-access: "{mhub_token}"
           origin: "https://mangahub.io"
           referer: "https://mangahub.io/"
+        body: '{"query":"{manga(x:m01,slug:\\"{manga_slug}\\"){chapters{number,title,createdAt}}}"}'
         var: chapters_response
         json_path: "data.manga.chapters"
     - extract_js:
@@ -73,10 +73,10 @@ chapters:
         script: |
           (() => {
             try {
-              const data = JSON.parse('{chapters_response}');
-              const chapters = data || [];
+              const data = JSON.parse('{chapters_response|js_escape}');
+              const chapters = Array.isArray(data) ? data : [];
               return JSON.stringify(chapters.map(ch => ({
-                number_raw: ch.number || '0',
+                number_raw: String(ch.number || '0'),
                 title: ch.title || '',
                 url: '{base_url}/chapter/{manga_slug}/chapter-' + (ch.number || '0'),
                 date: ch.createdAt ? Math.floor(new Date(ch.createdAt).getTime() / 1000).toString() : ''
@@ -112,16 +112,15 @@ pages:
     - extract_js:
         var: chapter_number
         script: "window.location.pathname.split('chapter-')[1] || '1'"
-    - graphql:
+    - fetch:
         url: "https://api.mghcdn.com/graphql"
-        query: 'query ($manga: String!, $chapter: Float!) { chapter(x: m01, slug: $manga, number: $chapter) { pages } }'
-        variables:
-          manga: "{manga_slug}"
-          chapter: "{chapter_number}"
+        method: POST
         headers:
+          Content-Type: "application/json"
           x-mhub-access: "{mhub_token}"
           origin: "https://mangahub.io"
           referer: "https://mangahub.io/"
+        body: '{"query":"{chapter(x:m01,slug:\\"{manga_slug}\\",number:{chapter_number}){pages}}"}'
         var: pages_response
         json_path: "data.chapter.pages"
     - extract_js:
@@ -129,7 +128,7 @@ pages:
         script: |
           (() => {
             try {
-              const jsonPages = JSON.parse('{pages_response}');
+              const jsonPages = JSON.parse('{pages_response|js_escape}');
               if (jsonPages['i']) {
                 return JSON.stringify(jsonPages['i'].map(n => `${jsonPages['p']}${n}`));
               } else {

@@ -1,0 +1,9 @@
+provider: MangaKakalot
+query: Berserk
+expected_search_title: Berserk
+expected_min_chapters: 990
+first_chapter:
+  raw_number: '324'
+  url: https://www.mangakakalot.gg/manga/berserk/chapter-324
+test_chapter_url: https://www.mangakakalot.gg/manga/berserk/chapter-324
+expected_min_pages: 17

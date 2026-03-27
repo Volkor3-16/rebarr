@@ -1,0 +1,13 @@
+provider: MangaDex
+query: Berserk
+expected_search_title: Berserk
+expected_min_chapters: 90
+first_chapter:
+  raw_number: '0.01'
+  title: Kara Kılıç Ustası
+  scanlator_group: TheWildDeer
+  language: tr
+  date_released: 1682021207
+  url: https://mangadex.org/chapter/03381228-05e7-47e8-b086-6f411ce6b1f3
+test_chapter_url: https://mangadex.org/chapter/03381228-05e7-47e8-b086-6f411ce6b1f3
+expected_min_pages: 89

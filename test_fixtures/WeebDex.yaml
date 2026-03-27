@@ -1,0 +1,12 @@
+provider: WeebDex
+query: Bungou Stray Dogs
+expected_search_title: Bungou Stray Dogs
+expected_min_chapters: 86
+first_chapter:
+  raw_number: '1'
+  scanlator_group: Shoujo Sense
+  language: en
+  date_released: 1768146293
+  url: https://weebdex.org/chapter/xm3ouf9wgd
+test_chapter_url: https://weebdex.org/chapter/xm3ouf9wgd
+expected_min_pages: 52

@@ -1,0 +1,13 @@
+provider: Comix
+query: Berserk
+expected_search_title: Berserk
+expected_min_chapters: 290
+first_chapter:
+  raw_number: '238'
+  title: danke-Empire
+  scanlator_group: Official?
+  language: en
+  date_released: 1770094673
+  url: https://comix.to/title/zjem/8014344
+test_chapter_url: https://comix.to/title/zjem/8014344
+expected_min_pages: 20

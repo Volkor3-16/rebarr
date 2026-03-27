@@ -12,25 +12,12 @@ In constrast, rebarr uses Anilist and a very fancy (overdesigned) matching syste
 I'll remove this when I've got the first public release out, this is just a quick reference for me to see what I need to work on.
 
 ### Backend
-- Full test of new chapter refresh -> chapter downloading
-    - 2026-03-20: It refreshed automatically when my pc came out of sleep! noice!
-    - 2026-03-23: I've chucked it on the server, i'll import a fuckload of manga for it to try.
-    - 2026-03-25: It's downloading new non-canonical chapters! why tf it downloading chapter 76.1 for?
-- We should save the reason why we upgrade a chapter (so we can debug bad upgrades easily)
-- Implement provider e2e testing.
-    - Have asserts with expected stuff, and match. obviously
-- Cloudflare DNS from docker? (to bypass morons who can't switch dns) DNS over https?
-- Webhooks no worky (discord), isn't there a fancy library for this?
-    `WARN  rebarr::http::webhook] [webhook] delivery to https://discord.com/api/webhooks/... failed with HTTP 400 Bad Request`
-
-### Frontend
-
-- Add a hover on the chapter name/title saying that A comic reader will be coming soon
 
 ### Providers
 
 - Providers steps shouldn't need a random ass `- open` and then hit another endpoint why have the open step at all?
 - [ ] Get Mangago working
+- [ ] Get MangaHub working (no chapters returned)
 
 ## Features
 
@@ -41,6 +28,7 @@ I'll remove this when I've got the first public release out, this is just a quic
 - Uses anilist for metadata, saves it into the chapter itself for easy-importing and such.
 - New sites are just a .yaml with some html selectors (and maybe some javascript). No rust knowledge needed.
     - Hell half the providers were just me giving chatgpt the yaml schema and an example.
+- CLI tool for testing and debugging providers without touching the database — search, list chapters, download pages, run regression tests against fixture files.
 - REST API, so someone with a workable knowledge of frontend design can implement their own (PRs welcome!)
 
 #### Extended ComicInfo.xml Support
@@ -116,13 +104,31 @@ Requires rust/cargo and whatever else i add
 
 CHROME_HEADLESS=false is helpful to see the status of the web scraper without the vnc fuckery that exists in docker
 
-for testing a provider, use
+for testing and debugging providers, use the `cli` binary:
 
-`cargo run --bin cli -- -V -k -p MangaProvider -H "Manga Title" -d`
+```
+# List all loaded providers
+cargo run --bin cli -- providers
 
-This runs a full implementation test, searching, chapter list, and page downloads.
-Additionally, for even more debugging it saves scraper_dump_N.html for each step in the provider
-and even screenshots!
+# Test a single provider end-to-end (search → chapters → pages)
+cargo run --bin cli -- test -p WeebCentral "Berserk"
+
+# Test with visible browser + HTML dumps for debugging selectors
+cargo run --bin cli -- -V -k -H test -p WeebCentral "Berserk"
+
+# Also download the first chapter to ./test_dl/
+cargo run --bin cli -- test -p WeebCentral -d "Berserk"
+
+# Run all providers against a query and show a comparison table
+cargo run --bin cli -- scan "Berserk"
+
+# Run provider fixture tests (regression testing)
+cargo run --bin cli -- test              # test all providers against test_fixtures/
+cargo run --bin cli -- test WeebCentral  # test one provider
+cargo run --bin cli -- test --update     # re-seed all fixtures from live scrape
+```
+
+Global flags (`-V` visible browser, `-k` keep open, `-H` dump HTML) go before the subcommand.
 
 ## Thanks
 

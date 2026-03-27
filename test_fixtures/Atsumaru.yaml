@@ -1,0 +1,10 @@
+provider: Atsumaru
+query: Berserk
+expected_search_title: BERSERK
+expected_min_chapters: 390
+first_chapter:
+  raw_number: '1'
+  date_released: 1752583515
+  url: https://atsu.moe/read/CM0wz/Cv653JBq
+test_chapter_url: https://atsu.moe/read/CM0wz/Cv653JBq
+expected_min_pages: 34

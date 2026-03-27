@@ -1,0 +1,10 @@
+provider: MangaBuddy
+query: Berserk
+expected_search_title: Berserk
+expected_min_chapters: 90
+first_chapter:
+  raw_number: 'Chapter 363: Leaping Monkey'
+  date_released: 1611234000
+  url: https://mangabuddy.me/berserk/chapter-363-leaping-monkey
+test_chapter_url: https://mangabuddy.me/berserk/chapter-363-leaping-monkey
+expected_min_pages: 17

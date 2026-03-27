@@ -1,0 +1,12 @@
+provider: WeebCentral
+query: Berserk
+expected_search_title: Berserk
+expected_min_chapters: 390
+first_chapter:
+  raw_number: Chapter 1
+  scanlator_group: Official
+  language: en
+  date_released: 1725728655
+  url: https://weebcentral.com/chapters/01J76XYYGM51FEZH8PK35QB3SA
+test_chapter_url: https://weebcentral.com/chapters/01J76XYYGM51FEZH8PK35QB3SA
+expected_min_pages: 34

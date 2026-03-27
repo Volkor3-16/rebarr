@@ -1,0 +1,12 @@
+provider: TCB Scans
+query: One Piece
+expected_search_title: One Piece
+expected_min_chapters: 1171
+first_chapter:
+  raw_number: One Piece  Chapter 1
+  scanlator_group: TCB Scans
+  language: en
+  date_released: 0
+  url: https://tcbonepiecechapters.com/chapters/433/one-piece-chapter-1-review-1688718751
+test_chapter_url: https://tcbonepiecechapters.com/chapters/433/one-piece-chapter-1-review-1688718751
+expected_min_pages: 54

@@ -806,7 +806,8 @@ impl YamlProvider {
                                     } else {
                                         response
                                     };
-                                    let preview = &value[..value.len().min(120)];
+                                    let end = (0..=120_usize.min(value.len())).rev().find(|&i| value.is_char_boundary(i)).unwrap_or(0);
+                                    let preview = &value[..end];
                                     debug!(
                                         "[step] fetch stored in '{}': {}",
                                         fetch_def.var, preview
@@ -891,10 +892,11 @@ impl YamlProvider {
                                 warn!("[step] graphql failed: {}", response);
                             } else {
                                 if ctx.verbose {
+                                    let end = (0..=500_usize.min(response.len())).rev().find(|&i| response.is_char_boundary(i)).unwrap_or(0);
                                     debug!(
                                         "[step] graphql raw response ({} bytes): {}",
                                         response.len(),
-                                        &response[..response.len().min(500)]
+                                        &response[..end]
                                     );
                                 }
                                 let value = if let Some(ref path) = graphql_def.json_path {
@@ -903,7 +905,8 @@ impl YamlProvider {
                                     response
                                 };
                                 if ctx.verbose {
-                                    let preview = &value[..value.len().min(120)];
+                                    let end = (0..=120_usize.min(value.len())).rev().find(|&i| value.is_char_boundary(i)).unwrap_or(0);
+                                    let preview = &value[..end];
                                     debug!(
                                         "[step] graphql stored in '{}': {}",
                                         graphql_def.var, preview

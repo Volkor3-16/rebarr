@@ -1,0 +1,12 @@
+provider: LHTranslation
+query: Tensei Shitara Ken Deshita
+expected_search_title: Tensei Shitara Ken Deshita
+expected_min_chapters: 87
+first_chapter:
+  raw_number: '01'
+  scanlator_group: LHTranslation
+  language: en
+  date_released: 1629554400
+  url: https://lhtranslation.net/manga/tensei-shitara-ken-deshita/chapter-01/
+test_chapter_url: https://lhtranslation.net/manga/tensei-shitara-ken-deshita/chapter-01/
+expected_min_pages: 7

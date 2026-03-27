@@ -1,0 +1,12 @@
+provider: AllManga
+query: Berserk
+expected_search_title: Berserk
+expected_min_chapters: 416
+first_chapter:
+  raw_number: '0'
+  title: The Prototype
+  language: en
+  date_released: 1660351300
+  url: https://allmanga.to/manga/J5aN5NY2Zsrk6DLsX/chapter-0-sub
+test_chapter_url: https://allmanga.to/manga/J5aN5NY2Zsrk6DLsX/chapter-0-sub
+expected_min_pages: 66
