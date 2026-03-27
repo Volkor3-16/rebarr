@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::manga::manga::{Chapter, Manga};
+use crate::manga::core::{Chapter, Manga};
 
 pub fn sanitize_chapter_filename(name: &str) -> String {
     name.chars()

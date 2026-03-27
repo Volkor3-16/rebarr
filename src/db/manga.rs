@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use uuid::Uuid;
 
-use crate::manga::manga::{Manga, MangaMetadata, MangaSource, PublishingStatus, Synonym};
+use crate::manga::core::{Manga, MangaMetadata, MangaSource, PublishingStatus, Synonym};
 
 // ---------------------------------------------------------------------------
 // Deterministic UUID

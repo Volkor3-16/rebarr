@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::{
     db,
-    manga::{files, manga::DownloadStatus, scoring},
+    manga::{files, core::DownloadStatus, scoring},
     scheduler::worker::CancelMap,
 };
 

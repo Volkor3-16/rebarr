@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::{
     db,
-    manga::manga::{Manga, MangaType},
+    manga::core::{Manga, MangaType},
 };
 
 use super::errors::{ApiResult, bad_request, internal, not_found};
@@ -35,7 +35,7 @@ pub struct UpdateLibraryRequest {
 #[get("/api/libraries")]
 pub async fn list_libraries(
     pool: &State<SqlitePool>,
-) -> ApiResult<Vec<crate::manga::manga::Library>> {
+) -> ApiResult<Vec<crate::manga::core::Library>> {
     debug!("Listing Libraries (GET /api/libraries)");
     db::library::get_all(pool.inner())
         .await
@@ -51,7 +51,7 @@ pub async fn list_libraries(
 pub async fn create_library(
     pool: &State<SqlitePool>,
     body: Json<NewLibraryRequest>,
-) -> ApiResult<crate::manga::manga::Library> {
+) -> ApiResult<crate::manga::core::Library> {
     debug!("Creating new library: {}", body.root_path);
     if body.root_path.trim().is_empty() {
         return Err(bad_request("root_path cannot be empty"));
@@ -63,7 +63,7 @@ pub async fn create_library(
     };
 
     let root_path = PathBuf::from(body.root_path.trim());
-    let lib = crate::manga::manga::Library {
+    let lib = crate::manga::core::Library {
         uuid: db::library::library_uuid(
             body.library_type.as_str(),
             root_path.to_string_lossy().as_ref(),
@@ -86,7 +86,7 @@ pub async fn create_library(
 pub async fn get_library(
     pool: &State<SqlitePool>,
     id: &str,
-) -> ApiResult<crate::manga::manga::Library> {
+) -> ApiResult<crate::manga::core::Library> {
     let uuid = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
     debug!("Getting library by id: {uuid}");
     db::library::get_by_id(pool.inner(), uuid)
@@ -119,7 +119,7 @@ pub async fn update_library(
     pool: &State<SqlitePool>,
     id: &str,
     body: Json<UpdateLibraryRequest>,
-) -> ApiResult<crate::manga::manga::Library> {
+) -> ApiResult<crate::manga::core::Library> {
     let uuid = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
     if body.root_path.trim().is_empty() {
         return Err(bad_request("root_path cannot be empty"));

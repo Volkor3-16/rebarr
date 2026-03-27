@@ -3,7 +3,7 @@ use tracing::debug;
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
-use crate::manga::manga::{Chapter, DownloadStatus};
+use crate::manga::core::{Chapter, DownloadStatus};
 use crate::manga::scoring::compute_tier;
 use crate::scraper::ProviderChapterInfo;
 

@@ -236,6 +236,7 @@ mod tests {
     }
 
     impl FakeProvider {
+        #[allow(clippy::too_many_arguments)]
         fn new(
             name: &str,
             needs_browser: bool,

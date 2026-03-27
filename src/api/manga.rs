@@ -13,7 +13,7 @@ use crate::{
     http::anilist::ALClient,
     manga::{
         comicinfo, covers, files,
-        manga::{Manga, MangaMetadata, MangaSource, PublishingStatus, Synonym, SynonymSource},
+        core::{Manga, MangaMetadata, MangaSource, PublishingStatus, Synonym, SynonymSource},
     },
     scraper::{ProviderRegistry, ScraperCtx},
 };
@@ -47,7 +47,7 @@ pub struct AddMangaManualRequest {
 }
 
 #[derive(Deserialize)]
-struct PatchMangaRequest {
+pub(crate) struct PatchMangaRequest {
     monitored: Option<bool>,
 }
 
@@ -57,7 +57,7 @@ pub struct DeleteMangaRequest {
 }
 
 #[derive(Serialize)]
-struct ProviderInfo {
+pub(crate) struct ProviderInfo {
     name: String,
     needs_browser: bool,
     version: Option<String>,
@@ -84,7 +84,7 @@ pub struct ProviderCandidate {
 }
 
 #[derive(Deserialize)]
-struct SetProviderUrlRequest {
+pub(crate) struct SetProviderUrlRequest {
     /// Pass `null` to clear the mapping for this provider.
     url: Option<String>,
 }
@@ -936,7 +936,7 @@ pub async fn upload_cover_file(
         .open(10.mebibytes())
         .into_bytes()
         .await
-        .map_err(|e| bad_request(&format!("failed to read upload: {e}")))?;
+        .map_err(|e| bad_request(format!("failed to read upload: {e}")))?;
 
     if !bytes.is_complete() {
         return Err(bad_request("file too large (max 10MB)"));

@@ -237,7 +237,7 @@ impl Provider for StaticProvider {
 
         let pages = (0..page_count)
             .map(|i| PageUrl {
-                url: format!("{}/page-{i}.png", chapter_url),
+                url: format!("{chapter_url}/page-{i}.png"),
                 index: i,
                 referrer: None,
             })

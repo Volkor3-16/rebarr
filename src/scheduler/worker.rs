@@ -20,7 +20,7 @@ use crate::http::anilist::ALClient;
 use crate::library::scanner::scan_existing_chapters;
 use crate::manga::{comicinfo, covers, files};
 use crate::manga::merge;
-use crate::manga::manga::{DownloadStatus, Manga, PublishingStatus};
+use crate::manga::core::{DownloadStatus, Manga, PublishingStatus};
 use crate::scheduler::optimiser;
 use crate::scraper::downloader;
 use crate::scraper::{ProviderRegistry, ScraperCtx};
@@ -309,7 +309,7 @@ async fn dispatch(
 
             // Refresh based on metadata_source
             match manga.metadata_source {
-                crate::manga::manga::MangaSource::AniList => {
+                crate::manga::core::MangaSource::AniList => {
                     let Some(anilist_id) = manga.anilist_id else {
                         info!(
                             "[worker] Manga '{}' has no AniList ID — skipping refresh.",
@@ -369,7 +369,7 @@ async fn dispatch(
                         fresh.metadata.title
                     );
                 }
-                crate::manga::manga::MangaSource::Local => {
+                crate::manga::core::MangaSource::Local => {
                     info!(
                         "[worker] Manga '{}' has Local metadata source — nothing to refresh.",
                         manga.metadata.title

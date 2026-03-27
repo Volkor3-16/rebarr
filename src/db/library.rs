@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
-use crate::manga::manga::{Library, MangaType};
+use crate::manga::core::{Library, MangaType};
 
 // ---------------------------------------------------------------------------
 // Deterministic UUID

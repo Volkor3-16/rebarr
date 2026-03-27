@@ -10,7 +10,7 @@ use crate::db::{
     chapter as db_chapter, provider as db_provider, provider_scores as db_scores,
     settings as db_settings, task as db_task,
 };
-use crate::manga::manga::{DownloadStatus, Manga};
+use crate::manga::core::{DownloadStatus, Manga};
 use crate::scraper::{ProviderRegistry, ProviderSearchResult, ScraperCtx};
 
 /// Error for scary times
@@ -385,70 +385,6 @@ fn best_match<'a>(
         .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::scraper::ProviderSearchResult;
-
-    fn results(titles: &[&str]) -> Vec<ProviderSearchResult> {
-        titles
-            .iter()
-            .map(|t| ProviderSearchResult {
-                title: t.to_string(),
-                url: format!("https://example.com/{}", t.to_lowercase().replace(' ', "-")),
-                cover_url: None,
-            })
-            .collect()
-    }
-
-    fn titles(ts: &[&str]) -> Vec<String> {
-        ts.iter().map(|s| s.to_string()).collect()
-    }
-
-    #[test]
-    fn best_match_exact_returns_score_one() {
-        let r = results(&["Berserk"]);
-        let (score, matched) = best_match(&titles(&["Berserk"]), &r).unwrap();
-        assert!((score - 1.0).abs() < 1e-6);
-        assert_eq!(matched.title, "Berserk");
-    }
-
-    #[test]
-    fn best_match_picks_closest_title() {
-        let r = results(&["Berserk", "Bleach", "Naruto"]);
-        let (_, matched) = best_match(&titles(&["Berserk"]), &r).unwrap();
-        assert_eq!(matched.title, "Berserk");
-    }
-
-    #[test]
-    fn best_match_uses_best_synonym() {
-        // "Vinland Saga" is a synonym; provider title matches it better than "Vinland"
-        let r = results(&["Vinland Saga"]);
-        let (score, _) =
-            best_match(&titles(&["Vinland", "Vinland Saga"]), &r).unwrap();
-        assert!(score > 0.95);
-    }
-
-    #[test]
-    fn best_match_case_insensitive() {
-        let r = results(&["BERSERK"]);
-        let (score, _) = best_match(&titles(&["berserk"]), &r).unwrap();
-        assert!((score - 1.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn best_match_empty_results_returns_none() {
-        assert!(best_match(&titles(&["Berserk"]), &[]).is_none());
-    }
-
-    #[test]
-    fn best_match_low_score_for_completely_different() {
-        let r = results(&["Fairy Tail"]);
-        let (score, _) = best_match(&titles(&["Berserk"]), &r).unwrap();
-        assert!(score < 0.7);
-    }
-}
-
 /// Enqueue DownloadChapter tasks for canonical chapters that were newly discovered.
 /// Only chapters present in `new_ids` and confirmed canonical are queued.
 async fn enqueue_auto_downloads(
@@ -558,5 +494,69 @@ async fn enqueue_upgrades(pool: &SqlitePool, manga: &Manga, trusted_groups: &[St
             "[scan] Queued {upgrade_count} chapter upgrade(s) for '{}'.",
             manga.metadata.title
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scraper::ProviderSearchResult;
+
+    fn results(titles: &[&str]) -> Vec<ProviderSearchResult> {
+        titles
+            .iter()
+            .map(|t| ProviderSearchResult {
+                title: t.to_string(),
+                url: format!("https://example.com/{}", t.to_lowercase().replace(' ', "-")),
+                cover_url: None,
+            })
+            .collect()
+    }
+
+    fn titles(ts: &[&str]) -> Vec<String> {
+        ts.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn best_match_exact_returns_score_one() {
+        let r = results(&["Berserk"]);
+        let (score, matched) = best_match(&titles(&["Berserk"]), &r).unwrap();
+        assert!((score - 1.0).abs() < 1e-6);
+        assert_eq!(matched.title, "Berserk");
+    }
+
+    #[test]
+    fn best_match_picks_closest_title() {
+        let r = results(&["Berserk", "Bleach", "Naruto"]);
+        let (_, matched) = best_match(&titles(&["Berserk"]), &r).unwrap();
+        assert_eq!(matched.title, "Berserk");
+    }
+
+    #[test]
+    fn best_match_uses_best_synonym() {
+        // "Vinland Saga" is a synonym; provider title matches it better than "Vinland"
+        let r = results(&["Vinland Saga"]);
+        let (score, _) =
+            best_match(&titles(&["Vinland", "Vinland Saga"]), &r).unwrap();
+        assert!(score > 0.95);
+    }
+
+    #[test]
+    fn best_match_case_insensitive() {
+        let r = results(&["BERSERK"]);
+        let (score, _) = best_match(&titles(&["berserk"]), &r).unwrap();
+        assert!((score - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn best_match_empty_results_returns_none() {
+        assert!(best_match(&titles(&["Berserk"]), &[]).is_none());
+    }
+
+    #[test]
+    fn best_match_low_score_for_completely_different() {
+        let r = results(&["Fairy Tail"]);
+        let (score, _) = best_match(&titles(&["Berserk"]), &r).unwrap();
+        assert!(score < 0.7);
     }
 }

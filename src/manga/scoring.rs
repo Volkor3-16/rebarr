@@ -6,7 +6,7 @@
 
 use tracing::warn;
 
-use crate::manga::manga::Chapter;
+use crate::manga::core::Chapter;
 
 /// Criteria applied when selecting which provider entries to try for a download.
 pub struct ChapterFilter {
@@ -60,7 +60,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::manga::manga::{Chapter, DownloadStatus};
+    use crate::manga::core::{Chapter, DownloadStatus};
 
     fn make_chapter(language: &str, group: Option<&str>) -> Chapter {
         Chapter {

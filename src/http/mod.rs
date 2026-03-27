@@ -5,3 +5,6 @@
 
 pub(crate) mod anilist;
 pub(crate) mod webhook;
+
+pub use anilist::ALClient;
+pub use webhook::WebhookDispatcher;

@@ -1,10 +1,12 @@
+#![allow(dead_code)]
+
 pub mod static_provider;
 
 use std::sync::Arc;
 
 use rebarr::{
     db,
-    manga::manga::{Library, Manga, MangaMetadata, MangaSource, PublishingStatus},
+    manga::core::{Library, Manga, MangaMetadata, MangaSource, PublishingStatus},
     scraper::{ProviderRegistry, ScraperCtx, browser::BrowserPool, executor::ProviderExecutor},
 };
 use sqlx::SqlitePool;
@@ -26,7 +28,7 @@ pub async fn insert_library(pool: &SqlitePool) -> Library {
     use std::path::PathBuf;
     let lib = Library {
         uuid: Uuid::new_v4(),
-        r#type: rebarr::manga::manga::MangaType::Manga,
+        r#type: rebarr::manga::core::MangaType::Manga,
         root_path: PathBuf::from("/tmp/rebarr-test"),
     };
     db::library::insert(pool, &lib).await.expect("insert library");

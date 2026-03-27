@@ -126,6 +126,17 @@ pub enum MangaSource {
     Local,
 }
 
+/// Type alias for staff extraction result (7 optional lists of names)
+type StaffNames = (
+    Option<Vec<String>>, // writer
+    Option<Vec<String>>, // penciller
+    Option<Vec<String>>, // inker
+    Option<Vec<String>>, // colorist
+    Option<Vec<String>>, // letterer
+    Option<Vec<String>>, // editor
+    Option<Vec<String>>, // translator
+);
+
 /// Staff role mapping for categorizing AniList staff roles into ComicInfo fields
 #[derive(Debug, Clone, Copy)]
 enum StaffRole {
@@ -232,17 +243,7 @@ impl StaffRole {
 }
 
 /// Extract staff information from Media object and categorize by role
-fn extract_staff_from_media(
-    media: &Media,
-) -> (
-    Option<Vec<String>>, // writer
-    Option<Vec<String>>, // penciller
-    Option<Vec<String>>, // inker
-    Option<Vec<String>>, // colorist
-    Option<Vec<String>>, // letterer
-    Option<Vec<String>>, // editor
-    Option<Vec<String>>, // translator
-) {
+fn extract_staff_from_media(media: &Media) -> StaffNames {
     // Initialize vectors to collect staff by role
     let mut writers = Vec::new();
     let mut pencillers = Vec::new();
@@ -327,7 +328,7 @@ fn extract_staff_name(staff: &anilist_moe::objects::staff::Staff) -> Option<Stri
                 // Build name from parts if full name not available
                 let first = name.first.as_ref()?;
                 let last = name.last.as_ref()?;
-                Some(format!("{} {}", first, last))
+                Some(format!("{first} {last}"))
             })
     })
 }

@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::db::task::{self as db_task, TaskProgress};
 use crate::db::{chapter as db_chapter, library as db_library, manga as db_manga};
 use crate::manga::comicinfo;
-use crate::manga::manga::{Chapter, DownloadStatus};
+use crate::manga::core::{Chapter, DownloadStatus};
 
 /// Scan the manga's directory on disk for existing CBZ files and mark the
 /// corresponding chapter records as Downloaded.
@@ -283,7 +283,7 @@ pub async fn scan_existing_chapters(
         }
         let is_local = provider_name
             .as_deref()
-            .map_or(true, |p| p.eq_ignore_ascii_case("local"));
+            .is_none_or(|p| p.eq_ignore_ascii_case("local"));
         if is_local {
             db_chapter::delete(pool, chapter_id)
                 .await

@@ -11,7 +11,7 @@ use uuid::Uuid;
 use crate::db::task::TaskType;
 use crate::db::{library as db_library, manga as db_manga, task as db_task};
 use crate::manga::comicinfo;
-use crate::manga::manga::{Chapter, DownloadStatus, Manga};
+use crate::manga::core::{Chapter, DownloadStatus, Manga};
 
 // ---------------------------------------------------------------------------
 // Public types

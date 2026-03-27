@@ -1,7 +1,7 @@
 use std::io::{Read as _, Write as _};
 use std::path::Path;
 
-use crate::manga::manga::{Chapter, Manga, Synonym, SynonymSource};
+use crate::manga::core::{Chapter, Manga, Synonym, SynonymSource};
 use chrono::Datelike;
 
 // This file handles the creation of ComicInfo.xml using the various sources of info
@@ -57,10 +57,11 @@ fn extract_tag(xml: &str, tag: &str) -> Option<String> {
 /// Parse a ComicInfo.xml string into a `ParsedComicInfo`.
 /// Returns default ParsedComicInfo if parsing fails.
 pub fn parse_comicinfo(xml: &str) -> ParsedComicInfo {
-    let mut info = ParsedComicInfo::default();
-
     // Safely extract all fields with error handling
-    info.title = extract_tag(xml, "Series");
+    let mut info = ParsedComicInfo {
+        title: extract_tag(xml, "Series"),
+        ..Default::default()
+    };
     info.other_titles = extract_tag(xml, "AlternateSeries").map(|s| {
         s.split(';')
             .map(|p| p.trim().to_owned())
@@ -353,18 +354,18 @@ fn serialize_series_metadata(manga: &Manga) -> Option<String> {
         other_titles,
         synopsis: manga.metadata.synopsis.clone(),
         publishing_status: match manga.metadata.publishing_status {
-            crate::manga::manga::PublishingStatus::Completed => "Completed".to_string(),
-            crate::manga::manga::PublishingStatus::Ongoing => "Ongoing".to_string(),
-            crate::manga::manga::PublishingStatus::Hiatus => "Hiatus".to_string(),
-            crate::manga::manga::PublishingStatus::Cancelled => "Cancelled".to_string(),
-            crate::manga::manga::PublishingStatus::NotYetReleased => "NotYetReleased".to_string(),
-            crate::manga::manga::PublishingStatus::Unknown => "Unknown".to_string(),
+            crate::manga::core::PublishingStatus::Completed => "Completed".to_string(),
+            crate::manga::core::PublishingStatus::Ongoing => "Ongoing".to_string(),
+            crate::manga::core::PublishingStatus::Hiatus => "Hiatus".to_string(),
+            crate::manga::core::PublishingStatus::Cancelled => "Cancelled".to_string(),
+            crate::manga::core::PublishingStatus::NotYetReleased => "NotYetReleased".to_string(),
+            crate::manga::core::PublishingStatus::Unknown => "Unknown".to_string(),
         },
         start_year: manga.metadata.start_year,
         end_year: manga.metadata.end_year,
         metadata_source: match manga.metadata_source {
-            crate::manga::manga::MangaSource::AniList => "AniList".to_string(),
-            crate::manga::manga::MangaSource::Local => "Local".to_string(),
+            crate::manga::core::MangaSource::AniList => "AniList".to_string(),
+            crate::manga::core::MangaSource::Local => "Local".to_string(),
         },
         monitored: manga.monitored,
         created_at: manga.created_at,
@@ -579,15 +580,14 @@ pub fn generate_chapter_xml(
     let notes = match (series_notes, chapter_notes) {
         (Some(series_json), Some(chapter_json)) => {
             format!(
-                "{{\"series\":{},\"chapter\":{}}}",
-                series_json, chapter_json
+                "{{\"series\":{series_json},\"chapter\":{chapter_json}}}"
             )
         }
         (Some(series_json), None) => {
-            format!("{{\"series\":{}}}", series_json)
+            format!("{{\"series\":{series_json}}}")
         }
         (None, Some(chapter_json)) => {
-            format!("{{\"chapter\":{}}}", chapter_json)
+            format!("{{\"chapter\":{chapter_json}}}")
         }
         (None, None) => {
             // Fallback to simple format if JSON serialization fails

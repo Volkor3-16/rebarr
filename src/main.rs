@@ -2,30 +2,20 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use dotenvy::dotenv;
-use tracing::{error, info, warn};
 use rocket::fs::FileServer;
-
-mod api;
-mod db;
-mod http;
-mod importer;
-mod library;
-mod manga;
-mod scheduler;
-mod scraper;
-
-use crate::api::{api_routes, frontend_routes};
-use crate::http::anilist::ALClient;
-use crate::http::webhook::WebhookDispatcher;
-use crate::scheduler::worker::{self, CancelMap};
-use crate::scraper::{
+use rebarr::api::{api_routes, frontend_routes};
+use rebarr::db;
+use rebarr::http::{ALClient, WebhookDispatcher};
+use rebarr::scheduler::{CancelMap, start_worker};
+use rebarr::scraper::{
     browser::BrowserPool,
     executor::ProviderExecutor,
     {ProviderRegistry, ScraperCtx},
 };
+use tracing::{error, info, warn};
 
 #[rocket::main]
-async fn main() -> Result<(), rocket::Error> {
+async fn main() -> Result<(), Box<rocket::Error>> {
     dotenv().ok();
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -75,7 +65,7 @@ async fn main() -> Result<(), rocket::Error> {
 
     // Background Task Handler start
     let cancel_map: CancelMap = Arc::new(Mutex::new(HashMap::new()));
-    let _worker = worker::start(
+    let _worker = start_worker(
         pool.clone(),
         Arc::clone(&registry),
         scraper_ctx.clone(),

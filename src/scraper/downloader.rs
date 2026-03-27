@@ -14,7 +14,7 @@ use crate::db::{
     chapter as db_chapter, provider as db_provider, settings as db_settings, task as db_task,
 };
 use crate::manga::{comicinfo, files};
-use crate::manga::manga::{Chapter, DownloadStatus, Manga};
+use crate::manga::core::{Chapter, DownloadStatus, Manga};
 use crate::manga::scoring::{ChapterFilter, compute_tier, rank_entries};
 use crate::scraper::{ProviderRegistry, ScraperCtx};
 
@@ -51,6 +51,7 @@ pub enum DownloadError {
 /// 4. If all providers fail, mark as Failed and return Err.
 #[instrument(skip(pool, registry, ctx, cancel_token),
     fields(manga = %manga.metadata.title, chapter = chapter.number_sort()))]
+#[allow(clippy::too_many_arguments)]
 pub async fn download_chapter(
     pool: &sqlx::SqlitePool,
     task_id: uuid::Uuid,
@@ -344,6 +345,7 @@ async fn ensure_chapter_url(
 ///
 /// `page_delay_ms` — sleep this many ms between images to avoid rate-limiting.
 /// `chapter_url` — navigated once to establish page context, and used as the `Referer` header.
+#[allow(clippy::too_many_arguments)]
 pub async fn download_pages_via_browser(
     pool: Option<&sqlx::SqlitePool>,
     task_id: Option<uuid::Uuid>,

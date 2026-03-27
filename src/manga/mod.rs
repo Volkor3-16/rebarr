@@ -6,7 +6,7 @@ pub mod comicinfo;
 pub mod covers;
 pub mod files;
 /// Core Manga Stuffs
-pub mod manga;
+pub mod core;
 /// Merging provider-supplied chapter lists into a merged list for viewing
 pub mod merge;
 /// Scoring provider chapters

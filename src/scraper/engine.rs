@@ -11,8 +11,7 @@ use scraper::{ElementRef, Html, Selector};
 
 use crate::scraper::{
     def::{
-        ActionDef, ContentKind, FetchDef, FieldDef, FilterJsonDef, ForeachDef, FromJsonDef,
-        GraphqlDef, InterceptDef, ProviderDef, StepDef,
+        ActionDef, ContentKind, FieldDef, ForeachDef, InterceptDef, ProviderDef, StepDef,
     },
     error::ScraperError,
     {PageUrl, Provider, ProviderChapterInfo, ProviderSearchResult, ScraperCtx},
@@ -73,11 +72,11 @@ impl YamlProvider {
 
         // Process modifiers: {var|modifier1|modifier2|...}
         // Capture all patterns and replace them iteratively until none remain
+        let re = regex::Regex::new(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\|([^}]+)\}").unwrap();
         let mut changed = true;
         while changed {
             changed = false;
             // Find patterns like {varname|modifier}
-            let re = regex::Regex::new(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\|([^}]+)\}").unwrap();
             while let Some(caps) = re.captures(&s) {
                 let full_match = caps.get(0).unwrap().as_str();
                 let var_name = caps.get(1).unwrap().as_str();
@@ -724,7 +723,7 @@ impl YamlProvider {
                                                 .and_then(|v| v.as_u64())
                                                 .unwrap_or(100);
                                             if limit > 0 {
-                                                last_page = ((total + limit - 1) / limit) as u32;
+                                                last_page = total.div_ceil(limit) as u32;
                                             }
                                         } else if let Some(last_page_val) =
                                             meta.get(&pagination.last_page_field)
@@ -1050,7 +1049,7 @@ impl YamlProvider {
                                     if val.starts_with("http://") || val.starts_with("https://") {
                                         val
                                     } else {
-                                        format!("{}{}", expanded_prefix, val)
+                                        format!("{expanded_prefix}{val}")
                                     }
                                 } else {
                                     val
@@ -1099,13 +1098,8 @@ impl YamlProvider {
                             && !field_value.as_deref().unwrap_or("").is_empty();
 
                         // Keep record if filter condition does NOT match
-                        if condition.exists && has_field {
-                            false // Remove records where field exists
-                        } else if !condition.exists && !has_field {
-                            false // Remove records where field does not exist
-                        } else {
-                            true // Keep the record
-                        }
+                        // Remove when field existence matches condition (both exist or both don't exist)
+                        condition.exists != has_field
                     });
 
                     let filtered_count = original_count - json_array.len();
@@ -1361,16 +1355,14 @@ fn parse_chapter_number(raw: &str) -> (f32, f32, u8) {
 /// "Chapter of the Dragon" → false. "Chapter 14" → true.
 fn is_fake_chapter_title(title: &str) -> bool {
     let lower = title.trim().to_ascii_lowercase();
-    let rest = if lower.starts_with("chapter ") {
-        &lower["chapter ".len()..]
-    } else if lower.starts_with("ch. ") {
-        &lower["ch. ".len()..]
-    } else if lower.starts_with("ch ") {
-        &lower["ch ".len()..]
-    } else {
-        return false;
-    };
-    rest.trim().parse::<f64>().is_ok()
+    let rest = lower
+        .strip_prefix("chapter ")
+        .or_else(|| lower.strip_prefix("ch. "))
+        .or_else(|| lower.strip_prefix("ch "));
+    match rest {
+        Some(s) => s.trim().parse::<f64>().is_ok(),
+        None => false,
+    }
 }
 
 /// Infer whether a chapter is an extra/bonus from its title using keyword matching.

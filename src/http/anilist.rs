@@ -1,11 +1,17 @@
 use anilist_moe::{AniListClient, AniListError, enums::media::MediaFormat};
-use tracing::{debug, info};
+use tracing::debug;
 
-use crate::manga::manga::Manga;
+use crate::manga::core::Manga;
 
 /// Service for interacting with anilist API
 pub struct ALClient {
     api_client: AniListClient,
+}
+
+impl Default for ALClient {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ALClient {
