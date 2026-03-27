@@ -1,14 +1,14 @@
 use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
 use std::str::FromStr;
 
-pub(crate) mod chapter;
-pub(crate) mod library;
-pub(crate) mod manga;
-pub(crate) mod provider;
-pub(crate) mod provider_scores;
-pub(crate) mod settings;
-pub(crate) mod task;
-pub(crate) mod webhook;
+pub mod chapter;
+pub mod library;
+pub mod manga;
+pub mod provider;
+pub mod provider_scores;
+pub mod settings;
+pub mod task;
+pub mod webhook;
 
 /// Initialise the database pool.
 ///

@@ -10,6 +10,9 @@ let chapterDataCache = [];
 let providersCache = []; // Cache provider names for filtering
 let currentSort = { field: 'chapter', direction: 'desc' };
 let currentFilter = { search: '', status: '', provider: '' };
+let lastCheckedIdx = -1;
+let intersectionObserver = null;
+let hoveredChapterRow = null;
 
 // Loading overlay / banner state
 let tipsCache = null;
@@ -114,6 +117,11 @@ export async function viewSeries(id) {
   currentMangaId = id;
   chaptersEverLoaded = false; // Reset when viewing a new series
   overlayRendered = false; // Reset overlay state
+  // Cleanup fixed UI elements from previous series visit
+  if (intersectionObserver) { intersectionObserver.disconnect(); intersectionObserver = null; }
+  document.getElementById('series-mini-header')?.remove();
+  document.getElementById('bulk-action-bar')?.remove();
+  document.body.classList.remove('bulk-bar-active');
   render(`<div class="series">${skeleton(5)}</div>`);
   
   try {
@@ -130,11 +138,30 @@ export async function viewSeries(id) {
     const dl = m.downloaded_count ?? 0;
     const total = m.chapter_count != null ? m.chapter_count : '?';
     
-    const thumb = m.thumbnail_url 
-      ? `<img class="cover-lg" src="${escape(m.thumbnail_url)}" alt="cover" onclick="showCoverUpload('${m.id}')" title="Click to change cover">`
-      : `<div class="cover-placeholder" onclick="showCoverUpload('${m.id}')">
-          <iconify-icon class="cover-placeholder-icon" icon="mdi:image-plus"></iconify-icon>
-          <span class="cover-placeholder-text">Add Cover</span>
+    const thumb = m.thumbnail_url
+      ? `<div class="series-cover-wrapper">
+          <img class="cover-lg" src="${escape(m.thumbnail_url)}" alt="cover">
+          <div class="cover-hover-overlay">
+            <button class="cover-action-btn" onclick="showCoverUpload('${m.id}')">
+              <iconify-icon icon="mdi:pencil" width="16" height="16"></iconify-icon>
+              Change
+            </button>
+          </div>
+        </div>`
+      : `<div class="series-cover-wrapper">
+          <img class="cover-lg" src="/web/img/no-cover.svg" alt="No cover">
+          <div class="cover-hover-overlay">
+            <label class="cover-action-btn">
+              <iconify-icon icon="mdi:upload" width="16" height="16"></iconify-icon>
+              Upload
+              <input type="file" accept="image/jpeg,image/png,image/webp" style="display:none"
+                     onchange="doDirectCoverUpload(event, '${m.id}')">
+            </label>
+            <button class="cover-action-btn" onclick="showCoverUpload('${m.id}')">
+              <iconify-icon icon="mdi:link" width="16" height="16"></iconify-icon>
+              From URL
+            </button>
+          </div>
         </div>`;
     
     const tags = (meta.tags ?? []).map(t => `<span class="badge badge-neutral">${escape(t)}</span>`).join(' ');
@@ -247,17 +274,35 @@ export async function viewSeries(id) {
       <h3>Chapters</h3>
       <div id="chapters-list"><p>Loading...</p></div>
       
-      <h3>Providers</h3>
-      <div id="providers-list"><p>Loading...</p></div>
+      <div class="providers-header">
+        <h3 style="margin:0">Providers</h3>
+        <button class="providers-chevron-btn" id="providers-chevron"
+                onclick="toggleProvidersSection()" title="Toggle providers">
+          <iconify-icon icon="mdi:chevron-down" width="20" height="20"></iconify-icon>
+        </button>
+      </div>
+      <div class="providers-collapsible" id="providers-collapsible">
+        <div id="providers-list"><p>Loading...</p></div>
+      </div>
       
       <div class="mt-3">
         <a href="/library" data-path="/library">[Back to Libraries]</a>
       </div>
     `);
 
+    setupBulkBar(m.id);
+    setupMiniHeader(m, dl, total);
+
     // Load chapters, providers, and tips, then start polling
     await Promise.all([loadChapters(m.id), loadTips()]);
     loadProviders(m.id);
+    // Restore providers collapsed state from localStorage
+    try {
+      if (localStorage.getItem('rebarr-providers-collapsed') === '1') {
+        document.getElementById('providers-collapsible')?.classList.add('collapsed');
+        document.getElementById('providers-chevron')?.classList.add('collapsed');
+      }
+    } catch(e) {}
 
     // Poll for active tasks every 3s
     let prevHadActive = false;
@@ -441,7 +486,15 @@ function chapterRow(mangaId, ch, isVariant = false, altCount = 0, extraActions =
     : '';
 
   const cb = (!isVariant && canDl)
-    ? `<input type="checkbox" class="ch-checkbox" data-base="${base}" data-variant="${variant}" onclick="event.stopPropagation()">`
+    ? `<input type="checkbox" class="ch-checkbox" data-base="${base}" data-variant="${variant}" onclick="event.stopPropagation(); handleCheckboxClick(event, this)">`
+    : '';
+
+  const quickDlBtn = (canDl && !isVariant)
+    ? `<button class="ch-quick-dl"
+         onclick="event.stopPropagation(); doDownload('${mangaId}', ${base}, ${variant})"
+         title="Download">
+         <iconify-icon icon="mdi:download" width="14" height="14"></iconify-icon>
+       </button>`
     : '';
 
   // Scanlator bubble — click anywhere to toggle trusted state
@@ -493,7 +546,7 @@ function chapterRow(mangaId, ch, isVariant = false, altCount = 0, extraActions =
       <td>${statusBadge(status)}${fileSizeHtml}</td>
       <td><small>${relTime(ch.released_at)}</small></td>
       <td><small>${relTime(ch.scraped_at)}</small></td>
-      <td>${useBtn}${actionMenuHtml}${extraActions}</td>
+      <td>${useBtn}${quickDlBtn}${actionMenuHtml}${extraActions}</td>
     </tr>`,
     base, variant, status, tier: ch.tier || 4, title: chNum, released: ch.released_at
   };
@@ -778,6 +831,7 @@ export async function loadChapters(mangaId) {
     const uniqueProviders = getUniqueProviders();
     const providerFilterHtml = buildProviderChipsHtml(uniqueProviders);
 
+    lastCheckedIdx = -1;
     el.innerHTML = `
       <div class="table-filter-bar">
         <input type="text" class="search-input" placeholder="Search chapters..." value="${escape(currentFilter.search)}" oninput="filterChapters(this.value)">
@@ -796,6 +850,10 @@ export async function loadChapters(mangaId) {
           <span class="filter-chip ${currentFilter.status === 'Failed' ? 'active' : ''}" onclick="filterByStatus('Failed')">Failed</span>
         </div>
         ${providerFilterHtml}
+        <button class="btn btn-sm btn-ghost" onclick="selectAllMissing()" title="Check all missing/failed chapters">
+          <iconify-icon icon="mdi:select-all" width="16" height="16"></iconify-icon>
+          Select Missing
+        </button>
       </div>
       ${buildChapterOverview(chapters)}
       <div class="chapters-table">
@@ -987,6 +1045,7 @@ function renderFilteredChapters(filteredChapters) {
   // Update table body only
   const tbody = el.querySelector('.chapters-table tbody');
   if (tbody) {
+    lastCheckedIdx = -1;
     tbody.innerHTML = rows;
     el.querySelector('.chapters-table').style.display = '';
   } else {
@@ -1438,6 +1497,7 @@ window.toggleSynopsis = function() {
 
 window.toggleSelectAll = function(checked) {
   document.querySelectorAll('.ch-checkbox').forEach(cb => cb.checked = checked);
+  updateBulkBar();
 };
 
 window.doDownloadSelected = async function(mangaId) {
@@ -1455,6 +1515,7 @@ window.doDownloadSelected = async function(mangaId) {
     if (idx !== -1) chapterDataCache[idx] = { ...chapterDataCache[idx], download_status: 'Queued' };
   }
   renderFilteredChapters(filterAndSortChapters(chapterDataCache));
+  updateBulkBar();
   if (count > 0) {
     showToast(`Queued ${count} download${count === 1 ? '' : 's'}${errors > 0 ? `, ${errors} failed` : ''}`);
   } else {
@@ -1477,10 +1538,136 @@ window.doDownloadAllMissing = async function(mangaId) {
     if (idx !== -1) chapterDataCache[idx] = { ...chapterDataCache[idx], download_status: 'Queued' };
   }
   renderFilteredChapters(filterAndSortChapters(chapterDataCache));
+  updateBulkBar();
   if (errors > 0) {
     showToast(`Queued ${count}, ${errors} failed`, 'error');
   } else {
     showToast(`Queued ${count} chapter${count === 1 ? '' : 's'}`);
+  }
+};
+
+function setupBulkBar(mangaId) {
+  document.getElementById('bulk-action-bar')?.remove();
+  const bar = document.createElement('div');
+  bar.id = 'bulk-action-bar';
+  bar.className = 'bulk-action-bar';
+  bar.innerHTML = `
+    <span class="bulk-action-count" id="bulk-count">0 selected</span>
+    <button class="btn btn-sm btn-accent" onclick="doDownloadSelected('${mangaId}')">
+      <iconify-icon icon="mdi:download" width="16" height="16"></iconify-icon>
+      Download
+    </button>
+    <button class="btn btn-sm btn-outline" onclick="doBulkMarkDownloaded('${mangaId}')">
+      <iconify-icon icon="mdi:check-bold" width="16" height="16"></iconify-icon>
+      Mark Downloaded
+    </button>
+    <button class="btn btn-sm btn-ghost" onclick="clearBulkSelection()">
+      <iconify-icon icon="mdi:close" width="16" height="16"></iconify-icon>
+      Clear
+    </button>
+  `;
+  document.body.appendChild(bar);
+}
+
+function updateBulkBar() {
+  const bar = document.getElementById('bulk-action-bar');
+  if (!bar) return;
+  const n = document.querySelectorAll('.ch-checkbox:checked').length;
+  if (n > 0) {
+    bar.classList.add('visible');
+    document.body.classList.add('bulk-bar-active');
+    const el = document.getElementById('bulk-count');
+    if (el) el.textContent = `${n} chapter${n === 1 ? '' : 's'} selected`;
+  } else {
+    bar.classList.remove('visible');
+    document.body.classList.remove('bulk-bar-active');
+  }
+}
+
+function setupMiniHeader(m, dl, total) {
+  if (intersectionObserver) { intersectionObserver.disconnect(); intersectionObserver = null; }
+  document.getElementById('series-mini-header')?.remove();
+
+  const meta = m.metadata ?? {};
+  const bar = document.createElement('div');
+  bar.id = 'series-mini-header';
+  bar.className = 'series-mini-header';
+  const imgHtml = m.thumbnail_url
+    ? `<img class="series-mini-header-cover" src="${escape(m.thumbnail_url)}" alt="">`
+    : '';
+  bar.innerHTML = `
+    ${imgHtml}
+    <span class="series-mini-header-title">${escape(meta.title ?? '')}</span>
+    <span class="series-mini-header-count">${dl} / ${total !== '?' ? total : '?'} downloaded</span>
+    <button class="btn btn-sm btn-accent" onclick="doDownloadAllMissing('${m.id}')">
+      <iconify-icon icon="mdi:download" width="16" height="16"></iconify-icon>
+      Download All Missing
+    </button>
+  `;
+  document.body.appendChild(bar);
+
+  const seriesHeader = document.querySelector('.series-header');
+  if (!seriesHeader) return;
+  intersectionObserver = new IntersectionObserver(
+    ([entry]) => bar.classList.toggle('visible', !entry.isIntersecting),
+    { threshold: 0, rootMargin: '-50px 0px 0px 0px' }
+  );
+  intersectionObserver.observe(seriesHeader);
+}
+
+window.toggleProvidersSection = function() {
+  const collapsed = document.getElementById('providers-collapsible')?.classList.toggle('collapsed');
+  document.getElementById('providers-chevron')?.classList.toggle('collapsed', collapsed);
+  try { localStorage.setItem('rebarr-providers-collapsed', collapsed ? '1' : '0'); } catch(e) {}
+};
+
+window.clearBulkSelection = function() { toggleSelectAll(false); };
+
+window.selectAllMissing = function() {
+  document.querySelectorAll('.ch-checkbox').forEach(cb => cb.checked = true);
+  updateBulkBar();
+};
+
+window.doBulkMarkDownloaded = async function(mangaId) {
+  const checked = Array.from(document.querySelectorAll('.ch-checkbox:checked'));
+  if (!checked.length) { showToast('Select at least one chapter.', 'warning'); return; }
+  let count = 0, errors = 0;
+  for (const cb of checked) {
+    try { await mangaApi.markDownloaded(mangaId, cb.dataset.base, cb.dataset.variant); count++; }
+    catch(e) { errors++; }
+  }
+  for (const cb of checked) {
+    const idx = chapterDataCache.findIndex(ch =>
+      ch.chapter_base == cb.dataset.base && ch.chapter_variant == cb.dataset.variant && ch.is_canonical);
+    if (idx !== -1) chapterDataCache[idx] = { ...chapterDataCache[idx], download_status: 'Downloaded' };
+  }
+  renderFilteredChapters(filterAndSortChapters(chapterDataCache));
+  updateBulkBar();
+  showToast(`Marked ${count} as downloaded${errors > 0 ? `, ${errors} failed` : ''}`);
+};
+
+window.handleCheckboxClick = function(e, cb) {
+  const allCbs = Array.from(document.querySelectorAll('.ch-checkbox'));
+  const currentIdx = allCbs.indexOf(cb);
+  if (e.shiftKey && lastCheckedIdx !== -1 && currentIdx !== -1) {
+    const lo = Math.min(lastCheckedIdx, currentIdx);
+    const hi = Math.max(lastCheckedIdx, currentIdx);
+    for (let i = lo; i <= hi; i++) allCbs[i].checked = cb.checked;
+  }
+  if (currentIdx !== -1) lastCheckedIdx = currentIdx;
+  updateBulkBar();
+};
+
+window.doDirectCoverUpload = async function(event, mangaId) {
+  const file = event.target.files[0];
+  if (!file) return;
+  try {
+    showToast('Uploading cover...');
+    await coverApi.uploadFile(mangaId, file);
+    showToast('Cover updated');
+    viewSeries(mangaId);
+  } catch(e) {
+    showToast('Upload failed: ' + e.message, 'error');
   }
 };
 
@@ -1685,4 +1872,46 @@ document.addEventListener('click', (e) => {
   if (title && currentMangaId) {
     window.removeSynonym(title, isManual, isHidden);
   }
+});
+
+// Keyboard shortcuts (series page only)
+document.addEventListener('keydown', (e) => {
+  if (!currentMangaId) return;
+  const tag = document.activeElement?.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  switch(e.key) {
+    case 'd': {
+      const n = document.querySelectorAll('.ch-checkbox:checked').length;
+      if (n === 0) showToast('Select chapters first, or use "Download All Missing"', 'info');
+      else window.doDownloadSelected(currentMangaId);
+      break;
+    }
+    case 'a': {
+      const anyUnchecked = Array.from(document.querySelectorAll('.ch-checkbox')).some(cb => !cb.checked);
+      window.toggleSelectAll(anyUnchecked);
+      break;
+    }
+    case 's': {
+      const cb = hoveredChapterRow?.querySelector('.ch-checkbox');
+      if (cb) { cb.checked = !cb.checked; window.handleCheckboxClick({ shiftKey: false }, cb); }
+      break;
+    }
+    case 'Escape':
+      window.toggleSelectAll(false);
+      break;
+  }
+});
+
+// Track hovered chapter row for the 's' shortcut
+document.addEventListener('mouseover', (e) => {
+  const row = e.target.closest('.ch-row');
+  if (row) hoveredChapterRow = row;
+});
+document.addEventListener('mouseout', (e) => {
+  if (e.target.closest('.ch-row') && !e.relatedTarget?.closest('.ch-row')) hoveredChapterRow = null;
+});
+
+// Bulk bar update on checkbox change
+document.addEventListener('change', (e) => {
+  if (e.target.classList.contains('ch-checkbox')) updateBulkBar();
 });

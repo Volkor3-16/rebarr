@@ -6,7 +6,7 @@ use std::sync::Arc;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use chrono::Utc;
-use log::{debug, info, warn};
+use tracing::{debug, info, warn, instrument};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
@@ -49,6 +49,8 @@ pub enum DownloadError {
 /// 2. Rank by language filter + scanlation tier.
 /// 3. For each provider: use cached chapter_url (re-scrape if missing), get pages, write CBZ.
 /// 4. If all providers fail, mark as Failed and return Err.
+#[instrument(skip(pool, registry, ctx, cancel_token),
+    fields(manga = %manga.metadata.title, chapter = chapter.number_sort()))]
 pub async fn download_chapter(
     pool: &sqlx::SqlitePool,
     task_id: uuid::Uuid,
@@ -410,6 +412,7 @@ pub async fn download_pages_via_browser(
         }
         let url = &page_url.url;
         let referrer = page_url.referrer.as_deref().unwrap_or(chapter_url);
+        tracing::trace!(page = idx + 1, total = pages.len(), %url, "downloading page");
 
         if let (Some(pool), Some(task_id)) = (pool, task_id) {
             let _ = db_task::set_progress(

@@ -6,7 +6,7 @@ use chrono::{Datelike, NaiveDate, NaiveDateTime, TimeZone, Utc};
 
 static DUMP_COUNTER: AtomicU32 = AtomicU32::new(0);
 
-use log::{debug, info, warn};
+use tracing::{debug, info, warn};
 use scraper::{ElementRef, Html, Selector};
 
 use crate::scraper::{
@@ -252,6 +252,7 @@ impl YamlProvider {
         let mut early_return: Option<String> = None;
 
         for step in &action.steps {
+            tracing::trace!(step = ?std::mem::discriminant(step), "executing step");
             match step {
                 StepDef::Open { open: url_tmpl } => {
                     let url = self.expand(url_tmpl, &vars);
@@ -1232,6 +1233,7 @@ impl Provider for YamlProvider {
         &self.def.tags
     }
 
+    #[tracing::instrument(skip(self, ctx), fields(provider = %self.def.name))]
     async fn search(
         &self,
         ctx: &ScraperCtx,
@@ -1247,6 +1249,7 @@ impl Provider for YamlProvider {
         Ok(records_to_search_results(result.into_records()))
     }
 
+    #[tracing::instrument(skip(self, ctx), fields(provider = %self.def.name))]
     async fn chapters(
         &self,
         ctx: &ScraperCtx,
@@ -1264,6 +1267,7 @@ impl Provider for YamlProvider {
         Ok(records_to_chapters(result.into_records()))
     }
 
+    #[tracing::instrument(skip(self, ctx), fields(provider = %self.def.name))]
     async fn pages(
         &self,
         ctx: &ScraperCtx,

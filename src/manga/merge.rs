@@ -1,5 +1,5 @@
 use chrono::Utc;
-use log::{debug, info, warn};
+use tracing::{debug, info, info_span, warn, Instrument};
 use sqlx::SqlitePool;
 use thiserror::Error;
 use tokio::task::JoinSet;
@@ -33,6 +33,7 @@ pub struct ScanResult {
 
 /// Check only already-known providers for new chapters (skips provider search).
 /// Used for periodic/automatic checks once a manga has been scanned once.
+#[tracing::instrument(skip(pool, registry, ctx), fields(manga = %manga.metadata.title))]
 pub async fn check_new_chapters(
     pool: &SqlitePool,
     registry: &ProviderRegistry,
@@ -48,6 +49,7 @@ pub async fn check_new_chapters(
 /// 2. Scrape chapter lists for every cached provider URL.
 /// 3. Upsert new chapters (existing `Downloaded` chapters are untouched).
 /// 4. Recompute CanonicalChapters and update chapter_count/downloaded_count.
+#[tracing::instrument(skip(pool, registry, ctx), fields(manga = %manga.metadata.title))]
 pub async fn scan_manga(
     pool: &SqlitePool,
     registry: &ProviderRegistry,
@@ -113,37 +115,41 @@ pub async fn scan_manga(
         for provider in providers_to_search {
             let ctx = ctx.clone();
             let search_titles = search_titles.clone();
-            join_set.spawn(async move {
-                let mut results = Vec::new();
-                let mut last_error = None;
+            let span = info_span!("search_provider", provider = %provider.name());
+            join_set.spawn(
+                async move {
+                    let mut results = Vec::new();
+                    let mut last_error = None;
 
-                for title in &search_titles {
-                    match ctx.executor.search(&ctx, &provider, title).await {
-                        Ok(r) if !r.is_empty() => {
-                            let best = best_match(&search_titles, &r);
-                            if let Some((score, _)) = best {
-                                if score >= 0.85 {
-                                    results = r;
-                                    break;
+                    for title in &search_titles {
+                        match ctx.executor.search(&ctx, &provider, title).await {
+                            Ok(r) if !r.is_empty() => {
+                                let best = best_match(&search_titles, &r);
+                                if let Some((score, _)) = best {
+                                    if score >= 0.85 {
+                                        results = r;
+                                        break;
+                                    }
+                                    debug!(
+                                        "[scan] Search for '{}' on {} returned results but best score ({:.2}) below threshold, trying next synonym.",
+                                        title,
+                                        provider.name(),
+                                        score
+                                    );
                                 }
-                                debug!(
-                                    "[scan] Search for '{}' on {} returned results but best score ({:.2}) below threshold, trying next synonym.",
-                                    title,
-                                    provider.name(),
-                                    score
-                                );
+                            }
+                            Ok(_) => continue,
+                            Err(e) => {
+                                last_error = Some(e.to_string());
+                                break;
                             }
                         }
-                        Ok(_) => continue,
-                        Err(e) => {
-                            last_error = Some(e.to_string());
-                            break;
-                        }
                     }
-                }
 
-                (provider, results, last_error, search_titles)
-            });
+                    (provider, results, last_error, search_titles)
+                }
+                .instrument(span),
+            );
         }
 
         let mut completed = 0i64;
@@ -290,11 +296,15 @@ async fn scrape_chapters(
         };
 
         let ctx = ctx.clone();
-        join_set.spawn(async move {
-            let provider_url = entry.provider_url.clone().unwrap_or_default();
-            let result = ctx.executor.chapters(&ctx, &provider, &provider_url).await;
-            (entry, result)
-        });
+        let span = info_span!("scrape_chapters", provider = %entry.provider_name);
+        join_set.spawn(
+            async move {
+                let provider_url = entry.provider_url.clone().unwrap_or_default();
+                let result = ctx.executor.chapters(&ctx, &provider, &provider_url).await;
+                (entry, result)
+            }
+            .instrument(span),
+        );
     }
 
     let mut completed = 0i64;
@@ -373,6 +383,70 @@ fn best_match<'a>(
             (score, res)
         })
         .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scraper::ProviderSearchResult;
+
+    fn results(titles: &[&str]) -> Vec<ProviderSearchResult> {
+        titles
+            .iter()
+            .map(|t| ProviderSearchResult {
+                title: t.to_string(),
+                url: format!("https://example.com/{}", t.to_lowercase().replace(' ', "-")),
+                cover_url: None,
+            })
+            .collect()
+    }
+
+    fn titles(ts: &[&str]) -> Vec<String> {
+        ts.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn best_match_exact_returns_score_one() {
+        let r = results(&["Berserk"]);
+        let (score, matched) = best_match(&titles(&["Berserk"]), &r).unwrap();
+        assert!((score - 1.0).abs() < 1e-6);
+        assert_eq!(matched.title, "Berserk");
+    }
+
+    #[test]
+    fn best_match_picks_closest_title() {
+        let r = results(&["Berserk", "Bleach", "Naruto"]);
+        let (_, matched) = best_match(&titles(&["Berserk"]), &r).unwrap();
+        assert_eq!(matched.title, "Berserk");
+    }
+
+    #[test]
+    fn best_match_uses_best_synonym() {
+        // "Vinland Saga" is a synonym; provider title matches it better than "Vinland"
+        let r = results(&["Vinland Saga"]);
+        let (score, _) =
+            best_match(&titles(&["Vinland", "Vinland Saga"]), &r).unwrap();
+        assert!(score > 0.95);
+    }
+
+    #[test]
+    fn best_match_case_insensitive() {
+        let r = results(&["BERSERK"]);
+        let (score, _) = best_match(&titles(&["berserk"]), &r).unwrap();
+        assert!((score - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn best_match_empty_results_returns_none() {
+        assert!(best_match(&titles(&["Berserk"]), &[]).is_none());
+    }
+
+    #[test]
+    fn best_match_low_score_for_completely_different() {
+        let r = results(&["Fairy Tail"]);
+        let (score, _) = best_match(&titles(&["Berserk"]), &r).unwrap();
+        assert!(score < 0.7);
+    }
 }
 
 /// Enqueue DownloadChapter tasks for canonical chapters that were newly discovered.

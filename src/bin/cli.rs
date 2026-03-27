@@ -28,16 +28,18 @@
 /// TODO: We should also leave the default testing stuff here, so we can use this for cli-automated downloads, and developer testing of providers.
 use std::process;
 
-use log::info;
+use tracing::info;
 use rebarr::scraper::{ProviderRegistry, ScraperCtx, browser::BrowserPool, executor::ProviderExecutor};
 use strsim::jaro_winkler;
 
 #[tokio::main]
 async fn main() {
     // Allow extra debug with RUST_LOG=debug envvar
-    env_logger::builder()
-        .filter_level(log::LevelFilter::Info)
-        .parse_default_env()
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
         .init();
 
     // Handle args

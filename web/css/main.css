@@ -1607,11 +1607,10 @@ td .status-icon {
 }
 
 .series-cover {
-  flex-shrink: 0;
 }
 
 .series-cover img.cover-lg {
-  width: 100px;
+  width: 160px;
   height: auto;
   object-fit: cover;
   border-radius: var(--radius);
@@ -1757,7 +1756,7 @@ td .status-icon {
   }
   
   .series-cover img.cover-lg {
-    width: 120px;
+    width: 140px;
   }
   
   .series-meta {
@@ -2207,3 +2206,183 @@ nav.header-collapsed a {
   color: var(--text-muted);
   font-size: 0.8rem;
 }
+
+/* === Series page UX improvements === */
+
+/* Cover wrapper with hover overlay */
+.series-cover-wrapper {
+  position: relative;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+.cover-hover-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  cursor: default;
+}
+
+.series-cover-wrapper:hover .cover-hover-overlay {
+  opacity: 1;
+}
+
+.cover-action-btn {
+  background: rgba(255,255,255,0.12);
+  border: 1px solid rgba(255,255,255,0.25);
+  color: #fff;
+  border-radius: var(--radius);
+  padding: 0.3rem 0.6rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+
+.cover-action-btn:hover {
+  background: rgba(255,255,255,0.22);
+}
+
+/* Providers collapsible */
+.providers-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.providers-chevron-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 0.2rem;
+  border-radius: var(--radius);
+  display: inline-flex;
+  align-items: center;
+  transition: color var(--transition);
+}
+
+.providers-chevron-btn:hover { color: var(--accent); }
+
+.providers-chevron-btn.collapsed iconify-icon {
+  transform: rotate(-90deg);
+  transition: transform 0.3s ease;
+}
+
+.providers-collapsible {
+  overflow: hidden;
+  max-height: 2000px;
+  opacity: 1;
+  transition: max-height 0.3s ease, opacity 0.2s ease;
+}
+
+.providers-collapsible.collapsed {
+  max-height: 0;
+  opacity: 0;
+}
+
+/* Sticky mini-header */
+.series-mini-header {
+  position: fixed;
+  top: var(--nav-height, 50px);
+  left: 0;
+  right: 0;
+  z-index: 90;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  transform: translateY(-100%);
+  transition: transform 0.25s ease;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.4rem max(1rem, calc((100vw - 1200px) / 2 + 1rem));
+  box-sizing: border-box;
+}
+
+.series-mini-header.visible { transform: translateY(0); }
+
+.series-mini-header-cover {
+  width: 32px;
+  height: 32px;
+  object-fit: cover;
+  border-radius: var(--radius);
+  flex-shrink: 0;
+}
+
+.series-mini-header-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.series-mini-header-count {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* Floating bulk action bar */
+.bulk-action-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 200;
+  background: var(--bg-secondary);
+  border-top: 2px solid var(--accent);
+  box-shadow: 0 -2px 12px rgba(0,0,0,0.15);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 1rem;
+  transform: translateY(100%);
+  transition: transform 0.25s ease;
+}
+
+.bulk-action-bar.visible { transform: translateY(0); }
+
+.bulk-action-count {
+  font-weight: 600;
+  font-size: 0.9rem;
+  min-width: 9rem;
+}
+
+body.bulk-bar-active { padding-bottom: 60px; }
+
+/* Quick-download hover button on chapter rows */
+.ch-quick-dl {
+  opacity: 0;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: var(--radius);
+  padding: 0.2rem 0.4rem;
+  cursor: pointer;
+  font-size: 0.75rem;
+  transition: opacity var(--transition), background var(--transition);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  margin-right: 0.25rem;
+}
+
+.ch-row:hover .ch-quick-dl { opacity: 1; }
+.ch-quick-dl:hover { background: var(--accent-hover); }

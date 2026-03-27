@@ -2,7 +2,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use log::warn;
+use tracing::warn;
 use serde::Serialize;
 use sqlx::SqlitePool;
 use uuid::Uuid;

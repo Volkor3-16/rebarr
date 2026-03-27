@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use chrono::Utc;
-use log::{debug, trace, warn};
+use tracing::{debug, trace, warn};
 use rocket::{State, delete, get, http::Status, patch, post, serde::json::Json};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;

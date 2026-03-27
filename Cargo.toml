@@ -9,7 +9,8 @@ anilist_moe = "0.3.3"
 tokio = { version = "1.50.0", features = ["macros", "rt-multi-thread", "sync"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 log = "0.4.29"
-env_logger = "0.11.9"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = { version = "1.0.228", features = ["derive"] }
 uuid = { version = "1.22.0", features = ["serde", "v4", "v5"] }
 sqlx = { version = "0.7.4", features = ["migrate", "sqlite", "macros", "chrono"] }
@@ -30,3 +31,10 @@ zip = "8.2.0"
 humantime = "2"
 image = { version = "0.25.10", features = ["webp"] }
 base64 = "0.22.1"
+
+[dev-dependencies]
+tempfile = "3"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+reqwest = { version = "0.13", features = ["rustls"] }
+async-trait = "0.1"

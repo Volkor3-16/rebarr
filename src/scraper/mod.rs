@@ -6,7 +6,7 @@ pub mod error;
 pub mod executor;
 
 use async_trait::async_trait;
-use log::{info, warn};
+use tracing::{info, warn};
 use std::{path::PathBuf, sync::Arc};
 
 use browser::BrowserPool;
@@ -251,7 +251,6 @@ impl ProviderRegistry {
         self.providers.is_empty()
     }
 
-    #[cfg(test)]
     pub fn from_providers_for_tests(providers: Vec<Arc<dyn Provider>>) -> Self {
         Self { providers }
     }

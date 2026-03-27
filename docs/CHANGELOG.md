@@ -2,6 +2,20 @@
 
 This a informal changelog so i can keep track of what im doing.
 
+## 2026-03-27
+
+- Cover photo improvements
+    - Its a bit bigger (100px -> 160px)
+    - Its a bit better (hover over it to change it)
+    - We can handle manual series with no photo now
+- Provider list on the series is collapsible
+- Added a 'mini-header' that lets you download chapters without scrolling through the list too much
+- Added a 'mini-footer' that shows up when you select chapters with even more options
+- You can shift-click the chapter selection boxes!
+- Added a on row hover download button for chapters
+- Keyboard shortcuts! s to select hovered chapter, d to download, a to select all, and Escape to clear!
+
+
 ## 2026-03-26
 
 - Potentially better canonical chapter downloading. Maybe?

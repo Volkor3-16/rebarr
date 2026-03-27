@@ -7,7 +7,7 @@
 use std::io::{Cursor, Read, Write};
 use std::path::Path;
 
-use log::{info, warn};
+use tracing::{info, warn};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use dotenvy::dotenv;
-use log::{error, info, warn};
+use tracing::{error, info, warn};
 use rocket::fs::FileServer;
 
 mod api;
@@ -27,7 +27,9 @@ use crate::scraper::{
 #[rocket::main]
 async fn main() -> Result<(), rocket::Error> {
     dotenv().ok();
-    env_logger::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
 
     // Setup DB and API Client
     let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:rebarr.db".to_string());

@@ -1,13 +1,13 @@
 // This module handles all the core manga stuff
 
 /// Creation of ComicInfo.xml handler
-pub(crate) mod comicinfo;
+pub mod comicinfo;
 /// Download handler for cover images
-pub(crate) mod covers;
-pub(crate) mod files;
+pub mod covers;
+pub mod files;
 /// Core Manga Stuffs
-pub(crate) mod manga;
+pub mod manga;
 /// Merging provider-supplied chapter lists into a merged list for viewing
-pub(crate) mod merge;
+pub mod merge;
 /// Scoring provider chapters
-pub(crate) mod scoring;
+pub mod scoring;

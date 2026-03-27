@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use log::debug;
+use tracing::debug;
 use rocket::{State, delete, get, post, put, serde::json::Json};
 use serde::Deserialize;
 use sqlx::SqlitePool;

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anilist_moe::objects::media::Media;
 use chrono::{DateTime, Utc};
-use log::trace;
+use tracing::trace;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

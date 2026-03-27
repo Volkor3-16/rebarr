@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use log::{debug, error, info, warn};
+use tracing::{debug, error, info, warn};
 use sqlx::SqlitePool;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -205,6 +205,10 @@ async fn run_scheduler(pool: SqlitePool) {
 }
 
 /// This is where each task in the queue is processed.
+#[tracing::instrument(
+    skip(pool, registry, ctx, cancel_token),
+    fields(task_id = %task.id, task_type = ?task.task_type)
+)]
 async fn dispatch(
     pool: &SqlitePool,
     registry: &ProviderRegistry,

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 224">
+  <rect width="160" height="224" rx="6" fill="#3d3d45"/>
+  <rect x="0" y="0" width="22" height="224" rx="4" fill="#32323a"/>
+  <line x1="22" y1="0" x2="22" y2="224" stroke="#555" stroke-width="1"/>
+  <g transform="translate(80, 115)" fill="#7a7a88" opacity="0.8">
+    <path d="M-4,-32 C-4,-32 -28,-28 -36,-20 L-36,28 C-28,22 -4,20 -4,20 Z"/>
+    <path d="M4,-32 C4,-32 28,-28 36,-20 L36,28 C28,22 4,20 4,20 Z"/>
+    <rect x="-4" y="-32" width="8" height="52" rx="2"/>
+  </g>
+  <rect x="32" y="44" width="96" height="7" rx="3.5" fill="#55555f" opacity="0.7"/>
+  <rect x="44" y="57" width="72" height="5" rx="2.5" fill="#55555f" opacity="0.5"/>
+  <text x="80" y="192" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="11" fill="#8888a0" letter-spacing="0.5">NO COVER</text>
+</svg>

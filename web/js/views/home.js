@@ -73,7 +73,7 @@ function buildCards(mangas) {
     const title = m.metadata?.title ?? 'Unknown';
     const thumb = m.thumbnail_url
       ? `<img src="${escape(m.thumbnail_url)}" alt="${escape(title)}" loading="lazy">`
-      : `<div class="skeleton" style="aspect-ratio: 2/3"></div>`;
+      : `<img src="/web/img/no-cover.svg" alt="${escape(title)}" loading="lazy">`;
     return `<a class="manga-card" href="/series/${m.id}" data-path="/series/${m.id}">
       ${thumb}
       <div class="info">

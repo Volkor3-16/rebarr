@@ -1,5 +1,5 @@
 use chrono::Utc;
-use log::{info, warn};
+use tracing::{info, warn};
 use rocket::{State, delete, get, http::Status, post, serde::json::Json};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;

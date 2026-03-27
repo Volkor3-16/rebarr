@@ -1,5 +1,5 @@
 use chrono::{DateTime, TimeZone, Utc};
-use log::debug;
+use tracing::debug;
 use sqlx::SqlitePool;
 use uuid::Uuid;
 

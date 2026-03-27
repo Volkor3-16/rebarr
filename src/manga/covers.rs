@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use log::warn;
+use tracing::warn;
 use uuid::Uuid;
 
 /// Downloads the cover image at `url` and saves it as `cover.<ext>` inside
