@@ -2,10 +2,17 @@
 
 This a informal changelog so i can keep track of what im doing.
 
-## 2026-03-27
+## 2026-03-26
 
 - Potentially better canonical chapter downloading. Maybe?
 - Discord webhooks.... maybe?
+- Providers will automatically overwrite on each restart, **Additional** files won't be touched (remember: you can disable providers from the settings page)
+- There's a setting to automatically unmonitor series that get flagged as 'Completed' on anilist (when refreshing metadata)
+- Webhooks!
+    - For a basic 'DownloadChapter - Completed' discord hook: `{"embeds":[{"title":"{{task_type}} — {{status}}","description":"{{manga_title}} Ch.{{chapter_number_raw}}"}]}`
+    - werks for me
+- Add a message making promises I'm not sure I can keep (a comic reader frontend)
+- Fix weebdex scanlator group and released at time.
 
 ## 2026-03-25
 
