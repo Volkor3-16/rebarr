@@ -326,7 +326,7 @@ impl YamlProvider {
                                     .map(|t| t.elapsed() >= Duration::from_secs(2))
                                     .unwrap_or(true);
                                 if should_try_click {
-                                    if try_cf_checkbox_click(p, ctx.verbose).await {
+                                    if try_cf_checkbox_click(p).await {
                                         debug!(
                                             "Cloudflare checkbox click attempt triggered at {url}"
                                         );
@@ -389,13 +389,11 @@ impl YamlProvider {
                     for intercept in intercepts {
                         match poll_capture(p, &intercept.url_contains).await {
                             Some(body) => {
-                                if ctx.verbose {
-                                    eprintln!(
-                                        "[step] intercept captured {} bytes for '{}'",
-                                        body.len(),
-                                        intercept.url_contains
-                                    );
-                                }
+                                debug!(
+                                    "[step] intercept captured {} bytes for '{}'",
+                                    body.len(),
+                                    intercept.url_contains
+                                );
                                 let val = parse_capture_body(&body, intercept.json_path.as_deref());
                                 vars.insert(intercept.var.clone(), val);
                             }
@@ -404,12 +402,10 @@ impl YamlProvider {
                                     "provider '{}': intercept for '{}' timed out",
                                     self.def.name, intercept.url_contains
                                 );
-                                if ctx.verbose {
-                                    eprintln!(
-                                        "[step] intercept TIMEOUT for '{}'",
-                                        intercept.url_contains
-                                    );
-                                }
+                                debug!(
+                                    "[step] intercept TIMEOUT for '{}'",
+                                    intercept.url_contains
+                                );
                             }
                         }
                     }
@@ -417,20 +413,14 @@ impl YamlProvider {
 
                 StepDef::WaitFor { wait_for: selector } => {
                     let sel = self.expand(selector, &vars);
-                    if ctx.verbose {
-                        eprintln!("[step] wait_for → {sel}");
-                    }
+                    debug!("[step] wait_for → {sel}");
                     let p = require_page(&page, "wait_for")?;
                     match p.wait_for(&sel, 10_000).await {
                         Ok(_) => {
-                            if ctx.verbose {
-                                eprintln!("[step] wait_for '{sel}' → found");
-                            }
+                            debug!("[step] wait_for '{sel}' → found");
                         }
                         Err(e) => {
-                            if ctx.verbose {
-                                eprintln!("[step] wait_for '{sel}' → TIMEOUT");
-                            }
+                            debug!("[step] wait_for '{sel}' → TIMEOUT");
                             // Close the tab before returning — otherwise it stays open in Chrome.
                             if let Some(ref p) = page {
                                 let _ = browser.close_tab(p.target_id()).await;
@@ -442,9 +432,7 @@ impl YamlProvider {
 
                 StepDef::Click { click: selector } => {
                     let sel = self.expand(selector, &vars);
-                    if ctx.verbose {
-                        eprintln!("[step] click → {sel}");
-                    }
+                    debug!("[step] click → {sel}");
                     let p = require_page(&page, "click")?;
                     p.human_click(&sel)
                         .await
@@ -454,9 +442,7 @@ impl YamlProvider {
                 StepDef::Type { type_def } => {
                     let selector = self.expand(&type_def.selector, &vars);
                     let value = self.expand(&type_def.value, &vars);
-                    if ctx.verbose {
-                        eprintln!("[step] type → {selector}");
-                    }
+                    debug!("[step] type → {selector}");
                     let p = require_page(&page, "type")?;
                     p.human_type(&selector, &value)
                         .await
@@ -464,27 +450,21 @@ impl YamlProvider {
                 }
 
                 StepDef::Sleep { sleep: ms } => {
-                    if ctx.verbose {
-                        eprintln!("[step] sleep → {ms}ms");
-                    }
+                    debug!("[step] sleep → {ms}ms");
                     tokio::time::sleep(Duration::from_millis(*ms)).await;
                 }
 
                 StepDef::Script { script: js_tmpl } => {
                     let js = self.expand(js_tmpl, &vars);
-                    if ctx.verbose {
-                        let preview = &js[..js.len().min(80)];
-                        eprintln!("[step] script → {preview}…");
-                    }
+                    let preview = &js[..js.len().min(80)];
+                    debug!("[step] script → {preview}…");
                     let p = require_page(&page, "script")?;
                     let _ = p.execute(&js).await;
                 }
 
                 StepDef::ExtractJs { extract_js: def } => {
                     let script = self.expand(&def.script, &vars);
-                    if ctx.verbose {
-                        eprintln!("[step] extract_js → var={}", def.var);
-                    }
+                    debug!("[step] extract_js → var={}", def.var);
                     let p = require_page(&page, "extract_js")?;
                     match p.evaluate::<serde_json::Value>(&script).await {
                         Ok(v) => {
@@ -492,10 +472,8 @@ impl YamlProvider {
                                 serde_json::Value::String(s) => s,
                                 other => other.to_string(),
                             };
-                            if ctx.verbose {
-                                let preview = &s[..s.len().min(120)];
-                                eprintln!("[step] extract_js '{}' = {preview}", def.var);
-                            }
+                            let preview = &s[..s.len().min(120)];
+                            debug!("[step] extract_js '{}' = {preview}", def.var);
                             vars.insert(def.var.clone(), s);
                         }
                         Err(e) => {
@@ -503,9 +481,7 @@ impl YamlProvider {
                                 "provider '{}': extract_js '{}' failed: {e}",
                                 self.def.name, def.var
                             );
-                            if ctx.verbose {
-                                eprintln!("[step] extract_js '{}' → FAILED: {e}", def.var);
-                            }
+                            debug!("[step] extract_js '{}' → FAILED: {e}", def.var);
                         }
                     }
                 }
@@ -513,24 +489,20 @@ impl YamlProvider {
                 StepDef::Intercept {
                     intercept: intercept_def,
                 } => {
-                    if ctx.verbose {
-                        eprintln!(
-                            "[step] intercept → url_contains='{}', var='{}'",
-                            intercept_def.url_contains, intercept_def.var
-                        );
-                    }
+                    debug!(
+                        "[step] intercept → url_contains='{}', var='{}'",
+                        intercept_def.url_contains, intercept_def.var
+                    );
                     if let Some(ref p) = page {
                         // Page already open: inject immediately and poll.
                         inject_intercept(p, &intercept_def.url_contains).await;
                         match poll_capture(p, &intercept_def.url_contains).await {
                             Some(body) => {
-                                if ctx.verbose {
-                                    eprintln!(
-                                        "[step] intercept captured {} bytes for '{}'",
-                                        body.len(),
-                                        intercept_def.url_contains
-                                    );
-                                }
+                                debug!(
+                                    "[step] intercept captured {} bytes for '{}'",
+                                    body.len(),
+                                    intercept_def.url_contains
+                                );
                                 let val =
                                     parse_capture_body(&body, intercept_def.json_path.as_deref());
                                 vars.insert(intercept_def.var.clone(), val);
@@ -540,22 +512,18 @@ impl YamlProvider {
                                     "provider '{}': intercept for '{}' timed out",
                                     self.def.name, intercept_def.url_contains
                                 );
-                                if ctx.verbose {
-                                    eprintln!(
-                                        "[step] intercept TIMEOUT for '{}'",
-                                        intercept_def.url_contains
-                                    );
-                                }
+                                debug!(
+                                    "[step] intercept TIMEOUT for '{}'",
+                                    intercept_def.url_contains
+                                );
                             }
                         }
                     } else {
                         // No page yet: defer until the next `open`.
-                        if ctx.verbose {
-                            eprintln!(
-                                "[step] intercept deferred (no page yet) for '{}'",
-                                intercept_def.url_contains
-                            );
-                        }
+                        debug!(
+                            "[step] intercept deferred (no page yet) for '{}'",
+                            intercept_def.url_contains
+                        );
                         pending_intercepts.push(intercept_def.clone());
                     }
                 }
@@ -563,59 +531,51 @@ impl YamlProvider {
                 StepDef::Foreach {
                     foreach: foreach_def,
                 } => {
-                    if ctx.verbose {
-                        eprintln!("[step] foreach → selector='{}'", foreach_def.selector);
-                    }
+                    debug!("[step] foreach → selector='{}'", foreach_def.selector);
                     let p = require_page(&page, "foreach")?;
                     let html = p
                         .content()
                         .await
                         .map_err(|e| ScraperError::Browser(e.to_string()))?;
                     let stats = self.collect_foreach_results(&html, foreach_def, &mut results)?;
-                    if ctx.verbose {
-                        eprintln!(
-                            "[step] foreach → {} elements matched '{}'",
-                            stats.element_count, foreach_def.selector
-                        );
-                        for (field, ok, fail) in &stats.field_counts {
-                            eprintln!("         field '{field}': {ok} extracted, {fail} failed");
-                        }
-                        if let Some(ref first) = stats.first_record {
-                            eprintln!("         sample (first match):");
-                            let mut keys: Vec<&String> = first.keys().collect();
-                            keys.sort();
-                            for k in keys {
-                                let v = &first[k];
-                                let preview = &v[..v.len().min(100)];
-                                eprintln!("           {k} = {preview}");
-                            }
+                    debug!(
+                        "[step] foreach → {} elements matched '{}'",
+                        stats.element_count, foreach_def.selector
+                    );
+                    for (field, ok, fail) in &stats.field_counts {
+                        debug!("         field '{field}': {ok} extracted, {fail} failed");
+                    }
+                    if let Some(ref first) = stats.first_record {
+                        debug!("         sample (first match):");
+                        let mut keys: Vec<&String> = first.keys().collect();
+                        keys.sort();
+                        for k in keys {
+                            let v = &first[k];
+                            let preview = &v[..v.len().min(100)];
+                            debug!("           {k} = {preview}");
                         }
                     }
                 }
 
                 StepDef::Return { value: tmpl } => {
                     let val = self.expand(tmpl, &vars);
-                    if ctx.verbose {
-                        let count_hint = if val.starts_with('[') {
-                            serde_json::from_str::<serde_json::Value>(&val)
-                                .ok()
-                                .and_then(|v| v.as_array().map(|a| a.len()))
-                                .map(|n| format!(" ({n} URLs in array)"))
-                                .unwrap_or_default()
-                        } else {
-                            String::new()
-                        };
-                        let preview = &val[..val.len().min(120)];
-                        eprintln!("[step] return → {preview}{count_hint}");
-                    }
+                    let count_hint = if val.starts_with('[') {
+                        serde_json::from_str::<serde_json::Value>(&val)
+                            .ok()
+                            .and_then(|v| v.as_array().map(|a| a.len()))
+                            .map(|n| format!(" ({n} URLs in array)"))
+                            .unwrap_or_default()
+                    } else {
+                        String::new()
+                    };
+                    let preview = &val[..val.len().min(120)];
+                    debug!("[step] return → {preview}{count_hint}");
                     early_return = Some(val);
                     break;
                 }
 
                 StepDef::Scroll { scroll: target } => {
-                    if ctx.verbose {
-                        eprintln!("[step] scroll → {target}");
-                    }
+                    debug!("[step] scroll → {target}");
                     let p = require_page(&page, "scroll")?;
                     let js = if target == "bottom" {
                         "window.scrollTo(0, document.body.scrollHeight)".to_owned()
@@ -651,9 +611,7 @@ impl YamlProvider {
                                 ));
                             }
 
-                            if ctx.verbose {
-                                eprintln!("[step] fetch (page {current_page}) → url={url}");
-                            }
+                            debug!("[step] fetch (page {current_page}) → url={url}");
 
                             let method = fetch_def.method.to_uppercase();
 
@@ -747,23 +705,19 @@ impl YamlProvider {
                                         };
 
                                         if items.is_empty() {
-                                            if ctx.verbose {
-                                                eprintln!(
-                                                    "[step] fetch (page {current_page}) → empty response, stopping"
-                                                );
-                                            }
+                                            debug!(
+                                                "[step] fetch (page {current_page}) → empty response, stopping"
+                                            );
                                             break;
                                         }
 
                                         let items_count = items.len();
                                         all_items.extend(items);
 
-                                        if ctx.verbose {
-                                            eprintln!(
-                                                "[step] fetch (page {current_page}) → {items_count} items (total: {})",
-                                                all_items.len()
-                                            );
-                                        }
+                                        debug!(
+                                            "[step] fetch (page {current_page}) → {items_count} items (total: {})",
+                                            all_items.len()
+                                        );
                                     } else {
                                         warn!("[step] fetch response is not valid JSON");
                                         break;
@@ -777,11 +731,9 @@ impl YamlProvider {
 
                             // Check if we've reached the last page
                             if current_page >= last_page {
-                                if ctx.verbose {
-                                    eprintln!(
-                                        "[step] fetch → reached last page ({last_page}), stopping"
-                                    );
-                                }
+                                debug!(
+                                    "[step] fetch → reached last page ({last_page}), stopping"
+                                );
                                 break;
                             }
 
@@ -791,20 +743,16 @@ impl YamlProvider {
                         // Store accumulated results
                         let value =
                             serde_json::to_string(&all_items).unwrap_or_else(|_| "[]".to_string());
-                        if ctx.verbose {
-                            eprintln!(
-                                "[step] fetch pagination complete → {} total items stored in '{}'",
-                                all_items.len(),
-                                fetch_def.var
-                            );
-                        }
+                        debug!(
+                            "[step] fetch pagination complete → {} total items stored in '{}'",
+                            all_items.len(),
+                            fetch_def.var
+                        );
                         vars.insert(fetch_def.var.clone(), value);
                     } else {
                         // Non-paginated fetch (original behavior)
                         let url = self.expand(&fetch_def.url, &vars);
-                        if ctx.verbose {
-                            eprintln!("[step] fetch → url={url}");
-                        }
+                        debug!("[step] fetch → url={url}");
                         let method = fetch_def.method.to_uppercase();
 
                         // Build headers object
@@ -858,13 +806,11 @@ impl YamlProvider {
                                     } else {
                                         response
                                     };
-                                    if ctx.verbose {
-                                        let preview = &value[..value.len().min(120)];
-                                        eprintln!(
-                                            "[step] fetch stored in '{}': {}",
-                                            fetch_def.var, preview
-                                        );
-                                    }
+                                    let preview = &value[..value.len().min(120)];
+                                    debug!(
+                                        "[step] fetch stored in '{}': {}",
+                                        fetch_def.var, preview
+                                    );
                                     vars.insert(fetch_def.var.clone(), value);
                                 }
                             }
@@ -881,9 +827,7 @@ impl YamlProvider {
                     let p = require_page(&page, "graphql")?;
 
                     let url = self.expand(&graphql_def.url, &vars);
-                    if ctx.verbose {
-                        eprintln!("[step] graphql → url={url}");
-                    }
+                    debug!("[step] graphql → url={url}");
 
                     // Expand templates in variables, then serialize as JSON.
                     // JSON is valid JS syntax so we can inline it directly as a literal.
@@ -977,9 +921,7 @@ impl YamlProvider {
                 StepDef::FromJson {
                     from_json: from_json_def,
                 } => {
-                    if ctx.verbose {
-                        eprintln!("[step] from_json → var={}", from_json_def.var);
-                    }
+                    debug!("[step] from_json → var={}", from_json_def.var);
 
                     let json_str = vars.get(&from_json_def.var).ok_or_else(|| {
                         ScraperError::Parse(format!(
@@ -1002,21 +944,17 @@ impl YamlProvider {
                                 && !field_value.as_deref().unwrap_or("").is_empty();
                             // Skip record if filter condition matches
                             if filter.exists && has_field {
-                                if ctx.verbose {
-                                    eprintln!(
-                                        "[step] from_json → filtered out record with field '{}'",
-                                        filter.field
-                                    );
-                                }
+                                debug!(
+                                    "[step] from_json → filtered out record with field '{}'",
+                                    filter.field
+                                );
                                 continue;
                             }
                             if !filter.exists && !has_field {
-                                if ctx.verbose {
-                                    eprintln!(
-                                        "[step] from_json → filtered out record missing field '{}'",
-                                        filter.field
-                                    );
-                                }
+                                debug!(
+                                    "[step] from_json → filtered out record missing field '{}'",
+                                    filter.field
+                                );
                                 continue;
                             }
                         }
@@ -1062,17 +1000,13 @@ impl YamlProvider {
                         }
                     }
 
-                    if ctx.verbose {
-                        eprintln!("[step] from_json → {} records extracted", results.len());
-                    }
+                    debug!("[step] from_json → {} records extracted", results.len());
                 }
 
                 StepDef::FilterJson {
                     filter_json: filter_def,
                 } => {
-                    if ctx.verbose {
-                        eprintln!("[step] filter_json → var={}", filter_def.var);
-                    }
+                    debug!("[step] filter_json → var={}", filter_def.var);
 
                     let json_str = vars.get(&filter_def.var).ok_or_else(|| {
                         ScraperError::Parse(format!(
@@ -1103,13 +1037,11 @@ impl YamlProvider {
                     });
 
                     let filtered_count = original_count - json_array.len();
-                    if ctx.verbose {
-                        eprintln!(
-                            "[step] filter_json → removed {} records ({} remaining)",
-                            filtered_count,
-                            json_array.len()
-                        );
-                    }
+                    debug!(
+                        "[step] filter_json → removed {} records ({} remaining)",
+                        filtered_count,
+                        json_array.len()
+                    );
 
                     // Store filtered array back
                     let value = serde_json::to_string(&json_array)
@@ -1546,7 +1478,7 @@ fn is_cf_challenge(html: &str) -> bool {
 /// Attempt to click likely Cloudflare challenge controls (checkbox/turnstile widgets).
 ///
 /// Returns true if a click attempt was dispatched.
-async fn try_cf_checkbox_click(page: &eoka::Page, verbose: bool) -> bool {
+async fn try_cf_checkbox_click(page: &eoka::Page) -> bool {
     // First try direct DOM selectors that might exist in same-origin challenge pages.
     let click_selectors = [
         "input[type='checkbox']",
@@ -1560,9 +1492,7 @@ async fn try_cf_checkbox_click(page: &eoka::Page, verbose: bool) -> bool {
 
     for sel in click_selectors {
         if page.human_click(sel).await.is_ok() {
-            if verbose {
-                eprintln!("[cf] clicked selector '{sel}'");
-            }
+            debug!("[cf] clicked selector '{sel}'");
             return true;
         }
     }
@@ -1604,9 +1534,7 @@ async fn try_cf_checkbox_click(page: &eoka::Page, verbose: bool) -> bool {
 
     match page.evaluate::<bool>(js).await {
         Ok(true) => {
-            if verbose {
-                eprintln!("[cf] clicked via JS fallback");
-            }
+            debug!("[cf] clicked via JS fallback");
             true
         }
         _ => false,

@@ -28,7 +28,7 @@
 /// TODO: We should also leave the default testing stuff here, so we can use this for cli-automated downloads, and developer testing of providers.
 use std::process;
 
-use tracing::info;
+use tracing::{error, info};
 use rebarr::scraper::{ProviderRegistry, ScraperCtx, browser::BrowserPool, executor::ProviderExecutor};
 use strsim::jaro_winkler;
 
@@ -57,7 +57,7 @@ async fn main() {
             "-p" | "--provider" => {
                 i += 1;
                 provider_name = Some(args.get(i).cloned().unwrap_or_else(|| {
-                    eprintln!("--provider requires an argument");
+                    error!("--provider requires an argument");
                     process::exit(1);
                 }));
             }
@@ -74,8 +74,8 @@ async fn main() {
                 keep_open = true;
             }
             flag if flag.starts_with('-') => {
-                eprintln!("Unknown flag: {flag}");
-                eprintln!("Usage: scraper_test [-p <provider>] [-d] [-H] [-V] [-k] <query>");
+                error!("Unknown flag: {flag}");
+                error!("Usage: scraper_test [-p <provider>] [-d] [-H] [-V] [-k] <query>");
                 process::exit(1);
             }
             _ => {
@@ -87,8 +87,8 @@ async fn main() {
 
     // If theres no args or anything, tell the idiot how to use the cli.
     let query = query.unwrap_or_else(|| {
-        eprintln!("Usage: scraper_test [-p <provider>] [-d] [-H] <query>");
-        eprintln!("Example: cargo run --bin scraper_test -- -p MangaFire \"berserk\"");
+        error!("Usage: scraper_test [-p <provider>] [-d] [-H] <query>");
+        error!("Example: cargo run --bin scraper_test -- -p MangaFire \"berserk\"");
         process::exit(1);
     });
 
@@ -107,12 +107,12 @@ async fn main() {
     // Load providers from disk
     info!("Loading providers...");
     let registry = ProviderRegistry::load().await.unwrap_or_else(|e| {
-        eprintln!("Failed to load providers: {e}");
+        error!("Failed to load providers: {e}");
         process::exit(1);
     });
 
     if registry.is_empty() {
-        eprintln!("No providers loaded. Make sure ./providers/ contains YAML files.");
+        error!("No providers loaded. Make sure ./providers/ contains YAML files.");
         process::exit(1);
     }
 
@@ -135,12 +135,12 @@ async fn main() {
         all.into_iter()
             .find(|p| p.name().eq_ignore_ascii_case(name))
             .unwrap_or_else(|| {
-                eprintln!("Provider {name:?} not found. Check the name above.");
+                error!("Provider {name:?} not found. Check the name above.");
                 process::exit(1);
             })
     } else {
         all.into_iter().next().unwrap_or_else(|| {
-            eprintln!("No providers available.");
+            error!("No providers available.");
             process::exit(1);
         })
     };
@@ -150,12 +150,12 @@ async fn main() {
     // Search for the user-entered query
     info!("Searching {:?} for {query:?}...", provider.name());
     let results = provider.search(&ctx, &query).await.unwrap_or_else(|e| {
-        eprintln!("Search failed: {e}");
+        error!("Search failed: {e}");
         process::exit(1);
     });
 
     if results.is_empty() {
-        eprintln!("No results found for {query:?}");
+        error!("No results found for {query:?}");
         process::exit(1);
     }
 
@@ -213,12 +213,12 @@ async fn main() {
         .chapters(&ctx, &manga.url)
         .await
         .unwrap_or_else(|e| {
-            eprintln!("chapters() failed: {e}");
+            error!("chapters() failed: {e}");
             process::exit(1);
         });
 
     if chapters.is_empty() {
-        eprintln!(
+        error!(
             "No chapters found for this manga. It may only have official publisher chapters or no translated content."
         );
         process::exit(1);
@@ -250,7 +250,7 @@ async fn main() {
     // By default we only test the first chapter in the chapter list.
     let ch1 = &chapters[0];
     let chapter_url = ch1.url.as_ref().unwrap_or_else(|| {
-        eprintln!("Chapter {} has no URL", ch1.number);
+        error!("Chapter {} has no URL", ch1.number);
         process::exit(1);
     });
 
@@ -258,7 +258,7 @@ async fn main() {
     info!("Calling pages() with URL: {chapter_url}");
 
     let pages = provider.pages(&ctx, chapter_url).await.unwrap_or_else(|e| {
-        eprintln!("pages() failed: {e}");
+        error!("pages() failed: {e}");
         process::exit(1);
     });
 
@@ -271,7 +271,7 @@ async fn main() {
     }
 
     if pages.is_empty() {
-        eprintln!("No pages found — check the 'pages' extract config in the provider YAML");
+        error!("No pages found — check the 'pages' extract config in the provider YAML");
         process::exit(1);
     }
 
@@ -309,7 +309,7 @@ async fn main() {
     )
     .await
     .unwrap_or_else(|e| {
-        eprintln!("Download failed: {e}");
+        error!("Download failed: {e}");
         process::exit(1);
     });
 

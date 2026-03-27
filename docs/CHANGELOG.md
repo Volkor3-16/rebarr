@@ -14,7 +14,7 @@ This a informal changelog so i can keep track of what im doing.
 - You can shift-click the chapter selection boxes!
 - Added a on row hover download button for chapters
 - Keyboard shortcuts! s to select hovered chapter, d to download, a to select all, and Escape to clear!
-
+- Added a shitload of tests and fix up every warning from clippy!
 
 ## 2026-03-26
 
