@@ -239,14 +239,15 @@ async function init() {
   initRouter();
 
   // Show first-run wizard if setup has not been completed.
-  // The wizard renders as a full-screen overlay above the initial route.
+  // Navigate to /setup so the URL reflects the wizard state.
   try {
     const appSettings = await settings.get();
     if (!appSettings.wizard_completed) {
+      navigate('/setup');
       await new Promise(resolve => {
         showWizard((goImport) => {
+          navigate(goImport ? '/import' : '/');
           resolve();
-          if (goImport) navigate('/import');
         });
       });
     }

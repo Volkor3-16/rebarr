@@ -1,6 +1,15 @@
 # Changelog
 
 This a informal changelog so i can keep track of what im doing.
+## 2026-03-29
+
+- Setup Wizard has been reworked
+    - `/setup` url
+    - uses at least slightly more daisyui/tailwind stuff
+    - You can now import your existing series
+        - We (both of us) will match and copy over the manga to your new library
+    - uhh idk bugs?
+
 
 ## 2026-03-27
 
@@ -15,6 +24,7 @@ This a informal changelog so i can keep track of what im doing.
 - Added a on row hover download button for chapters
 - Keyboard shortcuts! s to select hovered chapter, d to download, a to select all, and Escape to clear!
 - Added a shitload of tests and fix up every warning from clippy!
+- Dumb and stupid (but automatic) clownflare bypass.
 
 ## 2026-03-26
 

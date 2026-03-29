@@ -10,7 +10,8 @@ use uuid::Uuid;
 
 use crate::db::task::TaskType;
 use crate::db::{library as db_library, manga as db_manga, task as db_task};
-use crate::manga::comicinfo;
+use crate::http::anilist::ALClient;
+use crate::manga::{comicinfo, covers, files};
 use crate::manga::core::{Chapter, DownloadStatus, Manga};
 
 // ---------------------------------------------------------------------------
@@ -89,7 +90,209 @@ pub struct ImportSummary {
 }
 
 // ---------------------------------------------------------------------------
-// Scan
+// Series import types
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub struct FolderEntry {
+    pub folder_name: String,
+    pub folder_path: String,
+    pub cbz_count: u32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConfirmedSeriesImport {
+    /// Carried for error messages only — never written to DB.
+    pub folder_path: String,
+    pub anilist_id: i32,
+    pub library_id: String,
+    pub relative_path: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SeriesImportSummary {
+    pub added: u32,
+    pub skipped_duplicates: u32,
+    pub errors: Vec<String>,
+    /// UUIDs of newly-created manga entries.
+    pub manga_ids: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Series-level scan and import
+// ---------------------------------------------------------------------------
+
+/// List immediate subdirectories of `dir` as series candidates.
+/// Skips hidden directories (names starting with `.`).
+/// Returns entries sorted alphabetically by folder_name.
+pub async fn scan_series_dir(dir: PathBuf) -> Result<Vec<FolderEntry>, String> {
+    tokio::task::spawn_blocking(move || {
+        let mut entries = Vec::new();
+        for item in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
+            let item = item.map_err(|e| e.to_string())?;
+            let path = item.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let folder_name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+            if folder_name.is_empty() || folder_name.starts_with('.') {
+                continue;
+            }
+            let cbz_count = count_cbz_shallow(&path);
+            entries.push(FolderEntry {
+                folder_name,
+                folder_path: path.to_string_lossy().into_owned(),
+                cbz_count,
+            });
+        }
+        entries.sort_by(|a, b| a.folder_name.cmp(&b.folder_name));
+        Ok(entries)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn count_cbz_shallow(dir: &Path) -> u32 {
+    std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .filter(|e| {
+                    e.path()
+                        .extension()
+                        .and_then(|x| x.to_str())
+                        .map(|x| x.eq_ignore_ascii_case("cbz"))
+                        .unwrap_or(false)
+                })
+                .count() as u32
+        })
+        .unwrap_or(0)
+}
+
+/// Bulk-create manga entries from confirmed series matches.
+/// Always enqueues `ScanDisk` for each added manga.
+/// Optionally enqueues `BuildFullChapterList` when `queue_chapter_scan` is true.
+pub async fn execute_series_imports(
+    imports: Vec<ConfirmedSeriesImport>,
+    pool: &SqlitePool,
+    al_client: &ALClient,
+    http_client: &reqwest::Client,
+    queue_chapter_scan: bool,
+) -> SeriesImportSummary {
+    let mut added = 0u32;
+    let mut skipped_duplicates = 0u32;
+    let mut errors = Vec::new();
+    let mut manga_ids = Vec::new();
+
+    for imp in imports {
+        let library_id = match Uuid::parse_str(&imp.library_id) {
+            Ok(id) => id,
+            Err(e) => {
+                errors.push(format!("{}: invalid library_id: {e}", imp.folder_path));
+                continue;
+            }
+        };
+
+        let al_id_u32 = imp.anilist_id as u32;
+
+        // Duplicate check by anilist_id in this library
+        match db_manga::exists_by_external_ids(pool, library_id, Some(al_id_u32), None).await {
+            Ok(Some(_)) => {
+                skipped_duplicates += 1;
+                continue;
+            }
+            Err(e) => {
+                errors.push(format!(
+                    "{}: DB error checking duplicates: {e}",
+                    imp.folder_path
+                ));
+                continue;
+            }
+            Ok(None) => {}
+        }
+
+        // Fetch fresh metadata from AniList
+        let mut manga = match al_client.grab_manga(imp.anilist_id).await {
+            Ok(m) => m,
+            Err(e) => {
+                errors.push(format!("{}: AniList fetch failed: {e}", imp.folder_path));
+                continue;
+            }
+        };
+
+        // Apply library and path overrides
+        manga.id = db_manga::manga_uuid(al_id_u32);
+        manga.library_id = library_id;
+        manga.relative_path = std::path::PathBuf::from(imp.relative_path.trim());
+        manga.created_at = Utc::now().timestamp();
+        manga.metadata_updated_at = Utc::now().timestamp();
+
+        // Load library for cover download path
+        let library = match db_library::get_by_id(pool, library_id).await {
+            Ok(Some(l)) => l,
+            Ok(None) => {
+                errors.push(format!("{}: library not found", imp.folder_path));
+                continue;
+            }
+            Err(e) => {
+                errors.push(format!(
+                    "{}: DB error fetching library: {e}",
+                    imp.folder_path
+                ));
+                continue;
+            }
+        };
+
+        // Download cover (non-fatal: fall back to original URL)
+        if let Some(url) = manga.thumbnail_url.take() {
+            let series_dir = files::series_dir(&library.root_path, &manga);
+            manga.thumbnail_url = covers::download_cover(http_client, &url, manga.id, &series_dir)
+                .await
+                .or(Some(url));
+        }
+
+        // Insert manga into DB
+        if let Err(e) = db_manga::insert(pool, &manga).await {
+            errors.push(format!("{}: DB insert failed: {e}", imp.folder_path));
+            continue;
+        }
+
+        // Write series-level ComicInfo.xml (non-fatal)
+        let series_dir = files::series_dir(&library.root_path, &manga);
+        if let Err(e) = comicinfo::write_series_comicinfo(&series_dir, &manga).await {
+            warn!(
+                "[series-import] Failed to write ComicInfo.xml for '{}': {e}",
+                manga.metadata.title
+            );
+        }
+
+        // Always enqueue ScanDisk to pick up existing CBZ files
+        let _ = db_task::enqueue(pool, TaskType::ScanDisk, Some(manga.id), None, 5).await;
+
+        // Optionally enqueue full chapter list build
+        if queue_chapter_scan {
+            let _ =
+                db_task::enqueue(pool, TaskType::BuildFullChapterList, Some(manga.id), None, 5)
+                    .await;
+        }
+
+        manga_ids.push(manga.id.to_string());
+        added += 1;
+    }
+
+    SeriesImportSummary {
+        added,
+        skipped_duplicates,
+        errors,
+        manga_ids,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Chapter-level scan
 // ---------------------------------------------------------------------------
 
 pub async fn scan_directory(

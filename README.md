@@ -2,7 +2,7 @@
 
 WARNING: This is a massively WIP project. Shit will break, the UX will change massively, blah blah no warranties and such.
 
-Rebarr is a sonarr-like manager and scraper for manga and comics.
+Rebarr is a sonarr-like manager and scraper for manga and comics*.
 
 I never liked how **all** the other manga scrapers work. All that I tried use the scraped site as the authoritative source for metadata. To me, this seems very fragile and relies on awfully designed and maintained manga piracy sites.
 In constrast, rebarr uses Anilist and a very fancy (overdesigned) matching system to search and download only the best copies of a chapter over multiple sites.
@@ -11,11 +11,50 @@ In constrast, rebarr uses Anilist and a very fancy (overdesigned) matching syste
 
 I'll remove this when I've got the first public release out, this is just a quick reference for me to see what I need to work on.
 
-### Backend
+- [ ] New Start Wizard should dim the rest of the page, the next button is awfully bad and hard to see. (also put it inside the fucken popup window, why's it just awkardly sitting below it?)
+- [ ] More providers - 20+ is my goal.. lets see lmfao
+- [ ] Maybe have each chromium worker in a window,  grid view type shit? sure i made it work fairly nice but ehhhhh i mean does it count unless you can actually SEE it like a stupid little monkey boy????? huh??
+- [ ] Also give me a better 'importer'
+    - without touching anything:
+        - scan dir, pick up folder names of series -> scan anilist one by one (bulk query? rate limit?)
+        - if bad match have a "manual match" button
+        - if duplicate, flag and use on import step; thanks suwayomi for renaming shit based on changing metadata and not static. >:( 
+        - When all have a match, button to add to library
+        - Import existing chapters on disk -> one by one, show and ask for confirmation of each series.
+        - Estimate and show buildinitialchapterlist on library total, show load% and time
+        - Ask to queue up a full library scan on all providers (ensure nothing can touch the library)
+        - wait
+        - ask to update each library!
+        - enjoy!
+    - this would be a fucking insanely helpful real-world stress test (with my very legal 400gb/22k chapters of manga)
+- [ ] Count cloudflare errors and log them -> enough of them and we have longer and longer cooldowns and rate limits / just disable provider completely?
+- [ ] Honestly same with any provider.. Should have a failed provider list, and their errors. -> optional report bug button???
+- [ ] idk but I wanna see the timings of each search task -> actually see with my own eyes the critical path
+- [ ] Include the downloaded_at in task queue page and series list (hover over filesize?)
+- [ ] Switch between current download mode (only select the best release) and MUST HAVE download mode (pick the best, fallback to 2nd on failure)
+- [ ] Does DownloadChapter work in parallel? I know in one task it does, but does a group of DownloadChapter's from 2 providers run at once, or one after? 
+- [ ] Is there a way we can have maybe, idk, checknewchapter tasks work 
+- [ ] Visual Task Queue
+    - Group by 'provider', show task order for them
+        - Sub-Tasks, for the 'checknewchapter' checking `n` providers separately, 
+    - im a baby boy who needs a baby ui to make sure my code works
+- [ ] Chapter duplicates functionally work but aren't showing in the ui (only way to know is after importing 2 of the same series)
+- [ ] Is there a rate limit for anilist api?
+    - 90 requests/sec on their end
+    - They use `Retry-After`, `X-RateLimit-Reset`, `X-RateLimit-Remaining`, and `X-RateLimit-Limit`
+    - Does anilist_moe follow it?
+    - Either way, we should use the same rate limit system as providers, but much faster
+    - https://docs.rs/governor/latest/governor/
+- Are page downloads the most request friendly they could be?
+    - is scraping?
+    - We don't want to impact manga sites.
+- Update frontend to use daisyui components as much as possible https://daisyui.com/components/
+
 
 ### Providers
 
 - Providers steps shouldn't need a random ass `- open` and then hit another endpoint why have the open step at all?
+    - I tried an AI Slop version of this, didn't work correctly, will re-look properly later. this breaks js scripts that need the page open
 - [ ] Get Mangago working
 - [ ] Get MangaHub working (no chapters returned)
 
@@ -31,13 +70,7 @@ I'll remove this when I've got the first public release out, this is just a quic
 - CLI tool for testing and debugging providers without touching the database — search, list chapters, download pages, run regression tests against fixture files.
 - REST API, so someone with a workable knowledge of frontend design can implement their own (PRs welcome!)
 
-#### Extended ComicInfo.xml Support
-
-- [ ] Add a new task to 'Fix metadata/comicinfo', which goes through all files in all libraries and checks the comicinfo, updating them when needed?
-
-### Maximum Viable Release (in order of importance)
-
-This is in addition to the above.
+### Later?
 
 - [ ] Metadata API
     - [ ] MyAnimeList Support (mal_api crate works)
@@ -46,29 +79,18 @@ This is in addition to the above.
 - [ ] Storage Backends
     - [ ] S3 Storage?
     - [ ] IPFS/decentralised 'provider'
-- [ ] A nice looking webui
-    - [ ] Basic Auth
-    - [ ] oauth/oidc/whatever fancy system (would link with komga emulation)
-    - [ ] egui frontend, bundled and compiled into wasm, along with a native desktop app.
-        - [ ] Chapter reader
-            - is there a cbz viewer for egui? (nope lol)
-            - gonna have to make one ourselves
-        - steal all the hard work i did for mash/yams
+- [ ] a frontend that isn't ai slop
 - [ ] Import workflows
     - [ ] Losslessly convert pages to webp/whatever (uses https://lib.rs/crates/compress_comics)
     - [ ] Detect watermarks (and remove them?)
     - [ ] Detect Low Quality images
     - [ ] Detect and remove scanlator pages where they have 4 pages of random fucking memes seriously just have one at most.
 - [ ] Work with non-manga comics?
-- [ ] Komga server 'emulation' (I just wanna read isekai-slop on my phone w/Mihon)
-    - [ ] User system
-    - [ ] read-list
-    - [ ] Scrobbling to mal? (do we need this? most programs already have some form of support... BUT this would be better since automatic matching with mal ids we already use)
-- [ ] Notification System
-    - Webhooks on events
-        - Download completed
-        - Download failures
-        - Other problems
+- [ ] Komga server 'emulation' (I just wanna read isekai-slop on my phone w/Mihon without running extra software)
+    - [ ] User system because komga uses it
+        - username can store read history 
+            - password is just a key to hand out?
+    - [ ] Scrobbling to mal/anilist???
 - [ ] Metrics (because i love grafana graphs)
 - [ ] Suggestion system
     - Saves suggestions from anilist for each series in library
@@ -133,4 +155,5 @@ Global flags (`-V` visible browser, `-k` keep open, `-H` dump HTML) go before th
 ## Thanks
 
 - domacikolaci, with his nice Claude subscription that made this project so much easier.
+- Dr. Scrotus, for testing the early builds and a few good ideas :)
 - Kakao Entertainment (Thanks for being so shit I made this out of spite.)

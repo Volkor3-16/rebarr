@@ -121,6 +121,8 @@ export const system = {
 export const importApi = {
   scan: (source_dir) => post('/api/import/scan', { source_dir }),
   execute: (imports) => post('/api/import/execute', { imports }),
+  seriesScan: (source_dir) => post('/api/import/series-scan', { source_dir }),
+  seriesExecute: (data) => post('/api/import/series-execute', data),
 };
 
 // Cover API
