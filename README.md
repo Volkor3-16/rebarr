@@ -11,7 +11,11 @@ In constrast, rebarr uses Anilist and a very fancy (overdesigned) matching syste
 
 I'll remove this when I've got the first public release out, this is just a quick reference for me to see what I need to work on.
 
-- [ ] More providers - 20+ is my goal.. lets see lmfao
+- [ ] Provider repo download system
+    - Don't include providers in the system by default (stock rebarr should only work for local management)
+    - During setup wizard, ask the user to paste in a repo (or multiple)
+    - Automatic updates and all that nice stuff
+    - Add more providers
 - [ ] Maybe have each chromium worker in a window, grid view type shit? sure i made it work fairly nice but ehhhhh i mean does it count unless you can actually SEE it like a stupid little monkey boy????? huh??
 - [ ] Count cloudflare errors and log them -> enough of them and we have longer and longer cooldowns and rate limits / just disable provider completely?
 - [ ] Honestly same with any provider.. Should have a failed provider list, and their errors. -> optional report bug button???
@@ -33,7 +37,6 @@ I'll remove this when I've got the first public release out, this is just a quic
     - is scraping?
     - We don't want to impact manga sites with hundreds of instances of rebarr searching 24/7 in the most bullshit inefficient way
 - Update frontend to use daisyui components as much as possible https://daisyui.com/components/
-- [ ] Chapters start downloading automatically after a initial build chapter list... why?. We have local ones and even if they're not canonicial, we shouldn't automatically override them.
 - [ ] Providers `default_score` doesn't actually get used anywhere.
     - We should make it be nice, where it shows the defaults as a greyed out 'default' and allow overriding like normal either globally or per series.
 

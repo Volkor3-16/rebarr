@@ -105,7 +105,7 @@ async fn build_chapter_list(pool: &SqlitePool, manga_id: Uuid) -> ApiResult<Vec<
         .into_iter()
         .map(|ch| {
             let is_canonical = canonical_uuids.contains(&ch.id.to_string());
-            let tier = scoring::compute_tier(ch.scanlator_group.as_deref(), &trusted);
+            let tier = scoring::compute_tier(ch.scanlator_group.as_deref(), &trusted, ch.provider_name.as_deref());
             ChapterListItem {
                 id: ch.id.to_string(),
                 manga_id: ch.manga_id.to_string(),

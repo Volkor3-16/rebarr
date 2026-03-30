@@ -298,3 +298,97 @@ async fn canonical_chapter_download_queueing_three_scans() {
         "scan 3: TrustedGroup must remain canonical for ch6"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Local provider test
+// ---------------------------------------------------------------------------
+
+/// Test that "Local" provider chapters always win as canonical regardless of
+/// scanlator group or provider scores.
+///
+/// Scenario:
+///   ProviderA (trusted group, tier 2, score 100): chapters 1-3
+///   Local provider (imported chapters): chapters 1-3
+///
+/// After canonical scoring: all chapters should be won by Local provider (tier 0).
+#[tokio::test]
+async fn local_provider_wins_canonical_over_all_others() {
+    let pool = test_db().await;
+    let manga = setup_manga(&pool).await;
+
+    // Register "TrustedGroup" so ProviderA's chapters get tier 2
+    db_provider::add_trusted_group(&pool, "TrustedGroup")
+        .await
+        .unwrap();
+
+    // Scan 1: ProviderA has chapters 1-3
+    let a_chapters = vec![
+        ch_group("1", "TrustedGroup"),
+        ch_group("2", "TrustedGroup"),
+        ch_group("3", "TrustedGroup"),
+    ];
+    let b_chapters: Vec<helpers::static_provider::StaticChapter> = vec![]; // No Local provider in scan
+
+    let registry = make_registry(a_chapters, b_chapters);
+    let ctx = test_ctx(&registry);
+    merge::scan_manga(&pool, &registry, &ctx, &manga, Uuid::new_v4())
+        .await
+        .expect("scan 1 failed");
+
+    // Canonical should be ProviderA's chapters (tier 2)
+    let canonical = db_chapter::get_canonical_for_manga(&pool, manga.id).await.unwrap();
+    assert_eq!(canonical.len(), 3, "scan 1: 3 canonical chapters");
+    assert!(
+        canonical.iter().all(|c| c.scanlator_group.as_deref() == Some("TrustedGroup")),
+        "scan 1: TrustedGroup should win canonical for all chapters"
+    );
+
+    // Now manually insert Local provider chapters (simulating import)
+    for base in 1..=3 {
+        let chapter = rebarr::manga::core::Chapter {
+            id: Uuid::new_v4(),
+            manga_id: manga.id,
+            chapter_base: base,
+            chapter_variant: 0,
+            is_extra: false,
+            title: Some(format!("Chapter {base}")),
+            language: "EN".to_string(),
+            scanlator_group: Some("LocalGroup".to_string()), // Unknown group, would be tier 3
+            provider_name: Some("Local".to_string()),        // But Local provider = tier 0
+            chapter_url: None,
+            download_status: rebarr::manga::core::DownloadStatus::Downloaded,
+            released_at: None,
+            downloaded_at: Some(chrono::Utc::now()),
+            scraped_at: None,
+            file_size_bytes: Some(1024),
+        };
+        db_chapter::insert(&pool, &chapter).await.unwrap();
+    }
+
+    // Recompute canonical
+    let yaml_defaults = std::collections::HashMap::new();
+    let provider_scores = rebarr::db::provider_scores::load_effective_scores(&pool, manga.id, &yaml_defaults)
+        .await
+        .unwrap();
+    db_chapter::update_canonical(
+        &pool,
+        manga.id,
+        &["TrustedGroup".to_string()],
+        "en",
+        &provider_scores,
+    )
+    .await
+    .unwrap();
+
+    // Canonical should now be Local provider chapters (tier 0 beats tier 2)
+    let canonical_after = db_chapter::get_canonical_for_manga(&pool, manga.id).await.unwrap();
+    assert_eq!(canonical_after.len(), 3, "after import: 3 canonical chapters");
+    assert!(
+        canonical_after.iter().all(|c| c.provider_name.as_deref() == Some("Local")),
+        "after import: Local provider must win canonical for all chapters"
+    );
+    assert!(
+        canonical_after.iter().all(|c| c.download_status == rebarr::manga::core::DownloadStatus::Downloaded),
+        "after import: canonical chapters should be the Downloaded Local ones"
+    );
+}

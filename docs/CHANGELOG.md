@@ -9,6 +9,7 @@ This a informal changelog so i can keep track of what im doing.
     - uses at least slightly more daisyui/tailwind stuff
     - You can now import your existing series
         - We (you and the server) will match and copy over the manga to your new library
+- Local (Manually imported) chapters are now 'tier 0', so they won't be automatically replaced when you search all providers.
 
 ## 2026-03-27
 

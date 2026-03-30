@@ -35,12 +35,22 @@ pub fn rank_entries(
         }
     }
 
-    entries.sort_by_key(|e| compute_tier(e.scanlator_group.as_deref(), trusted_groups));
+    entries.sort_by_key(|e| compute_tier(e.scanlator_group.as_deref(), trusted_groups, e.provider_name.as_deref()));
     entries
 }
 
 /// Calculates the tier for a chapter based on the scanlator group name.
-pub fn compute_tier(group: Option<&str>, trusted: &[String]) -> u8 {
+/// Tier 0 = Local provider (always preferred).
+/// Tier 1 = Official Publisher releases.
+/// Tier 2 = Trusted scanlator groups.
+/// Tier 3 = Unknown scanlator groups.
+/// Tier 4 = No scanlator group.
+pub fn compute_tier(group: Option<&str>, trusted: &[String], provider_name: Option<&str>) -> u8 {
+    // Local provider always wins — manually imported chapters should not be
+    // overridden by any scraped source.
+    if provider_name == Some("Local") {
+        return 0;
+    }
     match group {
         None | Some("") => 4,
         Some(g) => {
@@ -90,44 +100,52 @@ mod tests {
 
     #[test]
     fn tier_none_group_is_four() {
-        assert_eq!(compute_tier(None, &[]), 4);
+        assert_eq!(compute_tier(None, &[], None), 4);
     }
 
     #[test]
     fn tier_empty_string_is_four() {
-        assert_eq!(compute_tier(Some(""), &[]), 4);
+        assert_eq!(compute_tier(Some(""), &[], None), 4);
     }
 
     #[test]
     fn tier_official_is_one() {
-        assert_eq!(compute_tier(Some("Official"), &[]), 1);
+        assert_eq!(compute_tier(Some("Official"), &[], None), 1);
         // Case-insensitive
-        assert_eq!(compute_tier(Some("OFFICIAL"), &[]), 1);
-        assert_eq!(compute_tier(Some("official"), &[]), 1);
+        assert_eq!(compute_tier(Some("OFFICIAL"), &[], None), 1);
+        assert_eq!(compute_tier(Some("official"), &[], None), 1);
     }
 
     #[test]
     fn tier_official_with_whitespace_is_one() {
-        assert_eq!(compute_tier(Some("  official  "), &[]), 1);
+        assert_eq!(compute_tier(Some("  official  "), &[], None), 1);
     }
 
     #[test]
     fn tier_trusted_group_is_two() {
         let trusted = trusted(&["MangaStream", "CatScans"]);
-        assert_eq!(compute_tier(Some("MangaStream"), &trusted), 2);
+        assert_eq!(compute_tier(Some("MangaStream"), &trusted, None), 2);
         // Case-insensitive
-        assert_eq!(compute_tier(Some("MANGASTREAM"), &trusted), 2);
+        assert_eq!(compute_tier(Some("MANGASTREAM"), &trusted, None), 2);
     }
 
     #[test]
     fn tier_unknown_group_is_three() {
         let trusted = trusted(&["MangaStream"]);
-        assert_eq!(compute_tier(Some("SomeRandomGroup"), &trusted), 3);
+        assert_eq!(compute_tier(Some("SomeRandomGroup"), &trusted, None), 3);
     }
 
     #[test]
     fn tier_unknown_group_no_trusted_list_is_three() {
-        assert_eq!(compute_tier(Some("AnyGroup"), &[]), 3);
+        assert_eq!(compute_tier(Some("AnyGroup"), &[], None), 3);
+    }
+
+    #[test]
+    fn tier_local_provider_is_zero() {
+        // Local provider always wins regardless of scanlator group
+        assert_eq!(compute_tier(None, &[], Some("Local")), 0);
+        assert_eq!(compute_tier(Some("official"), &[], Some("Local")), 0);
+        assert_eq!(compute_tier(Some("AnyGroup"), &[], Some("Local")), 0);
     }
 
     // --- rank_entries ---
@@ -182,7 +200,7 @@ mod tests {
 
         let tiers: Vec<u8> = ranked
             .iter()
-            .map(|c| compute_tier(c.scanlator_group.as_deref(), &trusted))
+            .map(|c| compute_tier(c.scanlator_group.as_deref(), &trusted, c.provider_name.as_deref()))
             .collect();
         assert_eq!(tiers, vec![1, 2, 3, 4]);
     }

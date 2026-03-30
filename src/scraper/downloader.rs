@@ -575,7 +575,7 @@ async fn cleanup_superseded_downloads(
         }
     };
 
-    let new_tier = compute_tier(chapter.scanlator_group.as_deref(), trusted_groups);
+    let new_tier = compute_tier(chapter.scanlator_group.as_deref(), trusted_groups, chapter.provider_name.as_deref());
     let series_dir = lib_root.join(&manga.relative_path);
     let number_prefix = format!("Chapter {}", chapter.number_sort());
 
@@ -586,7 +586,7 @@ async fn cleanup_superseded_downloads(
         if variant.download_status != DownloadStatus::Downloaded {
             continue;
         }
-        let old_tier = compute_tier(variant.scanlator_group.as_deref(), trusted_groups);
+        let old_tier = compute_tier(variant.scanlator_group.as_deref(), trusted_groups, variant.provider_name.as_deref());
         if old_tier <= new_tier {
             continue; // Same or better tier — don't touch
         }

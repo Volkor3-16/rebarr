@@ -467,8 +467,8 @@ pub async fn update_canonical(
         // Secondary within same tier: provider score descending (higher = better).
         // Score NEVER promotes a lower tier above a higher one.
         entries.sort_by(|a, b| {
-            let tier_a = compute_tier(a.scanlator_group.as_deref(), trusted_groups);
-            let tier_b = compute_tier(b.scanlator_group.as_deref(), trusted_groups);
+            let tier_a = compute_tier(a.scanlator_group.as_deref(), trusted_groups, a.provider_name.as_deref());
+            let tier_b = compute_tier(b.scanlator_group.as_deref(), trusted_groups, b.provider_name.as_deref());
             if tier_a != tier_b {
                 return tier_a.cmp(&tier_b);
             }
@@ -765,7 +765,7 @@ pub async fn find_upgrade_candidates(
             None => continue,
         };
 
-        let canon_tier = compute_tier(canonical.scanlator_group.as_deref(), trusted_groups);
+        let canon_tier = compute_tier(canonical.scanlator_group.as_deref(), trusted_groups, canonical.provider_name.as_deref());
 
         // Find Downloaded entries that are worse tier than the canonical.
         for entry in &entries {
@@ -775,7 +775,7 @@ pub async fn find_upgrade_candidates(
             if entry.download_status != DownloadStatus::Downloaded {
                 continue;
             }
-            let entry_tier = compute_tier(entry.scanlator_group.as_deref(), trusted_groups);
+            let entry_tier = compute_tier(entry.scanlator_group.as_deref(), trusted_groups, entry.provider_name.as_deref());
             if canon_tier < entry_tier {
                 candidates.push(UpgradeCandidate {
                     chapter_base: base,
