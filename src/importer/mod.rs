@@ -9,7 +9,7 @@ use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::db::task::TaskType;
-use crate::db::{library as db_library, manga as db_manga, task as db_task};
+use crate::db::{chapter as db_chapter, library as db_library, manga as db_manga, task as db_task};
 use crate::http::anilist::ALClient;
 use crate::manga::{comicinfo, covers, files};
 use crate::manga::core::{Chapter, DownloadStatus, Manga};
@@ -75,6 +75,9 @@ pub struct ConfirmedImport {
     pub provider_name: Option<String>,
     #[serde(default)]
     pub is_extra: bool,
+    /// When true, leave the source file in place (copy instead of move).
+    #[serde(default)]
+    pub copy: bool,
     /// Chapter UUID to preserve (from Tier 1 rebarr CBZ).
     pub chapter_uuid: Option<String>,
     pub released_at: Option<i64>,
@@ -192,6 +195,7 @@ pub async fn execute_series_imports(
             Ok(id) => id,
             Err(e) => {
                 errors.push(format!("{}: invalid library_id: {e}", imp.folder_path));
+                manga_ids.push(String::new());
                 continue;
             }
         };
@@ -200,8 +204,10 @@ pub async fn execute_series_imports(
 
         // Duplicate check by anilist_id in this library
         match db_manga::exists_by_external_ids(pool, library_id, Some(al_id_u32), None).await {
-            Ok(Some(_)) => {
+            Ok(Some(existing)) => {
+                // Return the existing UUID so the frontend can still import CBZs for this series
                 skipped_duplicates += 1;
+                manga_ids.push(existing.id.to_string());
                 continue;
             }
             Err(e) => {
@@ -209,6 +215,7 @@ pub async fn execute_series_imports(
                     "{}: DB error checking duplicates: {e}",
                     imp.folder_path
                 ));
+                manga_ids.push(String::new());
                 continue;
             }
             Ok(None) => {}
@@ -219,6 +226,7 @@ pub async fn execute_series_imports(
             Ok(m) => m,
             Err(e) => {
                 errors.push(format!("{}: AniList fetch failed: {e}", imp.folder_path));
+                manga_ids.push(String::new());
                 continue;
             }
         };
@@ -235,6 +243,7 @@ pub async fn execute_series_imports(
             Ok(Some(l)) => l,
             Ok(None) => {
                 errors.push(format!("{}: library not found", imp.folder_path));
+                manga_ids.push(String::new());
                 continue;
             }
             Err(e) => {
@@ -242,6 +251,7 @@ pub async fn execute_series_imports(
                     "{}: DB error fetching library: {e}",
                     imp.folder_path
                 ));
+                manga_ids.push(String::new());
                 continue;
             }
         };
@@ -257,6 +267,7 @@ pub async fn execute_series_imports(
         // Insert manga into DB
         if let Err(e) = db_manga::insert(pool, &manga).await {
             errors.push(format!("{}: DB insert failed: {e}", imp.folder_path));
+            manga_ids.push(String::new());
             continue;
         }
 
@@ -269,7 +280,10 @@ pub async fn execute_series_imports(
             );
         }
 
-        // Always enqueue ScanDisk to pick up existing CBZ files
+        // Note: source folder is NOT moved here. The chapter import step (importApi.execute)
+        // handles individual CBZ files with proper renaming and DB entries.
+
+        // Always enqueue ScanDisk to pick up any CBZ files that land in the library dir
         let _ = db_task::enqueue(pool, TaskType::ScanDisk, Some(manga.id), None, 5).await;
 
         // Optionally enqueue full chapter list build
@@ -290,6 +304,7 @@ pub async fn execute_series_imports(
         manga_ids,
     }
 }
+
 
 // ---------------------------------------------------------------------------
 // Chapter-level scan
@@ -356,6 +371,41 @@ fn collect_cbz_files(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> 
     Ok(())
 }
 
+fn is_generic_chapter_title(title: &str) -> bool {
+    let trimmed = title.trim();
+    // Match patterns like "Chapter 43", "Ch. 43", "Ch 43", "chapter172", "Ch.27.4"
+    let re = Regex::new(r"(?i)^ch(?:apter)?[._\s]*\d").ok();
+    re.map(|r| r.is_match(trimmed)).unwrap_or(false)
+}
+
+fn extract_title_from_filename(filename: &str) -> Option<String> {
+    let stem = filename
+        .strip_suffix(".cbz")
+        .or_else(|| filename.strip_suffix(".CBZ"))
+        .unwrap_or(filename);
+
+    // Try to extract title after chapter number patterns
+    // Examples: "Chapter 43 - The Great Battle", "Ch.73 The Battle Begins", "Vol.4 Chapter 28 Title Here"
+    let re = Regex::new(r"(?i)(?:vol\.?\s*\d+\s+)?ch(?:apter)?[._\s]*\d+(?:[._]\d+)?\s*[-–—:]?\s*(.+)").ok()?;
+    
+    if let Some(caps) = re.captures(stem) {
+        if let Some(title_match) = caps.get(1) {
+            let title = title_match.as_str().trim();
+            // Remove trailing scanlator group info in brackets if present
+            let title = Regex::new(r"\s*\[.*?\]\s*$")
+                .ok()
+                .and_then(|r| Some(r.replace(title, "").to_string()))
+                .unwrap_or_else(|| title.to_string());
+            
+            let title = title.trim();
+            if !title.is_empty() {
+                return Some(title.to_string());
+            }
+        }
+    }
+    None
+}
+
 fn classify_cbz(path: &Path, all_titles: &[db_manga::MangaSummary]) -> ImportCandidate {
     let file_name = path
         .file_name()
@@ -386,7 +436,8 @@ fn classify_cbz(path: &Path, all_titles: &[db_manga::MangaSummary]) -> ImportCan
             anilist_id = info.anilist_id;
             detected_title = info.title.clone();
             chapter_number = info.chapter_number;
-            chapter_title = info.chapter_title.clone();
+            // Filter out generic chapter titles (e.g. "Chapter 43")
+            chapter_title = info.chapter_title.clone().filter(|t| !is_generic_chapter_title(t));
             scanlator_group = info.scanlator.clone();
             language = info.language.clone();
             provider_name = info.provider_name.clone();
@@ -402,7 +453,8 @@ fn classify_cbz(path: &Path, all_titles: &[db_manga::MangaSummary]) -> ImportCan
             anilist_id = info.anilist_id;
             detected_title = info.title.clone();
             chapter_number = info.chapter_number;
-            chapter_title = info.chapter_title.clone();
+            // Filter out generic chapter titles (e.g. "Chapter 43")
+            chapter_title = info.chapter_title.clone().filter(|t| !is_generic_chapter_title(t));
             scanlator_group = info.scanlator.clone();
             language = info.language.clone();
             provider_name = info.provider_name.clone();
@@ -417,7 +469,8 @@ fn classify_cbz(path: &Path, all_titles: &[db_manga::MangaSummary]) -> ImportCan
             anilist_id = None;
             detected_title = None;
             chapter_number = extract_chapter_number_from_filename(&file_name);
-            chapter_title = None;
+            // Try to extract title from filename
+            chapter_title = extract_title_from_filename(&file_name);
             scanlator_group = None;
             language = None;
             provider_name = None;
@@ -433,7 +486,8 @@ fn classify_cbz(path: &Path, all_titles: &[db_manga::MangaSummary]) -> ImportCan
         anilist_id = None;
         detected_title = None;
         chapter_number = extract_chapter_number_from_filename(&file_name);
-        chapter_title = None;
+        // Try to extract title from filename
+        chapter_title = extract_title_from_filename(&file_name);
         scanlator_group = None;
         language = None;
         provider_name = None;
@@ -612,14 +666,24 @@ async fn process_single_import(imp: ConfirmedImport, pool: &SqlitePool) -> Resul
         e.to_string()
     })?;
 
-    // Delete source if it differs from target
-    if src_path != target_path {
+    // Delete source if it differs from target and we're moving (not copying)
+    if !imp.copy && src_path != target_path {
         if let Err(e) = std::fs::remove_file(&src_path) {
             warn!(
                 "[import] Could not delete source {}: {e}",
                 src_path.display()
             );
         }
+    }
+
+    // Record actual file size from the written CBZ
+    let file_size_bytes = std::fs::metadata(&target_path).map(|m| m.len() as i64).ok();
+    let mut chapter_record = chapter.clone();
+    chapter_record.file_size_bytes = file_size_bytes;
+
+    // Insert chapter DB record immediately (non-fatal: ScanDisk is a safety net)
+    if let Err(e) = db_chapter::insert(pool, &chapter_record).await {
+        warn!("[import] Failed to insert chapter record for {}: {e}", target_path.display());
     }
 
     Ok(manga_id)

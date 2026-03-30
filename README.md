@@ -11,29 +11,14 @@ In constrast, rebarr uses Anilist and a very fancy (overdesigned) matching syste
 
 I'll remove this when I've got the first public release out, this is just a quick reference for me to see what I need to work on.
 
-- [ ] New Start Wizard should dim the rest of the page, the next button is awfully bad and hard to see. (also put it inside the fucken popup window, why's it just awkardly sitting below it?)
 - [ ] More providers - 20+ is my goal.. lets see lmfao
-- [ ] Maybe have each chromium worker in a window,  grid view type shit? sure i made it work fairly nice but ehhhhh i mean does it count unless you can actually SEE it like a stupid little monkey boy????? huh??
-- [ ] Also give me a better 'importer'
-    - without touching anything:
-        - scan dir, pick up folder names of series -> scan anilist one by one (bulk query? rate limit?)
-        - if bad match have a "manual match" button
-        - if duplicate, flag and use on import step; thanks suwayomi for renaming shit based on changing metadata and not static. >:( 
-        - When all have a match, button to add to library
-        - Import existing chapters on disk -> one by one, show and ask for confirmation of each series.
-        - Estimate and show buildinitialchapterlist on library total, show load% and time
-        - Ask to queue up a full library scan on all providers (ensure nothing can touch the library)
-        - wait
-        - ask to update each library!
-        - enjoy!
-    - this would be a fucking insanely helpful real-world stress test (with my very legal 400gb/22k chapters of manga)
+- [ ] Maybe have each chromium worker in a window, grid view type shit? sure i made it work fairly nice but ehhhhh i mean does it count unless you can actually SEE it like a stupid little monkey boy????? huh??
 - [ ] Count cloudflare errors and log them -> enough of them and we have longer and longer cooldowns and rate limits / just disable provider completely?
 - [ ] Honestly same with any provider.. Should have a failed provider list, and their errors. -> optional report bug button???
 - [ ] idk but I wanna see the timings of each search task -> actually see with my own eyes the critical path
 - [ ] Include the downloaded_at in task queue page and series list (hover over filesize?)
 - [ ] Switch between current download mode (only select the best release) and MUST HAVE download mode (pick the best, fallback to 2nd on failure)
 - [ ] Does DownloadChapter work in parallel? I know in one task it does, but does a group of DownloadChapter's from 2 providers run at once, or one after? 
-- [ ] Is there a way we can have maybe, idk, checknewchapter tasks work 
 - [ ] Visual Task Queue
     - Group by 'provider', show task order for them
         - Sub-Tasks, for the 'checknewchapter' checking `n` providers separately, 
@@ -42,14 +27,15 @@ I'll remove this when I've got the first public release out, this is just a quic
 - [ ] Is there a rate limit for anilist api?
     - 90 requests/sec on their end
     - They use `Retry-After`, `X-RateLimit-Reset`, `X-RateLimit-Remaining`, and `X-RateLimit-Limit`
-    - Does anilist_moe follow it?
-    - Either way, we should use the same rate limit system as providers, but much faster
+    - We should use the same rate limit system as providers, but much faster
     - https://docs.rs/governor/latest/governor/
 - Are page downloads the most request friendly they could be?
     - is scraping?
-    - We don't want to impact manga sites.
+    - We don't want to impact manga sites with hundreds of instances of rebarr searching 24/7 in the most bullshit inefficient way
 - Update frontend to use daisyui components as much as possible https://daisyui.com/components/
-
+- [ ] Chapters start downloading automatically after a initial build chapter list... why?. We have local ones and even if they're not canonicial, we shouldn't automatically override them.
+- [ ] Providers `default_score` doesn't actually get used anywhere.
+    - We should make it be nice, where it shows the defaults as a greyed out 'default' and allow overriding like normal either globally or per series.
 
 ### Providers
 
@@ -69,6 +55,9 @@ I'll remove this when I've got the first public release out, this is just a quic
     - Hell half the providers were just me giving chatgpt the yaml schema and an example.
 - CLI tool for testing and debugging providers without touching the database — search, list chapters, download pages, run regression tests against fixture files.
 - REST API, so someone with a workable knowledge of frontend design can implement their own (PRs welcome!)
+- Nice 'Setup Wizard' that'll help you match and import your existing library
+    - Although it's a bit jank, it mostly works if you're careful.
+    - That all said, unless you've got a giant collection, its probably better to just redownload what you want.
 
 ### Later?
 

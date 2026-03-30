@@ -1,6 +1,7 @@
 name: WeebCentral
 base_url: https://weebcentral.com
 version: "1"
+default_score: 30 # Great Official source, decent library, good quality
 tags:
   - aggregator
   - official

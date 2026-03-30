@@ -1,6 +1,7 @@
 name: LHTranslation
 base_url: https://lhtranslation.net
 version: "1"
+default_score: 50 # Direct source for scanlators
 tags:
   - scanlator_site
 rate_limit:

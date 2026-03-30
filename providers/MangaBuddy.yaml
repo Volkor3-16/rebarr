@@ -1,11 +1,11 @@
 name: MangaBuddy
 base_url: https://mangabuddy.me
 version: "1"
+default_score: -20 # Low image quality, but large library, good backup.
 tags:
   - aggregator
   - low_quality_scans
   - nsfw
-default_score: -20 # Low image quality, but large library, good backup.
 rate_limit:
   requests_per_minute: 30
   page_delay_ms: 500

@@ -1,10 +1,10 @@
 name: AllManga
 base_url: https://allmanga.to
 version: "1"
+default_score: 5 # Large library, average quality
 tags:
   - aggregator
   - cloudflare
-default_score: 5
 rate_limit:
   requests_per_minute: 30
   page_delay_ms: 100

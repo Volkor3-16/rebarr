@@ -1,6 +1,7 @@
 name: MangaHub
 base_url: https://mangahub.io
 version: "1"
+default_score: 0 # Huge library, bad provider. low quality.
 tags:
   - aggregator
   - low_quality_scans

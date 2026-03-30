@@ -263,6 +263,22 @@ function renderCandidateTable() {
     </div>
     <div id="import-summary"></div>
   `;
+
+  // Delegated click listener for bulk series picker suggestions
+  document.getElementById('bulk-suggestions')?.addEventListener('click', (e) => {
+    const el = e.target.closest('.bulk-pick');
+    if (!el) return;
+    e.preventDefault();
+    importBulkPick(el.dataset.id, el.dataset.title);
+  });
+
+  // Delegated click listener for per-row manga suggestions
+  document.getElementById('candidate-tbody')?.addEventListener('click', (e) => {
+    const el = e.target.closest('.manga-pick');
+    if (!el) return;
+    e.preventDefault();
+    importPickManga(parseInt(el.dataset.idx, 10), el.dataset.id, el.dataset.title);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -311,8 +327,7 @@ window.importSearchManga = function (idx, query) {
     suggestEl.innerHTML = results.map(m => {
       const title = escape(m.metadata?.title ?? '');
       const id = escape(m.id);
-      return `<a class="block px-3 py-1 hover:bg-base-200 cursor-pointer rounded"
-        onclick="importPickManga(${idx}, '${id}', '${title.replace(/'/g, "\\'")}')">${title}</a>`;
+      return `<a class="block px-3 py-1 hover:bg-base-200 cursor-pointer rounded manga-pick" data-idx="${idx}" data-id="${id}" data-title="${escape(m.metadata?.title ?? '')}">${title}</a>`;
     }).join('');
     suggestEl.classList.remove('hidden');
   }, 150);
@@ -335,11 +350,12 @@ window.importPickManga = function (idx, mangaId, mangaTitle) {
 
 let _bulkTimer = null;
 let _bulkManga = null; // { id, title } chosen via bulk picker
+let _bulkPicking = false; // suppress clearing _bulkManga while setting input value
 
 window.importBulkSearch = function (query) {
   clearTimeout(_bulkTimer);
-  _bulkManga = null;
   _bulkTimer = setTimeout(() => {
+    if (!_bulkPicking) _bulkManga = null;
     const suggestEl = document.getElementById('bulk-suggestions');
     if (!suggestEl) return;
     const results = filterLibraryManga(query);
@@ -347,18 +363,19 @@ window.importBulkSearch = function (query) {
     suggestEl.innerHTML = results.map(m => {
       const title = escape(m.metadata?.title ?? '');
       const id = escape(m.id);
-      return `<a class="block px-3 py-1 hover:bg-base-200 cursor-pointer rounded"
-        onclick="importBulkPick('${id}', '${title.replace(/'/g, "\\'")}')">${title}</a>`;
+      return `<a class="block px-3 py-1 hover:bg-base-200 cursor-pointer rounded bulk-pick" data-id="${id}" data-title="${escape(m.metadata?.title ?? '')}">${title}</a>`;
     }).join('');
     suggestEl.classList.remove('hidden');
   }, 150);
 };
 
 window.importBulkPick = function (mangaId, mangaTitle) {
+  _bulkPicking = true;
   _bulkManga = { manga_id: mangaId, title: mangaTitle };
   const input = document.getElementById('bulk-series-input');
   if (input) input.value = mangaTitle;
   document.getElementById('bulk-suggestions')?.classList.add('hidden');
+  _bulkPicking = false;
 };
 
 window.importApplyBulkSeries = function () {

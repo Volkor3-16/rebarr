@@ -7,6 +7,7 @@
 name: MangaBall
 base_url: https://mangaball.net
 version: "1"
+default_score: -50 # Absolutely giant library, but bad metadata, so there's probably better matches
 tags:
   - aggregator
   - low_quality_scans

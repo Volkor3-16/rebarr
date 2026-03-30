@@ -161,6 +161,8 @@ window.doSearch = async function() {
   document.getElementById('results').innerHTML = '<p>Searching...</p>';
   
   try {
+    // Add rate limiting to avoid hitting API limits
+    await new Promise(resolve => setTimeout(resolve, 200));
     const results = await search.query(q);
     if (results.length === 0) {
       document.getElementById('results').innerHTML = '<p>No results.</p>';

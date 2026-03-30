@@ -118,8 +118,6 @@ export async function viewSeries(id) {
   chaptersEverLoaded = false; // Reset when viewing a new series
   overlayRendered = false; // Reset overlay state
   // Cleanup fixed UI elements from previous series visit
-  if (intersectionObserver) { intersectionObserver.disconnect(); intersectionObserver = null; }
-  document.getElementById('series-mini-header')?.remove();
   document.getElementById('bulk-action-bar')?.remove();
   document.body.classList.remove('bulk-bar-active');
   render(`<div class="series">${skeleton(5)}</div>`);
@@ -291,7 +289,6 @@ export async function viewSeries(id) {
     `);
 
     setupBulkBar(m.id);
-    setupMiniHeader(m, dl, total);
 
     // Load chapters, providers, and tips, then start polling
     await Promise.all([loadChapters(m.id), loadTips()]);
@@ -1582,37 +1579,6 @@ function updateBulkBar() {
     bar.classList.remove('visible');
     document.body.classList.remove('bulk-bar-active');
   }
-}
-
-function setupMiniHeader(m, dl, total) {
-  if (intersectionObserver) { intersectionObserver.disconnect(); intersectionObserver = null; }
-  document.getElementById('series-mini-header')?.remove();
-
-  const meta = m.metadata ?? {};
-  const bar = document.createElement('div');
-  bar.id = 'series-mini-header';
-  bar.className = 'series-mini-header';
-  const imgHtml = m.thumbnail_url
-    ? `<img class="series-mini-header-cover" src="${escape(m.thumbnail_url)}" alt="">`
-    : '';
-  bar.innerHTML = `
-    ${imgHtml}
-    <span class="series-mini-header-title">${escape(meta.title ?? '')}</span>
-    <span class="series-mini-header-count">${dl} / ${total !== '?' ? total : '?'} downloaded</span>
-    <button class="btn btn-sm btn-accent" onclick="doDownloadAllMissing('${m.id}')">
-      <iconify-icon icon="mdi:download" width="16" height="16"></iconify-icon>
-      Download All Missing
-    </button>
-  `;
-  document.body.appendChild(bar);
-
-  const seriesHeader = document.querySelector('.series-header');
-  if (!seriesHeader) return;
-  intersectionObserver = new IntersectionObserver(
-    ([entry]) => bar.classList.toggle('visible', !entry.isIntersecting),
-    { threshold: 0, rootMargin: '-50px 0px 0px 0px' }
-  );
-  intersectionObserver.observe(seriesHeader);
 }
 
 window.toggleProvidersSection = function() {

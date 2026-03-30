@@ -1,6 +1,7 @@
 name: MangaDex
 base_url: https://mangadex.org
 version: "1"
+default_score: 20 # Shrinking library, good quality
 tags:
   - hub
   - multi_language

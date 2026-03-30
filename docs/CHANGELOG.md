@@ -1,15 +1,14 @@
 # Changelog
 
 This a informal changelog so i can keep track of what im doing.
+
 ## 2026-03-29
 
 - Setup Wizard has been reworked
     - `/setup` url
     - uses at least slightly more daisyui/tailwind stuff
     - You can now import your existing series
-        - We (both of us) will match and copy over the manga to your new library
-    - uhh idk bugs?
-
+        - We (you and the server) will match and copy over the manga to your new library
 
 ## 2026-03-27
 

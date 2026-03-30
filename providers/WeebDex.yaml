@@ -1,6 +1,7 @@
 name: WeebDex
 base_url: https://weebdex.org
 version: "1"
+default_score: 30 # Small Library, Good Quality
 tags:
   - hub
   - multi_language

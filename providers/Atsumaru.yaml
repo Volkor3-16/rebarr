@@ -1,6 +1,7 @@
 name: Atsumaru
 base_url: https://atsu.moe
 version: "1"
+default_score: 30 # Decent library, average quality, well organised.
 tags:
   - aggregator
 rate_limit:

@@ -238,18 +238,12 @@ async function init() {
   // Initialize router (which will load the initial view)
   initRouter();
 
-  // Show first-run wizard if setup has not been completed.
+    // Show first-run wizard if setup has not been completed.
   // Navigate to /setup so the URL reflects the wizard state.
   try {
     const appSettings = await settings.get();
     if (!appSettings.wizard_completed) {
       navigate('/setup');
-      await new Promise(resolve => {
-        showWizard((goImport) => {
-          navigate(goImport ? '/import' : '/');
-          resolve();
-        });
-      });
     }
   } catch (_) {
     // Non-critical — proceed without wizard if the settings fetch fails.

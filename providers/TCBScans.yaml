@@ -2,6 +2,7 @@ name: TCB Scans
 # The main domain name.
 base_url: https://tcbonepiecechapters.com
 version: "1"
+default_score: 50 # Direct source for scanlators
 tags:
   - scanlator_site
 # Rate limits for the queue.
