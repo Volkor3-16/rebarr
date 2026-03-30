@@ -11,39 +11,51 @@ In constrast, rebarr uses Anilist and a very fancy (overdesigned) matching syste
 
 I'll remove this when I've got the first public release out, this is just a quick reference for me to see what I need to work on.
 
+### Backend
+
 - [ ] Provider repo download system
     - Don't include providers in the system by default (stock rebarr should only work for local management)
     - During setup wizard, ask the user to paste in a repo (or multiple)
     - Automatic updates and all that nice stuff
     - Add more providers
-- [ ] Maybe have each chromium worker in a window, grid view type shit? sure i made it work fairly nice but ehhhhh i mean does it count unless you can actually SEE it like a stupid little monkey boy????? huh??
-- [ ] Count cloudflare errors and log them -> enough of them and we have longer and longer cooldowns and rate limits / just disable provider completely?
-- [ ] Honestly same with any provider.. Should have a failed provider list, and their errors. -> optional report bug button???
-- [ ] idk but I wanna see the timings of each search task -> actually see with my own eyes the critical path
-- [ ] Include the downloaded_at in task queue page and series list (hover over filesize?)
-- [ ] Switch between current download mode (only select the best release) and MUST HAVE download mode (pick the best, fallback to 2nd on failure)
-- [ ] Does DownloadChapter work in parallel? I know in one task it does, but does a group of DownloadChapter's from 2 providers run at once, or one after? 
+- [ ] Providers `default_score` doesn't actually get used anywhere.
+    - We should make it be nice, where it shows the defaults as a greyed out 'default' and allow overriding like normal either globally or per series.
+
+### Frontend
+
+- [ ] Update frontend to use daisyui components as much as possible https://daisyui.com/components/
+    - The site looks nice as it is, and the import is half broken, this'd be a lot of work... polishing up a poop.
+- [ ] Include the downloaded_at in task queue page and series.
+
+### Task / Queue fix proper lmao
+
+- [ ] Is there a rate limit for anilist api?
+    - They say 90 requests per second, but I hit limits muuuuch lower than that.
+    - They use `Retry-After`, `X-RateLimit-Reset`, `X-RateLimit-Remaining`, and `X-RateLimit-Limit`
+    - Anilist_moe does basic 3 attempts, or fails.
+    - We should use the same rate limit system as providers, but much faster
+    - https://docs.rs/governor/latest/governor/
 - [ ] Visual Task Queue
     - Group by 'provider', show task order for them
         - Sub-Tasks, for the 'checknewchapter' checking `n` providers separately, 
     - im a baby boy who needs a baby ui to make sure my code works
-- [ ] Chapter duplicates functionally work but aren't showing in the ui (only way to know is after importing 2 of the same series)
-- [ ] Is there a rate limit for anilist api?
-    - 90 requests/sec on their end
-    - They use `Retry-After`, `X-RateLimit-Reset`, `X-RateLimit-Remaining`, and `X-RateLimit-Limit`
-    - We should use the same rate limit system as providers, but much faster
-    - https://docs.rs/governor/latest/governor/
-- Are page downloads the most request friendly they could be?
-    - is scraping?
-    - We don't want to impact manga sites with hundreds of instances of rebarr searching 24/7 in the most bullshit inefficient way
-- Update frontend to use daisyui components as much as possible https://daisyui.com/components/
-- [ ] Providers `default_score` doesn't actually get used anywhere.
-    - We should make it be nice, where it shows the defaults as a greyed out 'default' and allow overriding like normal either globally or per series.
 
-### Providers
+- [ ] Rework CheckNewChapter to work in parallel. For each provider we check, we make a new task, with a queue like "provider:WeebCentral" and means each provider can pull matching entries from the queue.
+- [ ] Rework Downloading Chapters to work similarly, were they don't block tasks in other providers queues.
+- [ ] Log provider errors and track them (how many failed in a row), we can have auto-backoffs and auto-disabling.
+
+### Providers / Scraper
 
 - Providers steps shouldn't need a random ass `- open` and then hit another endpoint why have the open step at all?
     - I tried an AI Slop version of this, didn't work correctly, will re-look properly later. this breaks js scripts that need the page open
+- Use `setBlockedResourceTypes` to block useless requests (some images, CSS, fonts, media, whatever)
+- Each provider action (search/chapters/pages) creates a new browser tab, each time waiting for loading, waiting for cloudflare, scrapes, and closes the tab.
+    - Reuse tabs for each provider.
+- Chapter list re-scraping
+    - `ensure_chapter_url()` re-scrapes the entire chapter list when a single url is missing, if multiple are missing, it does multiple re-scrapes. Surely we can optimise this
+- Add adblock to chromium?
+- Clownflare challenge polling loop parses the full html every 0.5s, we can clean this up a bit.
+- 
 - [ ] Get Mangago working
 - [ ] Get MangaHub working (no chapters returned)
 

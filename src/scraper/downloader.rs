@@ -71,6 +71,10 @@ pub async fn download_chapter(
 
     let trusted_groups = db_provider::get_trusted_groups(pool).await?;
 
+    // Read download mode setting
+    let download_mode = db_settings::get(pool, "download_mode", "must_have").await?;
+    let best_only = download_mode == "best_only";
+
     // Get all Chapters rows for this chapter number (all providers = all alternatives)
     let all_entries = db_chapter::get_all_for_chapter(
         pool,
@@ -181,6 +185,9 @@ pub async fn download_chapter(
                     chapter.number_sort(),
                     provider.name()
                 );
+                if best_only {
+                    break;
+                }
                 continue;
             }
         };
@@ -190,6 +197,9 @@ pub async fn download_chapter(
             Err(e) => {
                 warn!("[dl] pages() failed on {}: {e}", provider.name());
                 last_err = e.to_string();
+                if best_only {
+                    break;
+                }
                 continue;
             }
         };
@@ -201,6 +211,9 @@ pub async fn download_chapter(
                 chapter.number_sort()
             );
             last_err = format!("0 pages returned by {}", provider.name());
+            if best_only {
+                break;
+            }
             continue;
         }
 
@@ -244,6 +257,9 @@ pub async fn download_chapter(
                 if let Err(e) = write_cbz(&cbz_path, manga, chapter, image_data).await {
                     warn!("[dl] CBZ write failed: {e}");
                     last_err = e.to_string();
+                    if best_only {
+                        break;
+                    }
                     continue;
                 }
 
@@ -280,6 +296,9 @@ pub async fn download_chapter(
             Err(e) => {
                 warn!("[dl] Image download failed on {}: {e}", provider.name());
                 last_err = e.to_string();
+                if best_only {
+                    break;
+                }
                 continue;
             }
         }

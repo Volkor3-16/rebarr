@@ -27,6 +27,8 @@ pub struct SettingsResponse {
     pub min_tier: u64,
     /// Whether AniList-completed series should be unmonitored on add/refresh.
     pub auto_unmonitor_completed: bool,
+    /// Download mode: "best_only" (try best release, fail immediately) or "must_have" (fallback on failure).
+    pub download_mode: String,
 }
 
 #[derive(Deserialize)]
@@ -43,6 +45,8 @@ pub struct UpdateSettingsRequest {
     /// 1–4: minimum scanlator tier.
     pub min_tier: Option<u64>,
     pub auto_unmonitor_completed: Option<bool>,
+    /// "best_only" or "must_have".
+    pub download_mode: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -98,6 +102,14 @@ pub async fn get_settings(pool: &State<sqlx::SqlitePool>) -> ApiResult<SettingsR
             .await
             .unwrap_or_else(|_| "false".to_string())
             == "true";
+    let download_mode_raw = db::settings::get(pool.inner(), "download_mode", "must_have")
+        .await
+        .unwrap_or_else(|_| "must_have".to_string());
+    let download_mode = if download_mode_raw == "best_only" {
+        "best_only".to_string()
+    } else {
+        "must_have".to_string()
+    };
     Ok(Json(SettingsResponse {
         scan_interval_hours: hours,
         queue_paused,
@@ -108,6 +120,7 @@ pub async fn get_settings(pool: &State<sqlx::SqlitePool>) -> ApiResult<SettingsR
         default_monitored,
         min_tier,
         auto_unmonitor_completed,
+        download_mode,
     }))
 }
 
@@ -191,6 +204,16 @@ pub async fn update_settings(
         )
         .await
         .map_err(internal)?;
+    }
+    if let Some(ref mode) = body.download_mode {
+        let validated = if mode == "best_only" {
+            "best_only"
+        } else {
+            "must_have"
+        };
+        db::settings::set(pool.inner(), "download_mode", validated)
+            .await
+            .map_err(internal)?;
     }
     Ok(Status::NoContent)
 }

@@ -82,6 +82,13 @@ export async function viewSettings() {
             <input type="checkbox" id="auto-unmonitor-completed" class="checkbox checkbox-sm" ${appSettings.auto_unmonitor_completed ? 'checked' : ''}>
             <span>Auto-unmonitor completed AniList series</span>
           </label>
+          <label class="flex gap-1 align-center">
+            <span>Download mode:</span>
+            <select id="download-mode" class="select select-bordered select-sm" title="Best Only: try only the top-ranked release, fail immediately if unavailable. Must Have: try the best first, fall back to alternatives on failure.">
+              <option value="must_have" ${appSettings.download_mode !== 'best_only' ? 'selected' : ''}>Must Have (fallback)</option>
+              <option value="best_only" ${appSettings.download_mode === 'best_only' ? 'selected' : ''}>Best Only</option>
+            </select>
+          </label>
           <button type="submit" class="btn btn-primary btn-sm">Save</button>
         </form>
         <div id="settings-status"></div>
@@ -198,10 +205,11 @@ export async function viewSettings() {
     // Settings form handler
     document.getElementById('settings-form').addEventListener('submit', async (e) => {
       e.preventDefault();
-      const hours = parseInt(document.getElementById('scan-interval').value, 10);
-      const browserWorkers = parseInt(document.getElementById('browser-worker-count').value, 10);
-      const lang = document.getElementById('preferred-language').value.trim();
-      const autoUnmonitorCompleted = document.getElementById('auto-unmonitor-completed').checked;
+        const hours = parseInt(document.getElementById('scan-interval').value, 10);
+        const browserWorkers = parseInt(document.getElementById('browser-worker-count').value, 10);
+        const lang = document.getElementById('preferred-language').value.trim();
+        const autoUnmonitorCompleted = document.getElementById('auto-unmonitor-completed').checked;
+        const downloadMode = document.getElementById('download-mode').value;
       const statusEl = document.getElementById('settings-status');
 
       if (!hours || hours < 1 || hours > 168) {
@@ -219,6 +227,7 @@ export async function viewSettings() {
           browser_worker_count: browserWorkers,
           preferred_language: lang || null,
           auto_unmonitor_completed: autoUnmonitorCompleted,
+          download_mode: downloadMode,
         });
         showToast('Settings saved');
         statusEl.innerHTML = '';
