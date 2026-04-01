@@ -30,6 +30,8 @@ pub enum DownloadError {
     AllProvidersFailed(String),
     #[error("cancelled")]
     Cancelled,
+    #[error("invalid image data (likely HTML or error page)")]
+    InvalidImage,
     #[error("database error: {0}")]
     Db(#[from] sqlx::Error),
     #[error("io error: {0}")]
@@ -553,6 +555,19 @@ pub async fn download_pages_via_browser(
             }
         };
 
+        // Validate that the downloaded data is actually an image
+        if !is_valid_image(&image_data) {
+            warn!(
+                "[dl] Page {} from {} is not a valid image (got {} bytes, magic: {:?})",
+                page_url.index,
+                provider_name.unwrap_or("unknown"),
+                image_data.len(),
+                &image_data[..image_data.len().min(16)]
+            );
+            // Fail the entire chapter from this provider - don't create incomplete CBZ
+            return Err(DownloadError::InvalidImage);
+        }
+
         results.push((page_url.index, image_data));
     }
 
@@ -695,6 +710,18 @@ fn url_origin(url: &str) -> String {
         .map(|i| i + after_scheme)
         .unwrap_or(url.len());
     format!("{}/", &url[..host_end])
+}
+
+/// Returns true if the data appears to be a valid image format.
+/// Checks magic bytes for JPEG, PNG, GIF, and WebP.
+pub fn is_valid_image(data: &[u8]) -> bool {
+    matches!(
+        data,
+        d if d.starts_with(b"\xFF\xD8\xFF") ||  // JPEG
+             d.starts_with(b"\x89PNG") ||        // PNG  
+             d.starts_with(b"GIF8") ||           // GIF
+             (d.starts_with(b"RIFF") && d.len() >= 12 && &d[8..12] == b"WEBP") // WebP
+    )
 }
 
 /// Guess image extension from magic bytes.

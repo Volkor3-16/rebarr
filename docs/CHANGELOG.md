@@ -12,6 +12,8 @@ This a informal changelog so i can keep track of what im doing.
 - Merge sequential cancelled tasks into a expandable table in the queue.
 - Added version number and changelog in the frontend.
 - Disabling a provider immediately recalculates the canonical list (and shows it on the frontend)
+- Pages that download wrong (not an image) will be automatically failed
+    - and depending on your download mode, will retry another provider or fail completely.
 
 ## 2026-03-29
 
