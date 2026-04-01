@@ -20,12 +20,20 @@ I'll remove this when I've got the first public release out, this is just a quic
     - Add more providers
 - [ ] Providers `default_score` doesn't actually get used anywhere.
     - We should make it be nice, where it shows the defaults as a greyed out 'default' and allow overriding like normal either globally or per series.
+- [ ] Tell komga to scan for new downloads every so often (`n` download completes?)
+- [ ] WeebCentral downloads html for images sometimes (`/home/volkor/Downloads/Chapter 3 [Official]/`)
+    - Validate the mimetype of downloaded pages are actually images.
+    - Needs to tie into the queue worker system thing
+- [ ] Make sure chapters are done nicely, `A Veternarian in Another World` - Local chapters aren't flagged as downloaded, despite being there.
+    - Do we have ScanDisk task validate and check this?
 
 ### Frontend
 
 - [ ] Update frontend to use daisyui components as much as possible https://daisyui.com/components/
     - The site looks nice as it is, and the import is half broken, this'd be a lot of work... polishing up a poop.
 - [ ] Include the downloaded_at in task queue page and series.
+- [ ] Have a 'Downloads' Page, where it shows pretty much a condensed version of the queue, where stuff is grouped by series (sequential chapters?)
+    - Let users re-order the queue
 
 ### Task / Queue fix proper lmao
 
@@ -39,7 +47,6 @@ I'll remove this when I've got the first public release out, this is just a quic
     - Group by 'provider', show task order for them
         - Sub-Tasks, for the 'checknewchapter' checking `n` providers separately, 
     - im a baby boy who needs a baby ui to make sure my code works
-
 - [ ] Rework CheckNewChapter to work in parallel. For each provider we check, we make a new task, with a queue like "provider:WeebCentral" and means each provider can pull matching entries from the queue.
 - [ ] Rework Downloading Chapters to work similarly, were they don't block tasks in other providers queues.
 - [ ] Log provider errors and track them (how many failed in a row), we can have auto-backoffs and auto-disabling.
@@ -55,9 +62,10 @@ I'll remove this when I've got the first public release out, this is just a quic
     - `ensure_chapter_url()` re-scrapes the entire chapter list when a single url is missing, if multiple are missing, it does multiple re-scrapes. Surely we can optimise this
 - Add adblock to chromium?
 - Clownflare challenge polling loop parses the full html every 0.5s, we can clean this up a bit.
-- 
 - [ ] Get Mangago working
 - [ ] Get MangaHub working (no chapters returned)
+- [ ] When a user disables a provider (series-level), we should drop the chapters we've found and re-calc canonical chapters.
+- [ ] Comix can't handle titles with "The Girl From the Other Side: Siúil, a Rún". The show as "danke-Empire" (is that the uploader? scanlator? the scanlator group is "Official?" so idk.)
 
 ## Features
 
@@ -80,6 +88,10 @@ I'll remove this when I've got the first public release out, this is just a quic
     - [ ] MyAnimeList Support (mal_api crate works)
     - [ ] MangaUpdates Support (need to make a crate, or use the worst fucking openapi generated thing ever)
     - [ ] Any other sites can be listed here. It's good to not be stuck with a single metadata service.
+    - [ ] Automatic imports of Anilist genres (auto-add and download all/top/trending of any tag)
+    - [ ] Automatic imports of MyAnimeList "Interest Stacks"
+    - [ ] Browser Extension to add "add to rebarr" buttons on MyAnimeList / AniList pages
+        - Also maybe any MAL/anilist urls pasted anywhere (reddit comments)?
 - [ ] Storage Backends
     - [ ] S3 Storage?
     - [ ] IPFS/decentralised 'provider'

@@ -3,6 +3,7 @@ use tracing::debug;
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
+use crate::db::provider_scores;
 use crate::manga::core::{Chapter, DownloadStatus};
 use crate::manga::scoring::compute_tier;
 use crate::scraper::ProviderChapterInfo;
@@ -410,6 +411,25 @@ pub async fn update_canonical(
     provider_scores: &std::collections::HashMap<String, i32>,
 ) -> Result<(), sqlx::Error> {
     let all = get_all_for_manga(pool, manga_id).await?;
+
+    // Filter out chapters from disabled providers.
+    let globally_disabled = provider_scores::get_globally_disabled(pool).await?;
+    let series_overrides = provider_scores::get_all_series_overrides(pool, manga_id).await?;
+    let all: Vec<Chapter> = all
+        .into_iter()
+        .filter(|ch| {
+            let name = match &ch.provider_name {
+                Some(n) => n,
+                None => return true, // keep chapters without provider (e.g. disk-scanned)
+            };
+            // Per-series override takes priority over global setting.
+            let enabled = series_overrides
+                .get(name)
+                .map(|(_, enabled)| *enabled)
+                .unwrap_or_else(|| !globally_disabled.contains(name));
+            enabled
+        })
+        .collect();
 
     // Auto-classify: if a base has variant>=5 chapters but no variant 1–4, mark them as extras.
     // e.g. a lone Ch.1.5 with no Ch.1.1–1.4 siblings → extra/bonus, not a split part.

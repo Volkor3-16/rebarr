@@ -8,6 +8,13 @@ use super::errors::{ApiResult, internal};
 use crate::db::settings as db_settings;
 
 #[derive(Serialize)]
+pub struct VersionInfo {
+    pub version: String,
+    pub build_type: String,
+    pub git_commit: Option<String>,
+}
+
+#[derive(Serialize)]
 pub struct SystemInfo {
     /// RSS memory used by this process and all its descendants (MB).
     pub process_mem_mb: u64,
@@ -171,9 +178,48 @@ pub async fn desktop_health() -> Json<DesktopHealth> {
 }
 
 // ---------------------------------------------------------------------------
+// GET /api/version
+// ---------------------------------------------------------------------------
+
+#[get("/api/version")]
+pub fn version_info() -> Json<VersionInfo> {
+    // Determine build type based on environment variables
+    let build_type = if cfg!(debug_assertions) {
+        "dev".to_string()
+    } else if std::env::var("GITLAB_CI").is_ok() {
+        "gitlab-ci".to_string()
+    } else if std::env::var("CI").is_ok() {
+        "ci".to_string()
+    } else {
+        "release".to_string()
+    };
+
+    // Try to get git commit hash from environment or build
+    let git_commit = std::env::var("GIT_COMMIT")
+        .or_else(|_| std::env::var("CI_COMMIT_SHA"))
+        .ok()
+        .map(|s| s.chars().take(8).collect()); // Short hash
+
+    Json(VersionInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        build_type,
+        git_commit,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/changelog
+// ---------------------------------------------------------------------------
+
+#[get("/api/changelog")]
+pub fn changelog() -> Option<String> {
+    std::fs::read_to_string("docs/CHANGELOG.md").ok()
+}
+
+// ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
 
 pub fn routes() -> Vec<rocket::Route> {
-    rocket::routes![system_info, desktop_health]
+    rocket::routes![system_info, desktop_health, version_info, changelog]
 }

@@ -17,6 +17,9 @@ import { initRouter, navigate } from './router.js';
 import { updateRelTimes } from './utils.js';
 import { tasks, settings, system } from './api.js';
 
+// Version tracking
+const VERSION_STORAGE_KEY = 'rebarr_last_seen_version';
+
 // Activity console state
 let activityLog = [];
 const MAX_ACTIVITY_ENTRIES = 20;
@@ -230,6 +233,79 @@ async function updateSystemStats() {
   }
 }
 
+// Check version and show changelog if updated
+async function checkVersionAndUpdate() {
+  try {
+    const versionData = await system.version();
+    const currentVersion = versionData.version;
+    const storedVersion = localStorage.getItem(VERSION_STORAGE_KEY);
+    
+    // Update version display in navbar with build type
+    const versionEl = document.getElementById('brand-version');
+    if (versionEl) {
+      let versionText = `v${currentVersion}`;
+      if (versionData.build_type) {
+        versionText += ` (${versionData.build_type})`;
+      }
+      if (versionData.git_commit) {
+        versionText += ` [${versionData.git_commit}]`;
+      }
+      versionEl.textContent = versionText;
+    }
+    
+    // Check if this is an update
+    if (storedVersion && storedVersion !== currentVersion) {
+      // Fetch changelog and show notification
+      const changelog = await system.changelog();
+      if (changelog) {
+        showChangelogModal(currentVersion, changelog);
+      }
+    }
+    
+    // Store current version
+    localStorage.setItem(VERSION_STORAGE_KEY, currentVersion);
+  } catch (_) {
+    // Non-critical - version display is optional
+  }
+}
+
+// Show changelog modal
+function showChangelogModal(version, changelog) {
+  console.log('showChangelogModal called with version:', version);
+  console.log('Changelog length:', changelog?.length);
+  
+  // Create modal
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.innerHTML = `
+    <div class="modal changelog-modal">
+      <h2>📋 REBARR ${version} - Full Changelog</h2>
+      <div class="changelog-content">
+        <pre>${changelog.trim()}</pre>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-primary" onclick="this.closest('.modal-overlay').remove()">Close</button>
+      </div>
+    </div>
+  `;
+  
+  console.log('Modal element created:', modal);
+  console.log('Modal HTML:', modal.innerHTML);
+  
+  document.body.appendChild(modal);
+  console.log('Modal appended to body');
+  
+  // Force reflow to ensure the modal is rendered
+  modal.offsetHeight;
+  
+  // Click outside to close
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) {
+      modal.remove();
+    }
+  });
+}
+
 // Initialize the application
 async function init() {
   // Initialize theme
@@ -238,7 +314,10 @@ async function init() {
   // Initialize router (which will load the initial view)
   initRouter();
 
-    // Show first-run wizard if setup has not been completed.
+  // Check version and show changelog if updated
+  checkVersionAndUpdate();
+
+  // Show first-run wizard if setup has not been completed.
   // Navigate to /setup so the URL reflects the wizard state.
   try {
     const appSettings = await settings.get();
@@ -276,6 +355,26 @@ if (document.readyState === 'loading') {
 } else {
   init();
 }
+
+// Show changelog on click
+window.showChangelogFromClick = async function() {
+  try {
+    const versionData = await system.version();
+    const changelog = await system.changelog();
+    if (changelog) {
+      let versionText = `v${versionData.version}`;
+      if (versionData.build_type) {
+        versionText += ` (${versionData.build_type})`;
+      }
+      if (versionData.git_commit) {
+        versionText += ` [${versionData.git_commit}]`;
+      }
+      showChangelogModal(versionText, changelog);
+    }
+  } catch (_) {
+    // Non-critical
+  }
+};
 
 // Export for external use
 window.addActivity = addActivity;

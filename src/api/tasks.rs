@@ -3,6 +3,7 @@ use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::{db, db::task::RecentTask, scheduler::worker::CancelMap};
+use crate::manga::core::DownloadStatus;
 
 use super::errors::{ApiError, ApiResult, bad_request, internal};
 
@@ -36,9 +37,31 @@ pub async fn cancel_task(
     id: &str,
 ) -> Result<Status, (Status, Json<ApiError>)> {
     let uuid = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    
+    // Get the task before cancelling to check if it's a DownloadChapter task
+    let task = db::task::get_by_id(pool.inner(), uuid)
+        .await
+        .map_err(internal)?;
+    
     db::task::cancel(pool.inner(), uuid)
         .await
         .map_err(internal)?;
+    
+    // If this was a DownloadChapter task, reset the chapter status to Missing
+    if let Some(task) = task {
+        if task.task_type == db::task::TaskType::DownloadChapter {
+            if let Some(chapter_id) = task.chapter_id {
+                let _ = db::chapter::set_status(
+                    pool.inner(),
+                    chapter_id,
+                    DownloadStatus::Missing,
+                    None,
+                )
+                .await;
+            }
+        }
+    }
+    
     // Signal the running task to stop
     if let Some(token) = cancel_map.lock().unwrap().get(&uuid) {
         token.cancel();

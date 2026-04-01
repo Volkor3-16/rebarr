@@ -2,6 +2,17 @@
 
 This a informal changelog so i can keep track of what im doing.
 
+## 2026-04-01
+
+- Queue Changes:
+    - Sequential cancelled tasks are grouped together and expandable with a click
+    - Downloading chapters in bulk will now order by oldest first
+    - Cancelling Downloading Chapter tasks in the queue now set the chapter entry back to 'Missing'.
+    - Selecting tasks in queue will no longer automatically get unselected every queue refresh.
+- Merge sequential cancelled tasks into a expandable table in the queue.
+- Added version number and changelog in the frontend.
+- Disabling a provider immediately recalculates the canonical list (and shows it on the frontend)
+
 ## 2026-03-29
 
 - Setup Wizard has been reworked

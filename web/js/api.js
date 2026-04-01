@@ -115,6 +115,8 @@ export const trustedGroups = {
 export const system = {
   info: () => get('/api/system'),
   desktop: () => get('/api/system/desktop'),
+  version: () => get('/api/version'),
+  changelog: () => fetch('/api/changelog').then(r => r.text()),
 };
 
 // Import API

@@ -479,7 +479,7 @@ function chapterRow(mangaId, ch, isVariant = false, altCount = 0, extraActions =
 
   // File size label for downloaded chapters
   const fileSizeHtml = (status === 'Downloaded' && ch.file_size_bytes)
-    ? `<div class="ch-filesize">${formatFileSize(ch.file_size_bytes)}</div>`
+    ? ` <span class="ch-filesize">${formatFileSize(ch.file_size_bytes)}</span>`
     : '';
 
   const cb = (!isVariant && canDl)
@@ -502,7 +502,7 @@ function chapterRow(mangaId, ch, isVariant = false, altCount = 0, extraActions =
   const trustedTitle = isTrusted ? 'Trusted — click to remove from trusted' : 'Click to add to trusted';
 
   const scanlatorHtml = scanlatorName !== '—'
-    ? `<span class="scanlator-bubble${trustedClass}" title="${trustedTitle}" onclick="event.stopPropagation(); ${isTrusted ? `removeTrustedFromBubble('${escape(scanlatorName)}')` : `addTrustedFromBubble('${escape(scanlatorName)}')`}">${trustedIndicator}${escape(scanlatorName)}</span>`
+    ? `<span class="badge badge-neutral synonym-pill${trustedClass}" title="${trustedTitle}" onclick="event.stopPropagation(); ${isTrusted ? `removeTrustedFromBubble('${escape(scanlatorName)}')` : `addTrustedFromBubble('${escape(scanlatorName)}')`}">${trustedIndicator}${escape(scanlatorName)}</span>`
     : '—';
 
   // Action menu (three-dot dropdown)
@@ -854,7 +854,7 @@ export async function loadChapters(mangaId) {
       </div>
       ${buildChapterOverview(chapters)}
       <div class="chapters-table">
-        <table>
+        <table class="table table-xs">
           <thead>
             <tr>
               <th style="width:30px"><input type="checkbox" title="Select all" onchange="toggleSelectAll(this.checked)"></th>
@@ -1157,6 +1157,8 @@ window.setProviderEnabled = async function(mangaId, providerName, enabled) {
     const current = await providerScores.getSeries(mangaId, providerName);
     await providerScores.setSeries(mangaId, providerName, current?.score ?? 0, enabled);
     showToast(`${providerName} ${enabled ? 'enabled' : 'disabled'}`);
+    // Reload chapters to reflect canonical changes (disabled provider chapters are excluded)
+    await loadChapters(mangaId);
   } catch(e) {
     showToast('Error: ' + e.message, 'error');
   }
@@ -1498,7 +1500,7 @@ window.toggleSelectAll = function(checked) {
 };
 
 window.doDownloadSelected = async function(mangaId) {
-  const checked = Array.from(document.querySelectorAll('.ch-checkbox:checked'));
+  const checked = Array.from(document.querySelectorAll('.ch-checkbox:checked')).reverse();
   if (checked.length === 0) { showToast('Select at least one chapter.', 'warning'); return; }
   let count = 0, errors = 0;
   for (const cb of checked) {
@@ -1521,7 +1523,7 @@ window.doDownloadSelected = async function(mangaId) {
 };
 
 window.doDownloadAllMissing = async function(mangaId) {
-  const cbs = Array.from(document.querySelectorAll('.ch-checkbox'));
+  const cbs = Array.from(document.querySelectorAll('.ch-checkbox')).reverse();
   if (cbs.length === 0) { showToast('No missing chapters to download.', 'warning'); return; }
   let count = 0, errors = 0;
   for (const cb of cbs) {
