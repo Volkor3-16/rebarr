@@ -5,6 +5,9 @@ import { render } from '../router.js';
 import { escape, skeleton, showToast } from '../utils.js';
 import { showWizard } from './wizard.js';
 
+// Store provider default scores mapping: name -> default_score
+let _providerDefaults = {};
+
 export async function viewSettings() {
   render(`<div class="settings">${skeleton(5)}</div>`);
 
@@ -23,6 +26,10 @@ export async function viewSettings() {
       `<span class="badge badge-neutral">${escape(lang)} <button class="synonym-remove btn btn-xs btn-ghost" style="padding:0;margin-left:4px;min-height:auto;line-height:1" onclick="removeFilterLanguage('${escape(lang)}')" title="Remove">×</button></span>`
     ).join('');
 
+    // Store provider defaults for later use
+    _providerDefaults = {};
+    providerList.forEach(p => { _providerDefaults[p.name] = p.default_score != null ? p.default_score : 0; });
+
     // Provider rows with global score inputs and enabled toggle
     const pRows = providerList.length === 0
       ? '<tr><td colspan="4">No providers loaded. Add YAML files to the providers/ directory.</td></tr>'
@@ -31,11 +38,17 @@ export async function viewSettings() {
             <td>${escape(p.name)}</td>
             <td>${p.needs_browser ? '<iconify-icon icon="mdi:google-chrome" width="16" height="16" title="Requires browser"></iconify-icon>' : '—'}</td>
             <td>
-              <input type="number" class="score-input" data-provider="${escape(p.name)}"
-                value="0" min="-100" max="100"
-                title="Global score override for ${escape(p.name)} (used as tiebreaker within same tier)"
-                onchange="saveGlobalScore('${escape(p.name)}', this.value)"
-                onblur="saveGlobalScore('${escape(p.name)}', this.value)">
+              <div class="score-input-wrapper" data-provider="${escape(p.name)}">
+                <input type="number" class="score-input" data-provider="${escape(p.name)}"
+                  min="-100" max="100"
+                  placeholder="default"
+                  title="Global score override for ${escape(p.name)} (used as tiebreaker within same tier). Leave blank to use YAML default."
+                  onchange="saveGlobalScore('${escape(p.name)}', this.value)"
+                  onblur="saveGlobalScore('${escape(p.name)}', this.value)">
+                <button class="score-clear-btn" data-provider="${escape(p.name)}"
+                  style="display:none" title="Clear override, revert to default"
+                  onclick="clearGlobalScore('${escape(p.name)}')">&times;</button>
+              </div>
             </td>
             <td>
               <input type="checkbox" class="enabled-toggle" data-provider="${escape(p.name)}"
@@ -248,8 +261,19 @@ async function loadGlobalScores(providerList) {
     try {
       const res = await providerScores.getGlobal(p.name);
       const scoreInput = document.querySelector(`.score-input[data-provider="${CSS.escape(p.name)}"]`);
-      if (scoreInput && res.score != null) {
-        scoreInput.value = res.score;
+      const clearBtn = document.querySelector(`.score-clear-btn[data-provider="${CSS.escape(p.name)}"]`);
+      const def = _providerDefaults[p.name] != null ? _providerDefaults[p.name] : 0;
+      if (scoreInput) {
+        if (res.score != null) {
+          scoreInput.value = res.score;
+          scoreInput.classList.remove('using-default');
+          if (clearBtn) clearBtn.style.display = '';
+        } else {
+          // No override — show the actual default score greyed out
+          scoreInput.value = def;
+          scoreInput.classList.add('using-default');
+          if (clearBtn) clearBtn.style.display = 'none';
+        }
       }
       const toggle = document.querySelector(`.enabled-toggle[data-provider="${CSS.escape(p.name)}"]`);
       if (toggle) {
@@ -266,25 +290,52 @@ function _applyProviderRowStyle(providerName, enabled) {
 }
 
 window.saveGlobalScore = async function(providerName, value) {
-  const score = parseInt(value, 10);
-  if (isNaN(score)) return;
+  const input = document.querySelector(`.score-input[data-provider="${CSS.escape(providerName)}"]`);
+  const clearBtn = document.querySelector(`.score-clear-btn[data-provider="${CSS.escape(providerName)}"]`);
+  const trimmed = (value || '').trim();
+  const statusEl = document.getElementById('provider-scores-status');
   const toggle = document.querySelector(`.enabled-toggle[data-provider="${CSS.escape(providerName)}"]`);
   const enabled = toggle ? toggle.checked : true;
-  const statusEl = document.getElementById('provider-scores-status');
+  const def = _providerDefaults[providerName] != null ? _providerDefaults[providerName] : 0;
   try {
-    await providerScores.setGlobal(providerName, score, enabled);
-    if (statusEl) {
-      statusEl.innerHTML = `<small style="color:var(--success)">Score saved for ${escape(providerName)}</small>`;
-      setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 2000);
+    if (trimmed === '' || parseInt(trimmed, 10) === def) {
+      // Empty or re-entered default — delete the override row
+      await providerScores.deleteGlobal(providerName);
+      input.value = def;
+      input.classList.add('using-default');
+      if (clearBtn) clearBtn.style.display = 'none';
+      if (statusEl) {
+        statusEl.innerHTML = `<small style="color:var(--text-muted)">Score reset to default (${def}) for ${escape(providerName)}</small>`;
+        setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 2000);
+      }
+    } else {
+      const score = parseInt(trimmed, 10);
+      if (isNaN(score)) return;
+      await providerScores.setGlobal(providerName, score, enabled);
+      input.classList.remove('using-default');
+      if (clearBtn) clearBtn.style.display = '';
+      if (statusEl) {
+        statusEl.innerHTML = `<small style="color:var(--success)">Score saved for ${escape(providerName)}</small>`;
+        setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 2000);
+      }
     }
   } catch(e) {
     if (statusEl) statusEl.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
   }
 };
 
+window.clearGlobalScore = async function(providerName) {
+  const input = document.querySelector(`.score-input[data-provider="${CSS.escape(providerName)}"]`);
+  const def = _providerDefaults[providerName] != null ? _providerDefaults[providerName] : 0;
+  if (input) input.value = def;
+  await window.saveGlobalScore(providerName, String(def));
+};
+
 window.saveGlobalEnabled = async function(providerName, enabled) {
   const scoreInput = document.querySelector(`.score-input[data-provider="${CSS.escape(providerName)}"]`);
-  const score = scoreInput ? (parseInt(scoreInput.value, 10) || 0) : 0;
+  const def = _providerDefaults[providerName] != null ? _providerDefaults[providerName] : 0;
+  const isDefault = scoreInput && scoreInput.classList.contains('using-default');
+  const score = isDefault ? def : (scoreInput ? (parseInt(scoreInput.value, 10) || 0) : 0);
   const statusEl = document.getElementById('provider-scores-status');
   try {
     await providerScores.setGlobal(providerName, score, enabled);

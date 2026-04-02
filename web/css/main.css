@@ -1981,6 +1981,55 @@ nav.header-collapsed a {
   border-color: var(--accent);
 }
 
+/* Score input when using YAML default (greyed out placeholder) */
+.score-input.using-default {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.score-input.using-default::placeholder {
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+/* Wrapper for score input + clear button */
+.score-input-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+/* Clear button for score override */
+.score-clear-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  transition: color var(--transition), border-color var(--transition);
+  line-height: 1;
+}
+
+.score-clear-btn:hover {
+  color: var(--error);
+  border-color: var(--error);
+}
+
+/* Effective score indicator below the score input */
+.effective-score {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+  white-space: nowrap;
+}
+
 /* ===== Loading Overlay Card (in-place, for no-chapters state) ===== */
 
 .loading-overlay-card {

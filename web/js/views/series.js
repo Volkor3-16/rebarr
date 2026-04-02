@@ -1104,7 +1104,10 @@ export async function loadProviders(mangaId) {
       const synced = p.last_synced_at ? relTime(p.last_synced_at) : 'Never';
 
       const scoreData = scoreResults[i].status === 'fulfilled' ? scoreResults[i].value : null;
-      const currentScore = scoreData?.score ?? 0;
+      const currentScore = scoreData?.score; // null means no override
+      const effectiveScore = scoreData?.effective_score ?? 0;
+      const scoreSource = scoreData?.score_source ?? 'default';
+      const defaultScore = scoreData?.default_score ?? 0;
       const isEnabled = scoreData?.enabled ?? true;
 
       const linkBtn = p.provider_url
@@ -1116,11 +1119,24 @@ export async function loadProviders(mangaId) {
         ${isEnabled ? 'Enabled' : 'Disabled'}
       </label>`;
 
-      const scoreInput = `<input type="number" class="score-input" value="${currentScore}" min="-100" max="100"
-        title="Per-series score override for ${escape(p.provider_name)}"
-        data-manga="${mangaId}" data-provider="${escape(p.provider_name)}"
-        onchange="setSeriesScore('${mangaId}', '${escape(p.provider_name)}', this.value)"
-        onblur="setSeriesScore('${mangaId}', '${escape(p.provider_name)}', this.value)">`;
+      const isDefault = currentScore == null;
+      const scoreValue = isDefault ? defaultScore : currentScore;
+      const scoreClass = isDefault ? 'score-input using-default' : 'score-input';
+      const effectiveLabel = scoreSource === 'series' ? 'override' : (scoreSource === 'global' ? 'global' : 'default');
+      const effectiveIndicator = `<div class="effective-score" title="Using YAML ${escape(effectiveLabel)}">Effective: ${effectiveScore} (${escape(effectiveLabel)})</div>`;
+      const clearStyle = isDefault ? 'display:none' : '';
+
+      const scoreInput = `<div class="score-input-wrapper" data-provider="${escape(p.provider_name)}">
+        <input type="number" class="${scoreClass}" value="${scoreValue}" min="-100" max="100"
+          placeholder="default"
+          title="Per-series score override for ${escape(p.provider_name)}"
+          data-manga="${mangaId}" data-provider="${escape(p.provider_name)}"
+          onchange="setSeriesScore('${mangaId}', '${escape(p.provider_name)}', this.value)"
+          onblur="setSeriesScore('${mangaId}', '${escape(p.provider_name)}', this.value)">
+        <button class="score-clear-btn" style="${clearStyle}" title="Clear override, revert to effective score"
+          onclick="clearSeriesScore('${mangaId}', '${escape(p.provider_name)}')">&times;</button>
+        ${effectiveIndicator}
+      </div>`;
 
       const pickBtn = `<button class="btn btn-xs btn-ghost" onclick="pickProvider('${mangaId}', '${escape(p.provider_name)}')" title="Search this provider and pick the correct match">Pick</button>`;
 
@@ -1165,13 +1181,44 @@ window.setProviderEnabled = async function(mangaId, providerName, enabled) {
 };
 
 window.setSeriesScore = async function(mangaId, providerName, value) {
-  const score = parseInt(value, 10);
-  if (isNaN(score)) return;
+  const input = document.querySelector(`.score-input[data-manga="${mangaId}"][data-provider="${CSS.escape(providerName)}"]`);
+  const clearBtn = document.querySelector(`.score-clear-btn[onclick*="${CSS.escape(providerName)}"]`);
+  const trimmed = (value || '').trim();
+  const parsed = trimmed === '' ? null : parseInt(trimmed, 10);
   try {
-    const current = await providerScores.getSeries(mangaId, providerName);
-    await providerScores.setSeries(mangaId, providerName, score, current?.enabled ?? true);
+    if (parsed === null) {
+      // Empty — delete the override row
+      await providerScores.deleteSeries(mangaId, providerName);
+      if (input) input.classList.add('using-default');
+      if (clearBtn) clearBtn.style.display = 'none';
+    } else {
+      if (isNaN(parsed)) return;
+      const current = await providerScores.getSeries(mangaId, providerName);
+      await providerScores.setSeries(mangaId, providerName, parsed, current?.enabled ?? true);
+      if (input) input.classList.remove('using-default');
+      if (clearBtn) clearBtn.style.display = '';
+    }
+    // Reload providers to reflect updated effective score
+    loadProviders(mangaId);
   } catch(e) {
     showToast('Score save failed: ' + e.message, 'error');
+  }
+};
+
+window.clearSeriesScore = async function(mangaId, providerName) {
+  // Reload the series score to get the effective default
+  try {
+    const result = await providerScores.getSeries(mangaId, providerName);
+    const input = document.querySelector(`.score-input[data-manga="${mangaId}"][data-provider="${CSS.escape(providerName)}"]`);
+    if (result && result.score == null) {
+      // No series override — show the effective score (global or default)
+      if (input) input.value = result.effective_score;
+    } else if (result && result.score != null) {
+      if (input) input.value = result.score;
+    }
+    await window.setSeriesScore(mangaId, providerName, '');
+  } catch(e) {
+    showToast('Clear failed: ' + e.message, 'error');
   }
 };
 

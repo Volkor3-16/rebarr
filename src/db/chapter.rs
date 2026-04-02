@@ -423,11 +423,11 @@ pub async fn update_canonical(
                 None => return true, // keep chapters without provider (e.g. disk-scanned)
             };
             // Per-series override takes priority over global setting.
-            let enabled = series_overrides
+            
+            series_overrides
                 .get(name)
                 .map(|(_, enabled)| *enabled)
-                .unwrap_or_else(|| !globally_disabled.contains(name));
-            enabled
+                .unwrap_or_else(|| !globally_disabled.contains(name))
         })
         .collect();
 

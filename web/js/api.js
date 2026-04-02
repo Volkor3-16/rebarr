@@ -147,6 +147,8 @@ export const coverApi = {
 export const providerScores = {
   getGlobal: (name) => get(`/api/providers/${encodeURIComponent(name)}/score`),
   setGlobal: (name, score, enabled) => put(`/api/providers/${encodeURIComponent(name)}/score`, { score, enabled }),
+  deleteGlobal: (name) => del(`/api/providers/${encodeURIComponent(name)}/score`),
   getSeries: (mangaId, name) => get(`/api/manga/${mangaId}/providers/${encodeURIComponent(name)}/score`),
   setSeries: (mangaId, name, score, enabled) => put(`/api/manga/${mangaId}/providers/${encodeURIComponent(name)}/score`, { score, enabled }),
+  deleteSeries: (mangaId, name) => del(`/api/manga/${mangaId}/providers/${encodeURIComponent(name)}/score`),
 };

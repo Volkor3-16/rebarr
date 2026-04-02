@@ -1,7 +1,9 @@
-use rocket::{State, get, put, serde::json::Json};
+use rocket::{State, delete, get, put, serde::json::Json};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use uuid::Uuid;
+
+use crate::scraper::ProviderRegistry;
 
 use super::errors::{ApiResult, bad_request, internal};
 use crate::db::{chapter as db_chapter, provider as db_provider, provider_scores, settings as db_settings};
@@ -16,6 +18,8 @@ pub struct GlobalScoreResponse {
     pub score: Option<i32>,
     /// Whether this provider is globally enabled (default: true).
     pub enabled: bool,
+    /// Default score from the provider YAML config (used when no override is set).
+    pub default_score: i32,
 }
 
 #[derive(Serialize)]
@@ -24,6 +28,12 @@ pub struct SeriesScoreResponse {
     pub score: Option<i32>,
     /// Whether this provider is enabled for this series (default: true).
     pub enabled: bool,
+    /// Effective score for this series (series > global > yaml default).
+    pub effective_score: i32,
+    /// Default score from the provider YAML config.
+    pub default_score: i32,
+    /// Where the effective score comes from: "series", "global", or "default".
+    pub score_source: String,
 }
 
 #[derive(Deserialize)]
@@ -45,6 +55,7 @@ pub struct SetSeriesScoreRequest {
 #[get("/api/providers/<name>/score")]
 pub async fn get_global_score(
     pool: &State<SqlitePool>,
+    registry: &State<std::sync::Arc<ProviderRegistry>>,
     name: &str,
 ) -> ApiResult<GlobalScoreResponse> {
     let score = provider_scores::get_global_score(pool.inner(), name)
@@ -53,7 +64,13 @@ pub async fn get_global_score(
     let enabled = provider_scores::get_global_enabled(pool.inner(), name)
         .await
         .map_err(internal)?;
-    Ok(Json(GlobalScoreResponse { score, enabled }))
+    let default_score = registry
+        .all()
+        .iter()
+        .find(|p| p.name() == name)
+        .map(|p| p.default_score())
+        .unwrap_or(0);
+    Ok(Json(GlobalScoreResponse { score, enabled, default_score }))
 }
 
 // ---------------------------------------------------------------------------
@@ -63,6 +80,7 @@ pub async fn get_global_score(
 #[put("/api/providers/<name>/score", data = "<body>")]
 pub async fn set_global_score(
     pool: &State<SqlitePool>,
+    registry: &State<std::sync::Arc<ProviderRegistry>>,
     name: &str,
     body: Json<SetGlobalScoreRequest>,
 ) -> ApiResult<GlobalScoreResponse> {
@@ -83,9 +101,16 @@ pub async fn set_global_score(
             .map_err(internal)?;
     }
 
+    let default_score = registry
+        .all()
+        .iter()
+        .find(|p| p.name() == name)
+        .map(|p| p.default_score())
+        .unwrap_or(0);
     Ok(Json(GlobalScoreResponse {
         score: Some(body.score),
         enabled,
+        default_score,
     }))
 }
 
@@ -96,6 +121,7 @@ pub async fn set_global_score(
 #[get("/api/manga/<id>/providers/<name>/score")]
 pub async fn get_series_score(
     pool: &State<SqlitePool>,
+    registry: &State<std::sync::Arc<ProviderRegistry>>,
     id: &str,
     name: &str,
 ) -> ApiResult<SeriesScoreResponse> {
@@ -106,7 +132,33 @@ pub async fn get_series_score(
     let enabled = provider_scores::get_enabled(pool.inner(), name, manga_id)
         .await
         .map_err(internal)?;
-    Ok(Json(SeriesScoreResponse { score, enabled }))
+
+    // Determine effective score and its source
+    let default_score = registry
+        .all()
+        .iter()
+        .find(|p| p.name() == name)
+        .map(|p| p.default_score())
+        .unwrap_or(0);
+
+    let (effective_score, score_source) = if let Some(s) = score {
+        (s, "series".to_string())
+    } else if let Some(s) = provider_scores::get_global_score(pool.inner(), name)
+        .await
+        .map_err(internal)?
+    {
+        (s, "global".to_string())
+    } else {
+        (default_score, "default".to_string())
+    };
+
+    Ok(Json(SeriesScoreResponse {
+        score,
+        enabled,
+        effective_score,
+        default_score,
+        score_source,
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -116,6 +168,7 @@ pub async fn get_series_score(
 #[put("/api/manga/<id>/providers/<name>/score", data = "<body>")]
 pub async fn set_series_score(
     pool: &State<SqlitePool>,
+    registry: &State<std::sync::Arc<ProviderRegistry>>,
     id: &str,
     name: &str,
     body: Json<SetSeriesScoreRequest>,
@@ -136,9 +189,99 @@ pub async fn set_series_score(
         .await
         .map_err(internal)?;
 
+    let default_score = registry
+        .all()
+        .iter()
+        .find(|p| p.name() == name)
+        .map(|p| p.default_score())
+        .unwrap_or(0);
+
     Ok(Json(SeriesScoreResponse {
         score: Some(score),
         enabled,
+        effective_score: score,
+        default_score,
+        score_source: "series".to_string(),
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// DELETE /api/providers/<name>/score — remove global override
+// ---------------------------------------------------------------------------
+
+#[delete("/api/providers/<name>/score")]
+pub async fn delete_global_score(
+    pool: &State<SqlitePool>,
+    registry: &State<std::sync::Arc<ProviderRegistry>>,
+    name: &str,
+) -> ApiResult<GlobalScoreResponse> {
+    sqlx::query("DELETE FROM Providers WHERE provider_name = ? AND manga_id IS NULL")
+        .bind(name)
+        .execute(pool.inner())
+        .await
+        .map_err(internal)?;
+
+    let default_score = registry
+        .all()
+        .iter()
+        .find(|p| p.name() == name)
+        .map(|p| p.default_score())
+        .unwrap_or(0);
+
+    Ok(Json(GlobalScoreResponse {
+        score: None,
+        enabled: true,
+        default_score,
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// DELETE /api/manga/<id>/providers/<name>/score — remove series override
+// ---------------------------------------------------------------------------
+
+#[delete("/api/manga/<id>/providers/<name>/score")]
+pub async fn delete_series_score(
+    pool: &State<SqlitePool>,
+    registry: &State<std::sync::Arc<ProviderRegistry>>,
+    id: &str,
+    name: &str,
+) -> ApiResult<SeriesScoreResponse> {
+    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    sqlx::query("DELETE FROM Providers WHERE provider_name = ? AND manga_id = ?")
+        .bind(name)
+        .bind(manga_id.to_string())
+        .execute(pool.inner())
+        .await
+        .map_err(internal)?;
+
+    let default_score = registry
+        .all()
+        .iter()
+        .find(|p| p.name() == name)
+        .map(|p| p.default_score())
+        .unwrap_or(0);
+
+    // Re-calculate effective score after deletion
+    let (effective_score, score_source) = if let Some(s) =
+        provider_scores::get_global_score(pool.inner(), name)
+            .await
+            .map_err(internal)?
+    {
+        (s, "global".to_string())
+    } else {
+        (default_score, "default".to_string())
+    };
+
+    let enabled = provider_scores::get_enabled(pool.inner(), name, manga_id)
+        .await
+        .map_err(internal)?;
+
+    Ok(Json(SeriesScoreResponse {
+        score: None,
+        enabled,
+        effective_score,
+        default_score,
+        score_source,
     }))
 }
 
@@ -169,7 +312,9 @@ pub fn routes() -> Vec<rocket::Route> {
     rocket::routes![
         get_global_score,
         set_global_score,
+        delete_global_score,
         get_series_score,
         set_series_score,
+        delete_series_score,
     ]
 }

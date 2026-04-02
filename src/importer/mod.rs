@@ -393,8 +393,7 @@ fn extract_title_from_filename(filename: &str) -> Option<String> {
             let title = title_match.as_str().trim();
             // Remove trailing scanlator group info in brackets if present
             let title = Regex::new(r"\s*\[.*?\]\s*$")
-                .ok()
-                .and_then(|r| Some(r.replace(title, "").to_string()))
+                .ok().map(|r| r.replace(title, "").to_string())
                 .unwrap_or_else(|| title.to_string());
             
             let title = title.trim();

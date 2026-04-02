@@ -2,6 +2,10 @@
 
 This a informal changelog so i can keep track of what im doing.
 
+## 2026-04-02
+
+- Default provider scores are now actually shown on the frontend ()
+
 ## 2026-04-01
 
 - Queue Changes:

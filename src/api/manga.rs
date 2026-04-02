@@ -62,6 +62,8 @@ pub(crate) struct ProviderInfo {
     needs_browser: bool,
     version: Option<String>,
     tags: Vec<crate::scraper::def::ProviderTag>,
+    /// Default score from the provider YAML config (used as fallback when no override is set).
+    default_score: i32,
 }
 
 #[derive(Serialize)]
@@ -446,6 +448,7 @@ pub async fn list_providers(
             needs_browser: p.needs_browser(),
             version: p.version().map(str::to_owned),
             tags: p.tags().to_vec(),
+            default_score: p.default_score(),
         })
         .collect();
     Json(providers)
