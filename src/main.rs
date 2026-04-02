@@ -78,7 +78,7 @@ async fn main() -> Result<(), Box<rocket::Error>> {
     );
     info!("Background task worker started.");
 
-    rocket::build()
+    let rocket = rocket::build()
         .manage(pool)
         .manage(al_client)
         .manage(al_metadata)
@@ -89,12 +89,23 @@ async fn main() -> Result<(), Box<rocket::Error>> {
         .mount("/", frontend_routes())
         .mount("/", api_routes())
         .mount("/web", FileServer::from("web"))
-        .launch()
+        .ignite()
         .await?;
 
-    // Graceful shutdown: signal workers to stop and wait briefly
-    info!("Shutting down background workers...");
-    shutdown_token.cancel();
+    // Get Rocket's shutdown handle and spawn a task to cancel workers early
+    let shutdown_handle = rocket.shutdown();
+    let shutdown_token_clone = shutdown_token.clone();
+    tokio::spawn(async move {
+        shutdown_handle.await;
+        info!("Rocket shutdown signal received, cancelling background workers...");
+        shutdown_token_clone.cancel();
+    });
+
+    // Launch Rocket
+    rocket.launch().await?;
+
+    // Graceful shutdown: wait for workers to finish (token already cancelled)
+    info!("Waiting for background workers to finish...");
     let _ = tokio::time::timeout(Duration::from_secs(5), worker_handle).await;
 
     // Clean up browser pool if running

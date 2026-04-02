@@ -84,13 +84,15 @@ pub fn start(
     cancel_map: CancelMap,
     shutdown_token: CancellationToken,
 ) -> JoinHandle<()> {
+    let mut handles = Vec::new();
+
     // Spawn the periodic scheduler as a separate task
     let scheduler_pool = pool.clone();
     let scheduler_registry = registry.clone();
     let scheduler_shutdown = shutdown_token.clone();
-    tokio::spawn(async move {
+    handles.push(tokio::spawn(async move {
         run_scheduler(scheduler_pool.clone(), scheduler_registry, scheduler_shutdown).await;
-    });
+    }));
 
     // Spawn system queue workers (1-2 workers for system tasks)
     let system_workers = 2;
@@ -100,7 +102,7 @@ pub fn start(
         let ctx = ctx.clone();
         let cancel_map = cancel_map.clone();
         let worker_shutdown = shutdown_token.clone();
-        tokio::spawn(async move {
+        handles.push(tokio::spawn(async move {
             queue_worker(
                 &pool,
                 &registry,
@@ -111,7 +113,7 @@ pub fn start(
                 worker_shutdown,
             )
             .await;
-        });
+        }));
     }
 
     // Spawn provider-specific queue workers
@@ -125,15 +127,20 @@ pub fn start(
             let queue_name = provider_queue_name(provider.name());
             let worker_name = format!("{}-{i}", provider.name());
             let worker_shutdown = shutdown_token.clone();
-            tokio::spawn(async move {
+            handles.push(tokio::spawn(async move {
                 queue_worker(&pool, &registry, &ctx, &cancel_map, &queue_name, worker_name, worker_shutdown).await;
-            });
+            }));
         }
     }
 
-    // Return a handle that resolves when shutdown is requested
+    // Return a handle that waits for all workers to finish
     tokio::spawn(async move {
+        // Wait for shutdown signal
         shutdown_token.cancelled().await;
+        // Wait for all worker tasks to complete
+        for handle in handles {
+            let _ = handle.await;
+        }
     })
 }
 
