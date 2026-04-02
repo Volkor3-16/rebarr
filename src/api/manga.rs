@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::{
     db,
-    http::anilist::ALClient,
+    http::metadata::AniListMetadata,
     manga::{
         comicinfo, covers, files,
         core::{Manga, MangaMetadata, MangaSource, PublishingStatus, Synonym, SynonymSource},
@@ -123,12 +123,12 @@ async fn auto_unmonitor_completed_if_enabled(
 // ---------------------------------------------------------------------------
 
 #[get("/api/manga/search?<q>")]
-pub async fn search_manga(al: &State<ALClient>, q: &str) -> ApiResult<Vec<Manga>> {
+pub async fn search_manga(al: &State<AniListMetadata>, q: &str) -> ApiResult<Vec<Manga>> {
     if q.trim().is_empty() {
         return Ok(Json(vec![]));
     }
     debug!("Searching for manga: {q}");
-    al.search_manga_as_manga(q.trim())
+    al.search_manga(q.trim())
         .await
         .map(Json)
         .map_err(internal)
@@ -141,7 +141,7 @@ pub async fn search_manga(al: &State<ALClient>, q: &str) -> ApiResult<Vec<Manga>
 #[post("/api/manga", data = "<body>")]
 pub async fn add_manga(
     pool: &State<SqlitePool>,
-    al: &State<ALClient>,
+    al: &State<AniListMetadata>,
     http: &State<reqwest::Client>,
     body: Json<AddMangaRequest>,
 ) -> ApiResult<Manga> {
@@ -499,7 +499,7 @@ pub async fn check_new_chapters_api(
 
     db::task::enqueue(
         pool.inner(),
-        crate::db::task::TaskType::CheckNewChapter,
+        crate::db::task::TaskType::SyncProviderChapters,
         Some(manga_id),
         None,
         5,

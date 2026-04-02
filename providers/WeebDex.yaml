@@ -7,7 +7,6 @@ tags:
   - multi_language
 rate_limit:
   requests_per_minute: 30
-  page_delay_ms: 500
 
 search:
   steps:

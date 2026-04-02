@@ -471,7 +471,6 @@ async fn cmd_test(
         ctx,
         Some(provider.name()),
         &pages,
-        provider.page_delay_ms(),
         chapter_url,
         cancel,
     )
@@ -768,7 +767,6 @@ async fn cmd_download(
         ctx,
         Some(provider.name()),
         &pages,
-        provider.page_delay_ms(),
         chapter_url,
         cancel,
     )

@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::db::task::TaskType;
 use crate::db::{chapter as db_chapter, library as db_library, manga as db_manga, task as db_task};
-use crate::http::anilist::ALClient;
+use crate::http::metadata::AniListMetadata;
 use crate::manga::{comicinfo, covers, files};
 use crate::manga::core::{Chapter, DownloadStatus, Manga};
 
@@ -181,7 +181,7 @@ fn count_cbz_shallow(dir: &Path) -> u32 {
 pub async fn execute_series_imports(
     imports: Vec<ConfirmedSeriesImport>,
     pool: &SqlitePool,
-    al_client: &ALClient,
+    al_client: &AniListMetadata,
     http_client: &reqwest::Client,
     queue_chapter_scan: bool,
 ) -> SeriesImportSummary {

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
+use crate::api::events::{self, TaskUpdate};
 use crate::http::webhook;
 
 // ---------------------------------------------------------------------------
@@ -16,8 +17,8 @@ pub enum TaskType {
     /// Refresh metadata from the source (AniList, local, etc.)
     /// TODO: This also creates/updates ComicInfo.xml files
     RefreshMetadata,
-    /// Check for new chapters on enabled providers
-    CheckNewChapter,
+    /// Sync chapters from a single provider (used for both initial build and periodic checks)
+    SyncProviderChapters,
     /// Download a chapter
     DownloadChapter,
     /// Scan disk for existing chapter files
@@ -99,7 +100,7 @@ pub fn task_type_str(t: &TaskType) -> &'static str {
     match t {
         TaskType::BuildFullChapterList => "BuildFullChapterList",
         TaskType::RefreshMetadata => "RefreshMetadata",
-        TaskType::CheckNewChapter => "CheckNewChapter",
+        TaskType::SyncProviderChapters => "SyncProviderChapters",
         TaskType::DownloadChapter => "DownloadChapter",
         TaskType::ScanDisk => "ScanDisk",
         TaskType::OptimiseChapter => "OptimiseChapter",
@@ -132,7 +133,7 @@ fn task_from_row(row: TaskRow) -> Result<Task, sqlx::Error> {
         // New names
         "BuildFullChapterList" => TaskType::BuildFullChapterList,
         "RefreshMetadata" => TaskType::RefreshMetadata,
-        "CheckNewChapter" => TaskType::CheckNewChapter,
+        "CheckNewChapter" | "SyncProviderChapters" => TaskType::SyncProviderChapters,
         "DownloadChapter" => TaskType::DownloadChapter,
         "ScanDisk" => TaskType::ScanDisk,
         "OptimiseChapter" => TaskType::OptimiseChapter,
@@ -175,6 +176,50 @@ fn task_from_row(row: TaskRow) -> Result<Task, sqlx::Error> {
 // Queue helpers
 // ---------------------------------------------------------------------------
 
+/// Look up task details needed for an SSE event (manga title, chapter number).
+async fn task_event_details(
+    pool: &SqlitePool,
+    task_id: Uuid,
+    task_type: &str,
+    status: &str,
+    last_error: Option<String>,
+) -> TaskUpdate {
+    let (manga_title, chapter_number_raw): (Option<String>, Option<String>) =
+        sqlx::query_as(
+            "SELECT m.title, c.chapter_base, c.chapter_variant
+             FROM Task t
+             LEFT JOIN Manga m ON t.manga_id = m.uuid
+             LEFT JOIN Chapters c ON t.chapter_id = c.uuid
+             WHERE t.uuid = ?",
+        )
+        .bind(task_id.to_string())
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .map(|(title, base, variant): (Option<String>, Option<i64>, Option<i64>)| {
+            let chapter = base.map(|b| {
+                let v = variant.unwrap_or(0);
+                if v == 0 {
+                    b.to_string()
+                } else {
+                    format!("{b}.{v}")
+                }
+            });
+            (title, chapter)
+        })
+        .unwrap_or((None, None));
+
+    TaskUpdate {
+        id: task_id.to_string(),
+        task_type: task_type.to_string(),
+        status: status.to_string(),
+        manga_title,
+        chapter_number_raw,
+        last_error,
+    }
+}
+
 /// Determine which queue a task type belongs to.
 /// System tasks go to 'system', provider-specific tasks go to the provider name.
 pub fn task_queue(task_type: &TaskType) -> &'static str {
@@ -182,7 +227,7 @@ pub fn task_queue(task_type: &TaskType) -> &'static str {
         // System tasks - handled by system worker
         TaskType::BuildFullChapterList => "system",
         TaskType::RefreshMetadata => "system",
-        TaskType::CheckNewChapter => "system",
+        TaskType::SyncProviderChapters => "system",
         TaskType::ScanDisk => "system",
         TaskType::OptimiseChapter => "system",
         TaskType::Backup => "system",
@@ -215,29 +260,7 @@ pub async fn enqueue_with_queue(
     priority: i64,
     queue: Option<String>,
 ) -> Result<Uuid, sqlx::Error> {
-    let id = Uuid::new_v4();
-    let now = Utc::now();
-    let queue = queue.unwrap_or_else(|| task_queue(&task_type).to_string());
-
-    sqlx::query(
-        "INSERT INTO Task
-            (uuid, task_type, status, queue, manga_id, chapter_id, priority,
-             attempt, max_attempts, created_at, updated_at, run_after)
-         VALUES (?, ?, 'Pending', ?, ?, ?, ?, 0, 3, ?, ?, ?)",
-    )
-    .bind(id.to_string())
-    .bind(task_type_str(&task_type))
-    .bind(queue)
-    .bind(manga_id.map(|v| v.to_string()))
-    .bind(chapter_id.map(|v| v.to_string()))
-    .bind(priority)
-    .bind(now)
-    .bind(now)
-    .bind(now)
-    .execute(pool)
-    .await?;
-    webhook::dispatch_task_event(id, task_type_str(&task_type), "Pending");
-    Ok(id)
+    enqueue_with_payload(pool, task_type, manga_id, chapter_id, priority, queue, None).await
 }
 
 /// Claim the next task from a specific queue.
@@ -277,6 +300,13 @@ pub async fn claim_next_for_queue(
 
     let task = task_from_row(row)?;
     webhook::dispatch_task_event(task.id, task_type_str(&task.task_type), "Running");
+    events::emit_task_update(&task_event_details(
+        pool,
+        task.id,
+        task_type_str(&task.task_type),
+        "Running",
+        None,
+    ).await);
     Ok(Some(task))
 }
 
@@ -317,6 +347,13 @@ pub async fn claim_next(pool: &SqlitePool) -> Result<Option<Task>, sqlx::Error> 
 
     let task = task_from_row(row)?;
     webhook::dispatch_task_event(task.id, task_type_str(&task.task_type), "Running");
+    events::emit_task_update(&task_event_details(
+        pool,
+        task.id,
+        task_type_str(&task.task_type),
+        "Running",
+        None,
+    ).await);
     Ok(Some(task))
 }
 
@@ -330,6 +367,13 @@ pub async fn complete(pool: &SqlitePool, task_id: Uuid) -> Result<(), sqlx::Erro
         .await?;
     if let Some(task) = task {
         webhook::dispatch_task_event(task.id, task_type_str(&task.task_type), "Completed");
+        events::emit_task_update(&task_event_details(
+            pool,
+            task.id,
+            task_type_str(&task.task_type),
+            "Completed",
+            None,
+        ).await);
     }
     Ok(())
 }
@@ -389,6 +433,13 @@ pub async fn fail(pool: &SqlitePool, task_id: Uuid, error: &str) -> Result<(), s
                 task_type_str(&task.task_type),
                 task_status_str(&TaskStatus::Pending),
             );
+            events::emit_task_update(&task_event_details(
+                pool,
+                task.id,
+                task_type_str(&task.task_type),
+                "Pending",
+                Some(error.to_string()),
+            ).await);
         }
     } else {
         sqlx::query(
@@ -407,6 +458,13 @@ pub async fn fail(pool: &SqlitePool, task_id: Uuid, error: &str) -> Result<(), s
                 task_type_str(&task.task_type),
                 task_status_str(&TaskStatus::Failed),
             );
+            events::emit_task_update(&task_event_details(
+                pool,
+                task.id,
+                task_type_str(&task.task_type),
+                "Failed",
+                Some(error.to_string()),
+            ).await);
         }
     }
     Ok(())
@@ -438,6 +496,13 @@ pub async fn cancel(pool: &SqlitePool, task_id: Uuid) -> Result<(), sqlx::Error>
     .await?;
     if let Some(task) = task {
         webhook::dispatch_task_event(task.id, task_type_str(&task.task_type), "Cancelled");
+        events::emit_task_update(&task_event_details(
+            pool,
+            task.id,
+            task_type_str(&task.task_type),
+            "Cancelled",
+            None,
+        ).await);
     }
     Ok(())
 }
@@ -493,9 +558,17 @@ pub async fn cancel_by_chapter(pool: &SqlitePool, chapter_id: Uuid) -> Result<()
     .execute(pool)
     .await?;
 
-    for (id, task_type) in tasks {
-        if let Ok(task_id) = Uuid::parse_str(&id) {
-            webhook::dispatch_task_event(task_id, &task_type, "Cancelled");
+    for (id, task_type) in &tasks {
+        if let Ok(task_id) = Uuid::parse_str(id) {
+            webhook::dispatch_task_event(task_id, task_type, "Cancelled");
+            events::emit_task_update(&TaskUpdate {
+                id: id.clone(),
+                task_type: task_type.clone(),
+                status: "Cancelled".to_string(),
+                manga_title: None,
+                chapter_number_raw: None,
+                last_error: None,
+            });
         }
     }
     Ok(())
@@ -556,6 +629,67 @@ pub async fn is_pending_for_manga(
     .fetch_one(pool)
     .await?;
     Ok(count > 0)
+}
+
+/// Check whether a Pending or Running task of the given type already exists for a manga in a specific queue.
+pub async fn is_pending_in_queue(
+    pool: &SqlitePool,
+    queue: &str,
+    manga_id: Uuid,
+    task_type: TaskType,
+) -> Result<bool, sqlx::Error> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM Task WHERE queue = ? AND manga_id = ? AND task_type = ? AND status IN ('Pending', 'Running')",
+    )
+    .bind(queue)
+    .bind(manga_id.to_string())
+    .bind(task_type_str(&task_type))
+    .fetch_one(pool)
+    .await?;
+    Ok(count > 0)
+}
+
+/// Insert a new Pending task with optional queue and payload.
+pub async fn enqueue_with_payload(
+    pool: &SqlitePool,
+    task_type: TaskType,
+    manga_id: Option<Uuid>,
+    chapter_id: Option<Uuid>,
+    priority: i64,
+    queue: Option<String>,
+    payload: Option<String>,
+) -> Result<Uuid, sqlx::Error> {
+    let id = Uuid::new_v4();
+    let now = Utc::now();
+    let queue = queue.unwrap_or_else(|| task_queue(&task_type).to_string());
+
+    sqlx::query(
+        "INSERT INTO Task
+            (uuid, task_type, status, queue, manga_id, chapter_id, priority, payload,
+             attempt, max_attempts, created_at, updated_at, run_after)
+         VALUES (?, ?, 'Pending', ?, ?, ?, ?, ?, 0, 3, ?, ?, ?)",
+    )
+    .bind(id.to_string())
+    .bind(task_type_str(&task_type))
+    .bind(queue)
+    .bind(manga_id.map(|v| v.to_string()))
+    .bind(chapter_id.map(|v| v.to_string()))
+    .bind(priority)
+    .bind(payload.as_deref())
+    .bind(now)
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+    webhook::dispatch_task_event(id, task_type_str(&task_type), "Pending");
+    events::emit_task_update(&task_event_details(
+        pool,
+        id,
+        task_type_str(&task_type),
+        "Pending",
+        None,
+    ).await);
+    Ok(id)
 }
 
 /// Fetch recent tasks ordered by created_at DESC. Optionally filter by manga_id.

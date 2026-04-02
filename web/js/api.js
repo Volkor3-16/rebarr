@@ -102,6 +102,7 @@ export const tasks = {
     return get(`/api/tasks${query ? '?' + query : ''}`);
   },
   cancel: (id) => post(`/api/tasks/${id}/cancel`, null),
+  listGrouped: () => get('/api/tasks/grouped'),
 };
 
 // Trusted Groups API

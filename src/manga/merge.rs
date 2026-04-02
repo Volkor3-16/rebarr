@@ -44,30 +44,37 @@ pub async fn check_new_chapters(
     scrape_known_providers(pool, registry, ctx, manga, task_id).await
 }
 
-/// Scan all providers for a manga:
-/// 1. Search for provider URLs not yet cached in `MangaProvider`.
-/// 2. Scrape chapter lists for every cached provider URL.
-/// 3. Upsert new chapters (existing `Downloaded` chapters are untouched).
-/// 4. Recompute CanonicalChapters and update chapter_count/downloaded_count.
-#[tracing::instrument(skip(pool, registry, ctx), fields(manga = %manga.metadata.title))]
-pub async fn scan_manga(
+/// Check a single provider for new chapters.
+/// Used by per-provider tasks to check only one provider at a time.
+pub async fn check_provider_chapters(
     pool: &SqlitePool,
     registry: &ProviderRegistry,
     ctx: &ScraperCtx,
     manga: &Manga,
     task_id: uuid::Uuid,
+    provider_name: &str,
 ) -> Result<ScanResult, ScanError> {
-    // Fallback to the other titles in case of emergency.
+    scrape_single_provider(pool, registry, ctx, manga, task_id, provider_name).await
+}
+
+/// Search all providers for a manga and cache the URLs in `MangaProvider`.
+/// Providers that are globally disabled or already have a URL are skipped.
+/// This is the first phase of a full scan — run before per-provider chapter scraping.
+#[tracing::instrument(skip(pool, registry, ctx), fields(manga = %manga.metadata.title))]
+pub async fn search_providers(
+    pool: &SqlitePool,
+    registry: &ProviderRegistry,
+    ctx: &ScraperCtx,
+    manga: &Manga,
+    task_id: uuid::Uuid,
+) -> Result<(), ScanError> {
     let mut search_titles: Vec<String> = vec![manga.metadata.title.clone()];
 
-    // Add all other_titles (synonyms, romaji, native, etc.)
     if let Some(ref other) = manga.metadata.other_titles {
         for synonym in other {
-            // Skip if hidden (user manually hid this synonym)
             if synonym.hidden {
                 continue;
             }
-
             if !synonym.title.trim().is_empty() {
                 search_titles.push(synonym.title.clone());
             }
@@ -87,7 +94,6 @@ pub async fn scan_manga(
 
     let mut providers_to_search = Vec::new();
     for provider in registry.all() {
-        // Skip globally disabled providers.
         if globally_disabled.contains(provider.name()) {
             debug!(
                 "[scan] {} is globally disabled, skipping search.",
@@ -95,8 +101,6 @@ pub async fn scan_manga(
             );
             continue;
         }
-
-        // Skip providers that have already searched for the series.
         if db_provider::has_url(pool, manga.id, provider.name()).await? {
             debug!(
                 "[scan] {} already has a URL for '{}', skipping search.",
@@ -105,7 +109,6 @@ pub async fn scan_manga(
             );
             continue;
         }
-
         providers_to_search.push((*provider).clone());
     }
 
@@ -212,6 +215,23 @@ pub async fn scan_manga(
         }
     }
 
+    Ok(())
+}
+
+/// Scan all providers for a manga:
+/// 1. Search for provider URLs not yet cached in `MangaProvider`.
+/// 2. Scrape chapter lists for every cached provider URL.
+/// 3. Upsert new chapters (existing `Downloaded` chapters are untouched).
+/// 4. Recompute CanonicalChapters and update chapter_count/downloaded_count.
+#[tracing::instrument(skip(pool, registry, ctx), fields(manga = %manga.metadata.title))]
+pub async fn scan_manga(
+    pool: &SqlitePool,
+    registry: &ProviderRegistry,
+    ctx: &ScraperCtx,
+    manga: &Manga,
+    task_id: uuid::Uuid,
+) -> Result<ScanResult, ScanError> {
+    search_providers(pool, registry, ctx, manga, task_id).await?;
     scrape_known_providers(pool, registry, ctx, manga, task_id).await
 }
 
@@ -247,6 +267,109 @@ async fn scrape_known_providers(
     )
     .await?;
 
+    if manga.monitored {
+        enqueue_auto_downloads(pool, manga, &new_ids_for_download).await;
+        enqueue_upgrades(pool, manga, &trusted_groups).await;
+    }
+
+    let final_entries = db_provider::get_all_for_manga(pool, manga.id).await?;
+    Ok(ScanResult {
+        providers_found: final_entries.iter().filter(|e| e.found()).count(),
+        new_chapters: total_new,
+    })
+}
+
+/// Scrape chapters from a single provider only.
+/// Used by per-provider SyncProviderChapters tasks.
+#[allow(unused_variables)]
+async fn scrape_single_provider(
+    pool: &SqlitePool,
+    registry: &ProviderRegistry,
+    ctx: &ScraperCtx,
+    manga: &Manga,
+    task_id: uuid::Uuid,
+    provider_name: &str,
+) -> Result<ScanResult, ScanError> {
+    let globally_disabled = db_scores::get_globally_disabled(pool).await?;
+    let all_entries = db_provider::get_all_for_manga(pool, manga.id).await?;
+
+    let entry = all_entries
+        .iter()
+        .find(|e| e.provider_name == provider_name && e.found() && !globally_disabled.contains(&e.provider_name))
+        .ok_or_else(|| ScanError::Scraper(crate::scraper::error::ScraperError::Parse(
+            format!("provider '{}' not found or disabled for '{}'", provider_name, manga.metadata.title)
+        )))?;
+
+    let provider_map: std::collections::HashMap<String, std::sync::Arc<dyn crate::scraper::Provider>> =
+        registry
+            .all()
+            .into_iter()
+            .map(|p| (p.name().to_owned(), (*p).clone()))
+            .collect();
+
+    let Some(provider) = provider_map.get(provider_name).cloned() else {
+        return Err(ScanError::Scraper(crate::scraper::error::ScraperError::Parse(
+            format!("provider '{provider_name}' is in DB but not loaded")
+        )));
+    };
+
+    let provider_url = entry.provider_url.clone().unwrap_or_default();
+    let result = ctx.executor.chapters(ctx, &provider, &provider_url).await;
+
+    let was_previously_synced = entry.last_synced_at.is_some();
+    let (total_new, new_ids_for_download) = match result {
+        Ok(infos) => {
+            let inserted_ids =
+                db_chapter::upsert_from_scrape(pool, manga.id, provider_name, &infos)
+                    .await?;
+            let inserted = inserted_ids.len();
+            info!(
+                "[scan] {} returned {} chapters ({inserted} new).",
+                provider_name,
+                infos.len()
+            );
+
+            let mut new_ids = std::collections::HashSet::new();
+            if was_previously_synced {
+                new_ids.extend(inserted_ids);
+            }
+
+            db_provider::upsert(
+                pool,
+                &MangaProvider {
+                    manga_id: manga.id,
+                    enabled: true,
+                    provider_name: provider_name.to_owned(),
+                    provider_url: entry.provider_url.clone(),
+                    last_synced_at: Some(Utc::now().timestamp()),
+                    search_attempted_at: entry.search_attempted_at,
+                },
+            )
+            .await?;
+
+            (inserted, new_ids)
+        }
+        Err(e) => {
+            warn!("[scan] Chapter fetch failed on {}: {e}", provider_name);
+            return Err(ScanError::Scraper(e));
+        }
+    };
+
+    // After scraping, update canonical chapters
+    let trusted_groups = db_provider::get_trusted_groups(pool).await?;
+    let preferred_language = db_settings::get(pool, "preferred_language", "").await?;
+    let yaml_defaults = registry.yaml_default_scores();
+    let provider_scores = db_scores::load_effective_scores(pool, manga.id, &yaml_defaults).await?;
+    db_chapter::update_canonical(
+        pool,
+        manga.id,
+        &trusted_groups,
+        &preferred_language,
+        &provider_scores,
+    )
+    .await?;
+
+    // Auto-download if monitored
     if manga.monitored {
         enqueue_auto_downloads(pool, manga, &new_ids_for_download).await;
         enqueue_upgrades(pool, manga, &trusted_groups).await;

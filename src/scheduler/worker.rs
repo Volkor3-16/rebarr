@@ -1,5 +1,6 @@
 // This file handles:
 // - All potential tasks that can be loaded into the queue
+// - Multi-queue worker dispatch for per-provider queues
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -13,10 +14,10 @@ use uuid::Uuid;
 
 use crate::db::task::{Task, TaskType};
 use crate::db::{
-    chapter as db_chapter, library as db_library, manga as db_manga, settings as db_settings,
-    task as db_task,
+    chapter as db_chapter, library as db_library, manga as db_manga, provider as db_provider,
+    provider_failure as db_provider_failure, settings as db_settings, task as db_task,
 };
-use crate::http::anilist::ALClient;
+use crate::http::metadata::AniListMetadata;
 use crate::library::scanner::scan_existing_chapters;
 use crate::manga::{comicinfo, covers, files};
 use crate::manga::merge;
@@ -28,6 +29,11 @@ use crate::scraper::{ProviderRegistry, ScraperCtx};
 /// Shared map of task UUID → CancellationToken for in-flight tasks.
 /// The cancel API endpoint signals the token; the running task checks it.
 pub type CancelMap = Arc<Mutex<HashMap<Uuid, CancellationToken>>>;
+
+/// Queue name prefix for provider-specific queues.
+pub fn provider_queue_name(provider_name: &str) -> String {
+    format!("provider:{provider_name}")
+}
 
 async fn rewrite_downloaded_comicinfo(
     pool: &SqlitePool,
@@ -68,88 +74,174 @@ async fn rewrite_downloaded_comicinfo(
 // Workers
 // This file handles all the queue and tasks.
 
-/// Spawn the background worker as a detached tokio task.
-/// The worker loops indefinitely, polling for pending tasks every 5 seconds.
-/// Also spawns a separate scheduler task that enqueues periodic chapter checks.
+/// Spawn the multi-queue worker system as a detached tokio task.
+/// Creates one worker pool per provider (concurrency from YAML max_concurrency)
+/// plus a system worker for non-provider tasks.
 pub fn start(
     pool: SqlitePool,
     registry: Arc<ProviderRegistry>,
     ctx: ScraperCtx,
     cancel_map: CancelMap,
+    shutdown_token: CancellationToken,
 ) -> JoinHandle<()> {
     // Spawn the periodic scheduler as a separate task
     let scheduler_pool = pool.clone();
+    let scheduler_registry = registry.clone();
+    let scheduler_shutdown = shutdown_token.clone();
     tokio::spawn(async move {
-        run_scheduler(scheduler_pool).await;
+        run_scheduler(scheduler_pool.clone(), scheduler_registry, scheduler_shutdown).await;
     });
 
+    // Spawn system queue workers (1-2 workers for system tasks)
+    let system_workers = 2;
+    for i in 0..system_workers {
+        let pool = pool.clone();
+        let registry = registry.clone();
+        let ctx = ctx.clone();
+        let cancel_map = cancel_map.clone();
+        let worker_shutdown = shutdown_token.clone();
+        tokio::spawn(async move {
+            queue_worker(
+                &pool,
+                &registry,
+                &ctx,
+                &cancel_map,
+                "system",
+                format!("system-worker-{i}"),
+                worker_shutdown,
+            )
+            .await;
+        });
+    }
+
+    // Spawn provider-specific queue workers
+    for provider in registry.all() {
+        let concurrency = provider.max_concurrency() as usize;
+        for i in 0..concurrency {
+            let pool = pool.clone();
+            let registry = registry.clone();
+            let ctx = ctx.clone();
+            let cancel_map = cancel_map.clone();
+            let queue_name = provider_queue_name(provider.name());
+            let worker_name = format!("{}-{i}", provider.name());
+            let worker_shutdown = shutdown_token.clone();
+            tokio::spawn(async move {
+                queue_worker(&pool, &registry, &ctx, &cancel_map, &queue_name, worker_name, worker_shutdown).await;
+            });
+        }
+    }
+
+    // Return a handle that resolves when shutdown is requested
     tokio::spawn(async move {
-        loop {
-            // Honour the global queue-pause setting
-            let paused = db_settings::get(&pool, "queue_paused", "false")
-                .await
-                .map(|v| v == "true")
-                .unwrap_or(false);
-            if paused {
-                tokio::time::sleep(Duration::from_secs(5)).await;
-                continue;
+        shutdown_token.cancelled().await;
+    })
+}
+
+/// Run a worker loop for a specific queue.
+/// Claims tasks from the queue and dispatches them for execution.
+async fn queue_worker(
+    pool: &SqlitePool,
+    registry: &ProviderRegistry,
+    ctx: &ScraperCtx,
+    cancel_map: &CancelMap,
+    queue: &str,
+    worker_name: String,
+    shutdown_token: CancellationToken,
+) {
+    info!("[{worker_name}] Starting worker for queue '{queue}'");
+
+    loop {
+        // Check for shutdown signal
+        if shutdown_token.is_cancelled() {
+            info!("[{worker_name}] Shutting down.");
+            return;
+        }
+
+        // Honour the global queue-pause setting
+        let paused = db_settings::get(pool, "queue_paused", "false")
+            .await
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        if paused {
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(5)) => {},
+                _ = shutdown_token.cancelled() => {
+                    info!("[{worker_name}] Shutting down.");
+                    return;
+                }
             }
+            continue;
+        }
 
-            match db_task::claim_next(&pool).await {
-                Ok(Some(task)) => {
-                    info!(
-                        "[worker] Claimed task {:?} (id={})",
-                        task.task_type, task.id
-                    );
+        match db_task::claim_next_for_queue(pool, queue).await {
+            Ok(Some(task)) => {
+                debug!(
+                    "[{}] Claimed task {:?} (id={}) from queue '{queue}'",
+                    worker_name, task.task_type, task.id
+                );
 
-                    // Register a cancellation token for this task
-                    let token = CancellationToken::new();
-                    cancel_map.lock().unwrap().insert(task.id, token.clone());
+                // Register a cancellation token for this task
+                let token = CancellationToken::new();
+                cancel_map.lock().unwrap().insert(task.id, token.clone());
 
-                    let result = dispatch(&pool, &registry, &ctx, &task, token).await;
+                let result = dispatch(pool, registry, ctx, &task, token).await;
 
-                    // Remove the token from the map — task is no longer in-flight
-                    cancel_map.lock().unwrap().remove(&task.id);
+                // Remove the token from the map — task is no longer in-flight
+                cancel_map.lock().unwrap().remove(&task.id);
 
-                    match result {
-                        Ok(()) => {
-                            if let Err(e) = db_task::complete(&pool, task.id).await {
-                                error!("[worker] Failed to mark task complete: {e}");
-                            }
-                            info!("[worker] Task {} completed.", task.id);
+                match result {
+                    Ok(()) => {
+                        if let Err(e) = db_task::complete(pool, task.id).await {
+                            error!("[{}] Failed to mark task complete: {e}", worker_name);
                         }
-                        Err(e) if e == "cancelled" => {
-                            info!("[worker] Task {} was cancelled.", task.id);
-                            // Status already set to Cancelled by the cancel endpoint
-                        }
-                        Err(e) => {
-                            warn!("[worker] Task {} failed: {e}", task.id);
-                            if let Err(db_err) = db_task::fail(&pool, task.id, &e).await {
-                                error!("[worker] Failed to record task failure: {db_err}");
-                            }
+                        debug!("[{}] Task {} completed.", worker_name, task.id);
+                    }
+                    Err(e) if e == "cancelled" => {
+                        info!("[{}] Task {} was cancelled.", worker_name, task.id);
+                    }
+                    Err(e) => {
+                        warn!("[{}] Task {} failed: {e}", worker_name, task.id);
+                        if let Err(db_err) = db_task::fail(pool, task.id, &e).await {
+                            error!("[{}] Failed to record task failure: {db_err}", worker_name);
                         }
                     }
                 }
-                Ok(None) => {
-                    // Nothing ready — sleep before polling again
-                    tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+            Ok(None) => {
+                // Nothing ready — sleep before polling again
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_secs(5)) => {},
+                    _ = shutdown_token.cancelled() => {
+                        info!("[{worker_name}] Shutting down.");
+                        return;
+                    }
                 }
-                Err(e) => {
-                    error!("[worker] Error polling task queue: {e}");
-                    tokio::time::sleep(Duration::from_secs(10)).await;
+            }
+            Err(e) => {
+                error!("[{}] Error polling task queue: {e}", worker_name);
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_secs(10)) => {},
+                    _ = shutdown_token.cancelled() => {
+                        info!("[{worker_name}] Shutting down.");
+                        return;
+                    }
                 }
             }
         }
-    })
+    }
 }
 
 /// Runs the periodic "check for new chapters" scheduler.
 /// Reads scan_interval_hours from Settings at the start of each cycle and
-/// enqueues CheckNewChapter for all monitored manga that are due for a check.
-/// Uses offset-based scheduling: checks happen N hours after the LAST check,
-/// not at absolute intervals. This naturally spreads out checks.
-async fn run_scheduler(pool: SqlitePool) {
+/// enqueues per-provider SyncProviderChapters tasks for all monitored manga that are due.
+/// Each provider gets its own task in its own queue (provider:{name}).
+async fn run_scheduler(pool: SqlitePool, _registry: Arc<ProviderRegistry>, shutdown_token: CancellationToken) {
     loop {
+        // Check for shutdown signal
+        if shutdown_token.is_cancelled() {
+            info!("[scheduler] Shutting down.");
+            return;
+        }
         // Read interval from settings (re-read each cycle so config changes take effect)
         let hours = db_settings::get(&pool, "scan_interval_hours", "6")
             .await
@@ -158,38 +250,79 @@ async fn run_scheduler(pool: SqlitePool) {
             .unwrap_or(6);
 
         // Check every minute for manga that are due
-        // This way we don't wait hours if a manga's check is due shortly after server start
         match db_manga::get_due_for_check(&pool, hours).await {
             Ok(manga_list) => {
                 for manga in manga_list {
-                    // Dedupe: skip if already pending/running
-                    match db_task::is_pending_for_manga(&pool, manga.id, TaskType::CheckNewChapter)
-                        .await
-                    {
-                        Ok(false) => {
-                            if let Err(e) = db_task::enqueue(
-                                &pool,
-                                TaskType::CheckNewChapter,
-                                Some(manga.id),
-                                None,
-                                10,
-                            )
-                            .await
-                            {
-                                error!(
-                                    "[scheduler] Failed to enqueue CheckNewChapter for '{}': {e}",
-                                    manga.metadata.title
-                                );
-                            } else {
+                    // Get known providers for this manga
+                    match db_provider::get_all_for_manga(&pool, manga.id).await {
+                        Ok(providers) => {
+                            let mut enqueued = 0;
+                            for p in &providers {
+                                if !p.found() {
+                                    continue; // Skip providers that haven't found the manga
+                                }
+
+                                // Skip auto-disabled providers
+                                if crate::db::provider_failure::is_auto_disabled(
+                                    &pool, &p.provider_name, manga.id,
+                                )
+                                .await
+                                .unwrap_or(false)
+                                {
+                                    debug!(
+                                        "[scheduler] Skipping disabled provider {} for '{}'",
+                                        p.provider_name, manga.metadata.title
+                                    );
+                                    continue;
+                                }
+
+                                let queue = provider_queue_name(&p.provider_name);
+
+                                // Dedupe: skip if already pending/running for this queue+provider
+                                if db_task::is_pending_in_queue(&pool, &queue, manga.id, TaskType::SyncProviderChapters)
+                                    .await
+                                    .unwrap_or(false)
+                                {
+                                    continue;
+                                }
+
+                                // Enqueue per-provider task with provider name in payload
+                                let payload = serde_json::json!({
+                                    "provider": p.provider_name
+                                })
+                                .to_string();
+
+                                if let Err(e) = db_task::enqueue_with_payload(
+                                    &pool,
+                                    TaskType::SyncProviderChapters,
+                                    Some(manga.id),
+                                    None,
+                                    10,
+                                    Some(queue.clone()),
+                                    Some(payload),
+                                )
+                                .await
+                                {
+                                    error!(
+                                        "[scheduler] Failed to enqueue SyncProviderChapters for '{}': on {}' {e}",
+                                        manga.metadata.title, p.provider_name
+                                    );
+                                } else {
+                                    enqueued += 1;
+                                }
+                            }
+                            if enqueued > 0 {
                                 debug!(
-                                    "[scheduler] Enqueued CheckNewChapter for '{}'",
+                                    "[scheduler] Enqueued {enqueued} provider check(s) for '{}'",
                                     manga.metadata.title
                                 );
                             }
                         }
-                        Ok(true) => {} // already queued — skip
                         Err(e) => {
-                            error!("[scheduler] Error checking pending tasks: {e}");
+                            error!(
+                                "[scheduler] Failed to get providers for '{}': {e}",
+                                manga.metadata.title
+                            );
                         }
                     }
                 }
@@ -200,7 +333,13 @@ async fn run_scheduler(pool: SqlitePool) {
         }
 
         // Sleep for 1 minute before checking again
-        tokio::time::sleep(Duration::from_secs(60)).await;
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_secs(60)) => {},
+            _ = shutdown_token.cancelled() => {
+                info!("[scheduler] Shutting down.");
+                return;
+            }
+        }
     }
 }
 
@@ -226,27 +365,106 @@ async fn dispatch(
                 .map_err(|e| e.to_string())?
                 .ok_or_else(|| format!("manga {manga_id} not found"))?;
 
-            let result = merge::scan_manga(pool, registry, ctx, &manga, task.id)
+            // Phase 1: Search for provider URLs (fast, runs in this system task)
+            merge::search_providers(pool, registry, ctx, &manga, task.id)
                 .await
                 .map_err(|e| e.to_string())?;
 
+            // Phase 2: Enqueue per-provider chapter sync tasks
+            let globally_disabled = crate::db::provider_scores::get_globally_disabled(pool)
+                .await
+                .unwrap_or_default();
+            let all_entries = db_provider::get_all_for_manga(pool, manga.id)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            let mut enqueued = 0;
+            for entry in &all_entries {
+                if !entry.found() || globally_disabled.contains(&entry.provider_name) {
+                    continue;
+                }
+
+                let queue = provider_queue_name(&entry.provider_name);
+
+                // Dedupe: skip if already pending/running for this queue+provider
+                if db_task::is_pending_in_queue(pool, &queue, manga.id, TaskType::SyncProviderChapters)
+                    .await
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+
+                let payload = serde_json::json!({
+                    "provider": entry.provider_name
+                })
+                .to_string();
+
+                if let Err(e) = db_task::enqueue_with_payload(
+                    pool,
+                    TaskType::SyncProviderChapters,
+                    Some(manga.id),
+                    None,
+                    5,
+                    Some(queue.clone()),
+                    Some(payload),
+                )
+                .await
+                {
+                    warn!(
+                        "[worker] Failed to enqueue SyncProviderChapters for '{}' on {}: {e}",
+                        manga.metadata.title, entry.provider_name
+                    );
+                } else {
+                    enqueued += 1;
+                }
+            }
+
             info!(
-                "[worker] Full scan complete for '{}': {} providers, {} new chapters.",
-                manga.metadata.title, result.providers_found, result.new_chapters
+                "[worker] BuildFullChapterList search complete for '{}': enqueued {} provider sync task(s).",
+                manga.metadata.title, enqueued
             );
 
             Ok(())
         }
 
-        TaskType::CheckNewChapter => {
+        TaskType::SyncProviderChapters => {
             let manga_id = task
                 .manga_id
-                .ok_or("CheckNewChapter task missing manga_id")?;
+                .ok_or("SyncProviderChapters task missing manga_id")?;
             let manga = db_manga::get_by_id(pool, manga_id)
                 .await
                 .map_err(|e| e.to_string())?
                 .ok_or_else(|| format!("manga {manga_id} not found"))?;
 
+            // Check if this is a per-provider task (has provider in payload)
+            if let Some(ref payload) = task.payload {
+                if let Ok(info) = serde_json::from_str::<serde_json::Value>(payload) {
+                    if let Some(provider_name) = info.get("provider").and_then(|v| v.as_str()) {
+                        // Per-provider task: check only this provider
+                        let result = merge::check_provider_chapters(
+                            pool, registry, ctx, &manga, task.id, provider_name,
+                        )
+                        .await
+                        .map_err(|e| e.to_string())?;
+
+                        // Clear failure records on success
+                        let _ = db_provider_failure::clear_for_manga(pool, provider_name, manga_id).await;
+
+                        // Update last_checked_at to spread out future checks
+                        if let Err(e) = db_manga::update_last_checked(pool, manga_id).await {
+                            warn!("[worker] Failed to update last_checked_at: {e}");
+                        }
+
+                        info!(
+                            "[worker] Provider check complete for '{}' on {}': {} new chapters.",
+                            manga.metadata.title, provider_name, result.new_chapters
+                        );
+                        return Ok(());
+                    }
+                }
+            }
+
+            // Fallback: check all providers (legacy behaviour)
             let result = merge::check_new_chapters(pool, registry, ctx, &manga, task.id)
                 .await
                 .map_err(|e| e.to_string())?;
@@ -318,7 +536,7 @@ async fn dispatch(
                         return Ok(());
                     };
 
-                    let al = ALClient::new();
+                    let al = AniListMetadata::new();
                     let mut fresh = al
                         .grab_manga(anilist_id as i32)
                         .await

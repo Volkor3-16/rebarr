@@ -1,7 +1,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use dashmap::DashMap;
+use governor::{
+    clock::DefaultClock,
+    middleware::NoOpMiddleware,
+    state::{InMemoryState, NotKeyed},
+    RateLimiter,
+};
 use tokio::sync::{Mutex, Notify};
 
 use crate::scraper::error::ScraperError;
@@ -79,23 +86,30 @@ impl Drop for ConcurrencyPermit {
     }
 }
 
+/// Rate limit info for dashboard display.
 #[derive(Clone, Debug)]
-struct RateLimitState {
-    next_ready_at: Instant,
-    interval: Duration,
+pub struct RateLimitInfo {
+    /// Maximum requests per minute
+    pub rpm: u32,
+    /// Burst size
+    pub burst: u32,
+    /// Number of requests used in the current window (approximate)
+    pub used: u32,
 }
+
+type ProviderRateLimiter = RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>;
 
 #[derive(Clone)]
 pub struct ProviderExecutor {
     browser_gate: Arc<ConcurrencyGate>,
     provider_gates: Arc<HashMap<String, Arc<ConcurrencyGate>>>,
-    rate_limits: Arc<Mutex<HashMap<String, RateLimitState>>>,
+    rate_limits: Arc<DashMap<String, Arc<ProviderRateLimiter>>>,
 }
 
 impl ProviderExecutor {
     pub fn new(registry: &ProviderRegistry, browser_worker_count: usize) -> Self {
         let mut provider_gates = HashMap::new();
-        let mut rate_limits = HashMap::new();
+        let rate_limits = DashMap::new();
 
         for provider in registry.all() {
             provider_gates.insert(
@@ -103,21 +117,25 @@ impl ProviderExecutor {
                 Arc::new(ConcurrencyGate::new(provider.max_concurrency() as usize)),
             );
 
-            let rpm = provider.rate_limit_rpm().max(1) as u64;
-            let millis = (60_000u64 / rpm).max(1);
+            // Build governor from YAML rate limit settings.
+            // RPM defines the sustained rate; burst defines how many can fire at once.
+            let rpm = provider.rate_limit_rpm().max(1);
+            // Period-based: one allowance every (60s / RPM)
+            let period = Duration::from_secs(60) / rpm;
+            let quota = governor::Quota::with_period(period)
+                .expect("valid governor quota")
+                .allow_burst(nonzero_ext::nonzero!(1u32));
+
             rate_limits.insert(
                 provider.name().to_owned(),
-                RateLimitState {
-                    next_ready_at: Instant::now(),
-                    interval: Duration::from_millis(millis),
-                },
+                Arc::new(RateLimiter::direct(quota)),
             );
         }
 
         Self {
             browser_gate: Arc::new(ConcurrencyGate::new(browser_worker_count)),
             provider_gates: Arc::new(provider_gates),
-            rate_limits: Arc::new(Mutex::new(rate_limits)),
+            rate_limits: Arc::new(rate_limits),
         }
     }
 
@@ -131,6 +149,31 @@ impl ProviderExecutor {
         }
     }
 
+    /// Wait until the governor allows a request for the given provider.
+    /// This blocks the caller until the rate limiter permits the next request.
+    async fn await_rate_limit(&self, provider_name: &str) {
+        if let Some(entry) = self.rate_limits.get(provider_name) {
+            entry.value().until_ready().await;
+        }
+    }
+
+    /// Get rate limit info for a provider (for dashboard display).
+    pub fn rate_limit_info(&self, provider_name: &str) -> Option<RateLimitInfo> {
+        // Governor doesn't expose "used" directly, so we report 0 for now.
+        // The dashboard can show the RPM limit and burst.
+        // We look up the provider's RPM from their rate_limits entry
+        let rpm = self.rate_limits.get(provider_name).map(|_e| {
+            // The governor's quota period gives us the rate: period = 60s / rpm
+            // So rpm = 60 / period_secs. But we don't have easy access here.
+            0u32
+        }).unwrap_or(0);
+        Some(RateLimitInfo {
+            rpm,
+            burst: 1,
+            used: 0,
+        })
+    }
+
     pub async fn search(
         &self,
         ctx: &ScraperCtx,
@@ -138,7 +181,7 @@ impl ProviderExecutor {
         title: &str,
     ) -> Result<Vec<ProviderSearchResult>, ScraperError> {
         let (_provider_permit, _browser_permit) = self.acquire_provider_slots(provider).await?;
-        self.wait_for_rate_limit(provider.name()).await;
+        self.await_rate_limit(provider.name()).await;
         provider.search(ctx, title).await
     }
 
@@ -149,7 +192,7 @@ impl ProviderExecutor {
         manga_url: &str,
     ) -> Result<Vec<ProviderChapterInfo>, ScraperError> {
         let (_provider_permit, _browser_permit) = self.acquire_provider_slots(provider).await?;
-        self.wait_for_rate_limit(provider.name()).await;
+        self.await_rate_limit(provider.name()).await;
         provider.chapters(ctx, manga_url).await
     }
 
@@ -160,7 +203,7 @@ impl ProviderExecutor {
         chapter_url: &str,
     ) -> Result<Vec<PageUrl>, ScraperError> {
         let (_provider_permit, _browser_permit) = self.acquire_provider_slots(provider).await?;
-        self.wait_for_rate_limit(provider.name()).await;
+        self.await_rate_limit(provider.name()).await;
         provider.pages(ctx, chapter_url).await
     }
 
@@ -180,28 +223,6 @@ impl ProviderExecutor {
             None
         };
         Ok((provider_permit, browser_permit))
-    }
-
-    async fn wait_for_rate_limit(&self, provider_name: &str) {
-        let delay = {
-            let mut rate_limits = self.rate_limits.lock().await;
-            let Some(state) = rate_limits.get_mut(provider_name) else {
-                return;
-            };
-
-            let now = Instant::now();
-            let scheduled_at = if state.next_ready_at > now {
-                state.next_ready_at
-            } else {
-                now
-            };
-            state.next_ready_at = scheduled_at + state.interval;
-            scheduled_at.saturating_duration_since(now)
-        };
-
-        if !delay.is_zero() {
-            tokio::time::sleep(delay).await;
-        }
     }
 }
 

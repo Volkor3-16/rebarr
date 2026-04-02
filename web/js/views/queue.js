@@ -1,14 +1,17 @@
 // Queue view - task history + active queue with live polling
 
 import { tasks, settings } from '../api.js';
-import { render, setPoll } from '../router.js';
+import { render } from '../router.js';
 import { escape, taskBadge, renderTaskProgress, showToast } from '../utils.js';
+import * as sse from '../events.js';
 
 // Track which cancelled groups are expanded (by index)
 const expandedGroups = new Set();
 
 // Track selected task IDs to preserve selection across refreshes
 const selectedTaskIds = new Set();
+
+let sseHandler = null;
 
 export async function viewQueue() {
   render(`
@@ -20,7 +23,10 @@ export async function viewQueue() {
   `);
   
   await refreshQueue();
-  setPoll(refreshQueue, 3000);
+  
+  // Use SSE instead of polling — refresh on any task update
+  sseHandler = () => refreshQueue();
+  sse.on('task_update', sseHandler);
 }
 
 async function refreshQueue() {

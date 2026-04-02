@@ -1,0 +1,193 @@
+name: MangaCloud
+base_url: https://mangacloud.org/
+version: "1"
+default_score: 30 # Small Library, Good Quality
+tags:
+  - hub
+rate_limit:
+  requests_per_minute: 30
+
+# curl 'https://api.mangacloud.org/search' \
+#   --compressed \
+#   -X POST \
+#   -H 'User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0' \
+#   -H 'Accept: */*' \
+#   -H 'Accept-Language: en-US,en;q=0.9' \
+#   -H 'Accept-Encoding: gzip, deflate, br, zstd' \
+#   -H 'Referer: https://mangacloud.org/' \
+#   -H 'content-type: application/json' \
+#   -H 'Origin: https://mangacloud.org' \
+#   -H 'Connection: keep-alive' \
+#   -H 'Sec-Fetch-Dest: empty' \
+#   -H 'Sec-Fetch-Mode: cors' \
+#   -H 'Sec-Fetch-Site: same-site' \
+#   -H 'Priority: u=4' \
+#   -H 'Pragma: no-cache' \
+#   -H 'Cache-Control: no-cache' \
+#   -H 'TE: trailers' \
+#   --data-raw '{"terms":"Solo Leveling"}'
+
+# {
+#     "data": [
+#         {
+#             "id": "190998832320873679",
+#             "title": "Solo Leveling: Ragnarok",
+#             "alt_titles": "Na Honjaman Level Up: Ragnarok",
+#             "number": 68,
+#             "chapter_id": "269550562117158091",
+#             "cover": {
+#                 "id": "194748199502611728",
+#                 "w": 720,
+#                 "h": 1030,
+#                 "f": "jpeg"
+#             }
+#         },
+#         {
+#             "id": "155621268064831088",
+#             "title": "Solo Leveling",
+#             "alt_titles": "I Alone Level-Up • I am the only the one who levels up • Only I Level up • I level up alone • Na Honjaman Level Up",
+#             "number": 200,
+#             "chapter_id": "155653097329264576",
+#             "cover": {
+#                 "id": "309469017859425825",
+#                 "w": 512,
+#                 "h": 691,
+#                 "f": "jpeg"
+#             }
+#         }
+#     ]
+# }
+
+search:
+  steps:
+    - open: "{base_url}"
+    - fetch:
+        url: "https://api.mangacloud.org/comic/browse"
+        method: POST
+        headers:
+          User-Agent: "Mozilla/5.0 (X11; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0"
+          Accept: "*/*"
+          Accept-Language: "en-US,en;q=0.9"
+          Referer: "https://mangacloud.org/"
+          Origin: "https://mangacloud.org"
+          Content-Type: "application/json"
+        body: '{"title":"{query}","page":1}'
+        var: search_data
+        json_path: data
+    - extract_js:
+        var: search_processed
+        script: |
+          (function() {
+            try {
+              var raw = '{search_data|js_escape}';
+              var mangas = JSON.parse(raw);
+              if (!Array.isArray(mangas)) {
+                return '[]';
+              }
+              var processed = mangas.map(function(m) {
+                var coverUrl = '';
+                if (m.cover && m.cover.id && m.cover.f) {
+                  coverUrl = 'https://pika.mangacloud.org/' + m.id + '/cover.' + m.cover.f;
+                }
+                return {
+                  title: m.title || '',
+                  url: m.id || '',
+                  cover: coverUrl
+                };
+              });
+              return JSON.stringify(processed);
+            } catch (e) {
+              return '[]';
+            }
+          })()
+    - from_json:
+        var: search_processed
+        extract:
+          title: "title"
+          url: "url"
+          cover: "cover"
+        prefix:
+          url: "https://mangacloud.org/comic/"
+
+chapters:
+  steps:
+    - open: "{base_url}"
+    - fetch:
+        url: "https://api.mangacloud.org/comic/{manga_url|basename}"
+        method: GET
+        headers:
+          User-Agent: "Mozilla/5.0 (X11; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0"
+          Accept: "*/*"
+          Referer: "https://mangacloud.org/"
+          Origin: "https://mangacloud.org"
+        var: manga_data
+        json_path: "data.chapters"
+    - extract_js:
+        var: chapters_processed
+        script: |
+          (function() {
+            try {
+              var raw = '{manga_data|js_escape}';
+              var chapters = JSON.parse(raw);
+              if (!Array.isArray(chapters)) {
+                return '[]';
+              }
+              var comicId = '{manga_url|basename}';
+              var processed = chapters.map(function(ch) {
+                var chapterName = 'Chapter ' + (ch.number ? ch.number.toString().replace(/\.0$/, '') : '');
+                if (ch.name) {
+                  chapterName += ' - ' + ch.name;
+                }
+                return {
+                  number_raw: ch.number ? ch.number.toString() : '',
+                  title: chapterName,
+                  url: JSON.stringify({comicId: comicId, chapterId: ch.id}),
+                  date: ch.date ? Math.floor(ch.date / 1000).toString() : ''
+                };
+              });
+              return JSON.stringify(processed);
+            } catch (e) {
+              return '[]';
+            }
+          })()
+    - from_json:
+        var: chapters_processed
+        extract:
+          number_raw: "number_raw"
+          title: "title"
+          url: "url"
+          date: "date"
+        date_format:
+          date: "%+"
+
+pages:
+  steps:
+    - open: "{base_url}"
+    - extract_js:
+        var: page_urls
+        script: |
+          (async () => {
+            try {
+              var chapterData = JSON.parse('{chapter_url}');
+              var comicId = chapterData.comicId;
+              var chapterId = chapterData.chapterId;
+              const resp = await fetch('https://api.mangacloud.org/chapter/' + chapterId, {
+                headers: {
+                  'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0',
+                  'Accept': '*/*',
+                  'Referer': 'https://mangacloud.org/',
+                  'Origin': 'https://mangacloud.org'
+                }
+              });
+              const data = await resp.json();
+              const chapterContent = data.data || {};
+              const images = chapterContent.images || [];
+              const urls = images.map(function(img) {
+                return 'https://pika.mangacloud.org/' + comicId + '/' + chapterId + '/' + img.id + '.' + img.format;
+              });
+              return JSON.stringify(urls);
+            } catch(e) {
+              return '[]';
+            }
+          })()
+    - return: "{page_urls}"

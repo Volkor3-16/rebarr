@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use dotenvy::dotenv;
 use rocket::fs::FileServer;
+use tokio_util::sync::CancellationToken;
 use rebarr::api::{api_routes, frontend_routes};
 use rebarr::db;
-use rebarr::http::{ALClient, WebhookDispatcher};
+use rebarr::http::{ALClient, AniListMetadata, WebhookDispatcher};
 use rebarr::scheduler::{CancelMap, start_worker};
 use rebarr::scraper::{
     browser::BrowserPool,
@@ -33,6 +35,7 @@ async fn main() -> Result<(), Box<rocket::Error>> {
     }
 
     let al_client = ALClient::new();
+    let al_metadata = AniListMetadata::new();
     let http_client = reqwest::Client::new();
     WebhookDispatcher::new(pool.clone(), http_client.clone()).install();
 
@@ -64,20 +67,23 @@ async fn main() -> Result<(), Box<rocket::Error>> {
     let scraper_ctx = ScraperCtx::new(http_client.clone(), browser_pool, executor);
 
     // Background Task Handler start
+    let shutdown_token = CancellationToken::new();
     let cancel_map: CancelMap = Arc::new(Mutex::new(HashMap::new()));
-    let _worker = start_worker(
+    let worker_handle = start_worker(
         pool.clone(),
         Arc::clone(&registry),
         scraper_ctx.clone(),
         Arc::clone(&cancel_map),
+        shutdown_token.clone(),
     );
     info!("Background task worker started.");
 
     rocket::build()
         .manage(pool)
         .manage(al_client)
+        .manage(al_metadata)
         .manage(http_client)
-        .manage(scraper_ctx)
+        .manage(scraper_ctx.clone())
         .manage(Arc::clone(&registry))
         .manage(cancel_map)
         .mount("/", frontend_routes())
@@ -85,6 +91,15 @@ async fn main() -> Result<(), Box<rocket::Error>> {
         .mount("/web", FileServer::from("web"))
         .launch()
         .await?;
+
+    // Graceful shutdown: signal workers to stop and wait briefly
+    info!("Shutting down background workers...");
+    shutdown_token.cancel();
+    let _ = tokio::time::timeout(Duration::from_secs(5), worker_handle).await;
+
+    // Clean up browser pool if running
+    scraper_ctx.browser.reset().await;
+    info!("Shutdown complete.");
 
     Ok(())
 }

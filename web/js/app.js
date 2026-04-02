@@ -10,12 +10,14 @@ import './views/queue.js';
 import './views/import.js';
 import './views/desktop.js';
 import './views/suggested.js';
+import './views/workers.js';
 import { showWizard } from './views/wizard.js';
 
 import { initTheme } from './theme.js';
 import { initRouter, navigate } from './router.js';
 import { updateRelTimes } from './utils.js';
 import { tasks, settings, system } from './api.js';
+import * as sse from './events.js';
 
 // Version tracking
 const VERSION_STORAGE_KEY = 'rebarr_last_seen_version';
@@ -306,6 +308,49 @@ function showChangelogModal(version, changelog) {
   });
 }
 
+// Handle a single SSE task update event
+function handleTaskUpdate(task) {
+  const prevState = taskStates[task.id];
+  const taskDesc = formatTaskDescription(task);
+  const status = task.status;
+
+  if (!prevState) {
+    // New task — show based on status
+    if (status === 'Pending') {
+      addActivity(`${task.task_type}: ${taskDesc} pending`, 'info');
+    } else if (status === 'Running') {
+      addActivity(`${task.task_type}: ${taskDesc} started`, 'info');
+    } else if (status === 'Completed') {
+      addActivity(`${task.task_type}: ${taskDesc} completed`, 'success');
+    } else if (status === 'Failed') {
+      const err = task.last_error ? ` - ${task.last_error}` : '';
+      addActivity(`${task.task_type}: ${taskDesc} failed${err}`, 'error');
+    } else if (status === 'Cancelled') {
+      addActivity(`${task.task_type}: ${taskDesc} cancelled`, 'warning');
+    }
+  } else if (prevState.status !== status) {
+    // Status changed
+    if (status === 'Completed') {
+      addActivity(`${task.task_type}: ${taskDesc} completed`, 'success');
+    } else if (status === 'Failed') {
+      const err = task.last_error ? ` - ${task.last_error}` : '';
+      addActivity(`${task.task_type}: ${taskDesc} failed${err}`, 'error');
+    } else if (status === 'Cancelled') {
+      addActivity(`${task.task_type}: ${taskDesc} cancelled`, 'warning');
+    } else if (status === 'Running') {
+      addActivity(`${task.task_type}: ${taskDesc} started`, 'info');
+    }
+  }
+
+  // Update tracked state
+  taskStates[task.id] = {
+    status: status,
+    manga_title: task.manga_title,
+    chapter_number_raw: task.chapter_number_raw,
+    task_type: task.task_type
+  };
+}
+
 // Initialize the application
 async function init() {
   // Initialize theme
@@ -331,12 +376,10 @@ async function init() {
   // Start the relative time updater (updates every 30 seconds)
   setInterval(updateRelTimes, 30000);
 
-  // Activity console polling runs independently — not through setPoll so navigation
-  // can't kill it. Poll every 3s to catch fast tasks.
-  pollActivity();
-  setInterval(pollActivity, 3000);
+  // Use SSE for real-time activity console updates (replaces polling)
+  sse.on('task_update', handleTaskUpdate);
 
-  // System stats polling every 30s
+  // System stats polling every 30s (low frequency, fine to poll)
   updateSystemStats();
   setInterval(updateSystemStats, 30000);
 

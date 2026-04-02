@@ -1,5 +1,7 @@
 // Client-side router
 
+import * as sse from './events.js';
+
 // Route definitions: [pattern, viewFunction]
 // Views are attached to window by their respective modules
 const routes = [
@@ -11,6 +13,7 @@ const routes = [
   [/^\/desktop$/, 'viewDesktop'],
   [/^\/queue$/, 'viewQueue'],
   [/^\/logs$/, 'viewQueue'], // Logs uses queue view
+  [/^\/workers$/, 'viewWorkers'],
   [/^\/import$/, 'viewImport'],
   [/^\/suggested$/, 'viewSuggested'],
   [/^\/setup$/, 'viewSetup'],
@@ -20,13 +23,14 @@ const routes = [
 let _pollHandle = null;
 
 /**
- * Stop any active polling
+ * Stop any active polling and SSE listeners
  */
 export function stopPolling() {
   if (_pollHandle) {
     clearInterval(_pollHandle);
     _pollHandle = null;
   }
+  sse.clearListeners();
 }
 
 /**

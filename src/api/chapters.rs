@@ -158,12 +158,19 @@ pub async fn download_chapter_api(
         chapter.id
     );
 
-    db::task::enqueue(
+    // Assign to provider-specific queue if the chapter has a provider name
+    let queue = chapter
+        .provider_name
+        .as_ref()
+        .map(|name| format!("provider:{name}"));
+
+    db::task::enqueue_with_queue(
         pool.inner(),
         crate::db::task::TaskType::DownloadChapter,
         Some(manga_id),
         Some(chapter.id),
         10,
+        queue,
     )
     .await
     .map_err(internal)?;

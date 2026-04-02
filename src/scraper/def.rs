@@ -91,18 +91,12 @@ pub enum ProviderTag {
 pub struct RateLimitDef {
     #[serde(default = "default_rpm")]
     pub requests_per_minute: u32,
-    /// Milliseconds to sleep between individual page image downloads.
-    /// Helps avoid rate-limiting / IP bans on providers that throttle aggressively.
-    /// Defaults to 0 (no delay).
-    #[serde(default)]
-    pub page_delay_ms: u64,
 }
 
 impl Default for RateLimitDef {
     fn default() -> Self {
         Self {
             requests_per_minute: default_rpm(),
-            page_delay_ms: 0,
         }
     }
 }

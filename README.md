@@ -18,9 +18,6 @@ I'll remove this when I've got the first public release out, this is just a quic
     - During setup wizard, ask the user to paste in a repo (or multiple)
     - Automatic updates and all that nice stuff
     - Add more providers
-- [ ] Tell komga to scan for new downloads every so often (`n` download completes?)
-- [ ] WeebCentral downloads html for images sometimes (`/home/volkor/Downloads/Chapter 3 [Official]/`)
-    - Needs to tie into the queue worker system thing
 - [ ] Make sure chapters are done nicely, `A Veternarian in Another World` - Local chapters aren't flagged as downloaded, despite being there.
     - Do we have ScanDisk task validate and check this?
 
@@ -31,37 +28,18 @@ I'll remove this when I've got the first public release out, this is just a quic
 - [ ] Include the downloaded_at in task queue page and series.
 - [ ] Have a 'Downloads' Page, where it shows pretty much a condensed version of the queue, where stuff is grouped by series (sequential chapters?)
     - Let users re-order the queue
-
-### Task / Queue fix proper lmao
-
-- [ ] Is there a rate limit for anilist api?
-    - They say 90 requests per second, but I hit limits muuuuch lower than that.
-    - They use `Retry-After`, `X-RateLimit-Reset`, `X-RateLimit-Remaining`, and `X-RateLimit-Limit`
-    - Anilist_moe does basic 3 attempts, or fails.
-    - We should use the same rate limit system as providers, but much faster
-    - https://docs.rs/governor/latest/governor/
-- [ ] Visual Task Queue
-    - Group by 'provider', show task order for them
-        - Sub-Tasks, for the 'checknewchapter' checking `n` providers separately, 
-    - im a baby boy who needs a baby ui to make sure my code works
-- [ ] Rework CheckNewChapter to work in parallel. For each provider we check, we make a new task, with a queue like "provider:WeebCentral" and means each provider can pull matching entries from the queue.
-- [ ] Rework Downloading Chapters to work similarly, were they don't block tasks in other providers queues.
-- [ ] Log provider errors and track them (how many failed in a row), we can have auto-backoffs and auto-disabling.
+- [ ] Setup Wizard: Adding 49 series to library… should have some logging or progress.
+- [ ] Local chapters (ones where we've downloaded a split chapter (7.1, 7.2, 7.3) are all grouped under a full chapter (7) despite being the local chapter)
 
 ### Providers / Scraper
 
 - Providers steps shouldn't need a random ass `- open` and then hit another endpoint why have the open step at all?
     - I tried an AI Slop version of this, didn't work correctly, will re-look properly later. this breaks js scripts that need the page open
 - Use `setBlockedResourceTypes` to block useless requests (some images, CSS, fonts, media, whatever)
-- Each provider action (search/chapters/pages) creates a new browser tab, each time waiting for loading, waiting for cloudflare, scrapes, and closes the tab.
-    - Reuse tabs for each provider.
-- Chapter list re-scraping
-    - `ensure_chapter_url()` re-scrapes the entire chapter list when a single url is missing, if multiple are missing, it does multiple re-scrapes. Surely we can optimise this
 - Add adblock to chromium?
 - Clownflare challenge polling loop parses the full html every 0.5s, we can clean this up a bit.
 - [ ] Get Mangago working
 - [ ] Get MangaHub working (no chapters returned)
-- [ ] When a user disables a provider (series-level), we should drop the chapters we've found and re-calc canonical chapters.
 - [ ] Comix can't handle titles with "The Girl From the Other Side: Siúil, a Rún". The show as "danke-Empire" (is that the uploader? scanlator? the scanlator group is "Official?" so idk.)
 
 ## Features
@@ -84,6 +62,7 @@ I'll remove this when I've got the first public release out, this is just a quic
 - [ ] Metadata API
     - [ ] MyAnimeList Support (mal_api crate works)
     - [ ] MangaUpdates Support (need to make a crate, or use the worst fucking openapi generated thing ever)
+    - [ ] Comic Vine (for western comics - needs user provided API Key)
     - [ ] Any other sites can be listed here. It's good to not be stuck with a single metadata service.
     - [ ] Automatic imports of Anilist genres (auto-add and download all/top/trending of any tag)
     - [ ] Automatic imports of MyAnimeList "Interest Stacks"
@@ -122,6 +101,7 @@ I'll remove this when I've got the first public release out, this is just a quic
 - wtf even is rootless docker?
 - [ ] WebUI for viewing chapters - so we can have the user/automated flagging of pages:
     - FrontCover, InnerCover, Roundup, Story, Advertisment, Editorial, Letters, Preview, BackCover, Other, Deleted?
+- [ ] Tell komga to scan for new downloads every so often (`n` download completes?)
 
 ## Installation
 

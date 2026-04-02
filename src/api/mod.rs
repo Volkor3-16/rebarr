@@ -5,6 +5,7 @@ pub(crate) mod errors;
 
 // API Endpoints
 pub(crate) mod chapters;
+pub(crate) mod events;
 pub(crate) mod import;
 pub(crate) mod libraries;
 pub(crate) mod manga;
@@ -26,6 +27,7 @@ pub use libraries::routes as library_routes;
 pub use manga::routes as manga_routes;
 pub use provider_scores::routes as provider_score_routes;
 pub use settings::routes as settings_routes;
+pub use events::routes as event_routes;
 pub use system::routes as system_routes;
 pub use tasks::routes as task_routes;
 pub use trusted_groups::routes as trusted_group_routes;
@@ -44,5 +46,6 @@ pub fn api_routes() -> Vec<rocket::Route> {
     routes.extend(provider_score_routes());
     routes.extend(system_routes());
     routes.extend(webhook_routes());
+    routes.extend(event_routes());
     routes
 }

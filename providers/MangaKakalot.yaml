@@ -3,7 +3,6 @@ base_url: https://www.mangakakalot.gg # These guys run Manganato.gg (and a bunch
 default_score: -20 # Low image quality, but large library, good backup.
 rate_limit:
   requests_per_minute: 30
-  page_delay_ms: 500
 
 # This provider is broken: They use strict cloudflare checks :(
 

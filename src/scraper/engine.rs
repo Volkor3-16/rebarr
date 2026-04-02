@@ -343,7 +343,7 @@ impl YamlProvider {
                                 }
                             } else if cloudflare_detected {
                                 // Challenge was present but page has loaded — bypassed!
-                                info!("Cloudflare challenge auto-bypassed at {url}");
+                                debug!("Cloudflare challenge auto-bypassed at {url}");
                                 break;
                             } else if elapsed >= min_settle_time {
                                 // No CF challenge and minimum settle time passed —
@@ -1153,10 +1153,6 @@ impl Provider for YamlProvider {
 
     fn rate_limit_rpm(&self) -> u32 {
         self.def.rate_limit.requests_per_minute
-    }
-
-    fn page_delay_ms(&self) -> u64 {
-        self.def.rate_limit.page_delay_ms
     }
 
     fn max_concurrency(&self) -> u32 {

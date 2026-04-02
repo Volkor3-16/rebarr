@@ -4,7 +4,15 @@ This a informal changelog so i can keep track of what im doing.
 
 ## 2026-04-02
 
-- Default provider scores are now actually shown on the frontend ()
+- Default provider scores are now actually shown on the frontend
+- Reworked the queue system (yet again!)
+    - Rate limits! and they work!!
+    - Different queue (and workers) for each provider, each grabs from a pool of browser slots they can use.
+    - Nice looking dashboard showing the workers and their status
+- Removed old and crusty code with old chapter downloading (we shouldn't fallback to reqwest)
+- We now (try to) respect Anilist's API Limits
+    - Also added better support for future metadata sources (MyAnimeList/MangaUpdates/Comic Vine)
+- Slight but essentially no improvement on downloading chapters (chapters from providers with no chapter url won't build a chapter list for each chapter missing a url, but just once)
 
 ## 2026-04-01
 

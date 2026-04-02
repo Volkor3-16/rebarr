@@ -66,6 +66,11 @@ pub fn setup_page() -> RawHtml<String> {
     serve_index()
 }
 
+#[get("/workers")]
+pub fn workers_page() -> RawHtml<String> {
+    serve_index()
+}
+
 // ---------------------------------------------------------------------------
 // Route list
 // ---------------------------------------------------------------------------
@@ -80,6 +85,7 @@ pub fn routes() -> Vec<rocket::Route> {
         queue_page,
         desktop_page,
         logs_page,
+        workers_page,
         import_page,
         suggested_page,
         setup_page

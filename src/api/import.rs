@@ -3,7 +3,7 @@ use serde::Deserialize;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 
-use crate::http::anilist::ALClient;
+use crate::http::metadata::AniListMetadata;
 use crate::importer::{self, ConfirmedImport, ConfirmedSeriesImport, FolderEntry,
                       ImportCandidate, ImportSummary, SeriesImportSummary};
 
@@ -118,7 +118,7 @@ pub async fn series_scan_api(
 #[post("/api/import/series-execute", data = "<body>")]
 pub async fn series_execute_api(
     pool: &State<SqlitePool>,
-    al: &State<ALClient>,
+    al: &State<AniListMetadata>,
     http: &State<reqwest::Client>,
     body: Json<SeriesExecuteRequest>,
 ) -> ApiResult<SeriesImportSummary> {

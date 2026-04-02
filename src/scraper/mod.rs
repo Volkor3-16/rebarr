@@ -132,12 +132,6 @@ pub trait Provider: Send + Sync {
         30
     }
 
-    /// Milliseconds to sleep between individual page image downloads.
-    /// Defaults to 0 (no delay).
-    fn page_delay_ms(&self) -> u64 {
-        0
-    }
-
     /// Maximum number of concurrent jobs to run for this provider within a process.
     fn max_concurrency(&self) -> u32 {
         1
