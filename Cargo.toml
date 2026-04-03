@@ -36,6 +36,9 @@ clap = { version = "4", features = ["derive"] }
 governor = "0.10"
 nonzero_ext = "0.3"
 dashmap = "6"
+schemars = { version = "0.8", features = ["chrono", "uuid1"] }
+okapi = { version = "0.7", features = ["preserve_order"] }
+rocket_okapi = { version = "0.9", features = ["swagger", "rapidoc"] }
 
 [dev-dependencies]
 tempfile = "3"

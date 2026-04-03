@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use chrono::Utc;
 use tracing::warn;
 use regex::Regex;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -18,7 +19,7 @@ use crate::manga::core::{Chapter, DownloadStatus, Manga};
 // Public types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Clone, PartialEq, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ImportTier {
     /// Rebarr-generated CBZ: Notes field contains full JSON with chapter UUID.
@@ -29,7 +30,7 @@ pub enum ImportTier {
     Filename,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct SuggestedManga {
     pub manga_id: String,
     pub title: String,
@@ -38,7 +39,7 @@ pub struct SuggestedManga {
     pub confidence: f32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct ImportCandidate {
     pub cbz_path: String,
     pub file_name: String,
@@ -61,7 +62,7 @@ pub struct ImportCandidate {
     pub suggested_manga: Option<SuggestedManga>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct ConfirmedImport {
     pub cbz_path: String,
     pub manga_id: String,
@@ -85,7 +86,7 @@ pub struct ConfirmedImport {
     pub scraped_at: Option<i64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct ImportSummary {
     pub moved: u32,
     pub skipped: u32,
@@ -96,14 +97,14 @@ pub struct ImportSummary {
 // Series import types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct FolderEntry {
     pub folder_name: String,
     pub folder_path: String,
     pub cbz_count: u32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct ConfirmedSeriesImport {
     /// Carried for error messages only — never written to DB.
     pub folder_path: String,
@@ -112,7 +113,7 @@ pub struct ConfirmedSeriesImport {
     pub relative_path: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct SeriesImportSummary {
     pub added: u32,
     pub skipped_duplicates: u32,

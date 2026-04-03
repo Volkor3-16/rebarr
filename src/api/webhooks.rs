@@ -1,4 +1,6 @@
 use rocket::{State, delete, get, http::Status, post, put, serde::json::Json};
+use rocket_okapi::openapi;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -19,7 +21,7 @@ const VALID_TASK_TYPES: &[&str] = &[
 
 const VALID_TASK_STATUSES: &[&str] = &["Pending", "Running", "Completed", "Failed", "Cancelled"];
 
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct WebhookEndpointResponse {
     pub id: String,
     pub target_url: String,
@@ -31,7 +33,7 @@ pub struct WebhookEndpointResponse {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 pub struct WebhookEndpointRequest {
     pub target_url: String,
     pub enabled: Option<bool>,
@@ -93,12 +95,16 @@ fn to_response(hook: db::webhook::WebhookEndpoint) -> WebhookEndpointResponse {
     }
 }
 
+/// List all webhook endpoints.
+#[openapi(tag = "Webhooks")]
 #[get("/api/webhooks")]
 pub async fn list_webhooks(pool: &State<SqlitePool>) -> ApiResult<Vec<WebhookEndpointResponse>> {
     let hooks = db::webhook::list(pool.inner()).await.map_err(internal)?;
     Ok(Json(hooks.into_iter().map(to_response).collect()))
 }
 
+/// Create a new webhook endpoint.
+#[openapi(tag = "Webhooks")]
 #[post("/api/webhooks", data = "<body>")]
 pub async fn create_webhook(
     pool: &State<SqlitePool>,
@@ -111,6 +117,8 @@ pub async fn create_webhook(
     Ok(Json(to_response(created)))
 }
 
+/// Update an existing webhook endpoint.
+#[openapi(tag = "Webhooks")]
 #[put("/api/webhooks/<id>", data = "<body>")]
 pub async fn update_webhook(
     pool: &State<SqlitePool>,
@@ -126,6 +134,8 @@ pub async fn update_webhook(
     Ok(Json(to_response(updated)))
 }
 
+/// Delete a webhook endpoint.
+#[openapi(tag = "Webhooks")]
 #[delete("/api/webhooks/<id>")]
 pub async fn delete_webhook(
     pool: &State<SqlitePool>,

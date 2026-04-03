@@ -1,6 +1,8 @@
 use chrono::Utc;
 use tracing::{info, warn};
 use rocket::{State, delete, get, http::Status, post, serde::json::Json};
+use rocket_okapi::openapi;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -18,7 +20,7 @@ use super::errors::{ApiError, ApiResult, bad_request, internal, not_found};
 // ---------------------------------------------------------------------------
 
 /// Response struct for a single chapter row (all providers included, not just canonical).
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct ChapterListItem {
     pub id: String,
     pub manga_id: String,
@@ -46,7 +48,7 @@ pub struct ChapterListItem {
     pub file_size_bytes: Option<i64>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 pub struct SetCanonicalRequest {
     pub chapter_id: String,
 }
@@ -56,6 +58,7 @@ pub struct SetCanonicalRequest {
 // ---------------------------------------------------------------------------
 
 /// Returns a list of chapters for a given manga.
+#[openapi(tag = "Chapters")]
 #[get("/api/manga/<id>/chapters")]
 pub async fn list_chapters(pool: &State<SqlitePool>, id: &str) -> ApiResult<Vec<ChapterListItem>> {
     let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
@@ -135,6 +138,8 @@ async fn build_chapter_list(pool: &SqlitePool, manga_id: Uuid) -> ApiResult<Vec<
 // POST /api/manga/<id>/chapters/<base>/<variant>/download
 // ---------------------------------------------------------------------------
 
+/// Tells rebarr to download a specific (canonical) chapter.
+#[openapi(tag = "Chapters")]
 #[post("/api/manga/<id>/chapters/<base>/<variant>/download")]
 pub async fn download_chapter_api(
     pool: &State<SqlitePool>,
@@ -186,6 +191,8 @@ pub async fn download_chapter_api(
 // DELETE /api/manga/<id>/chapters/<base>/<variant>
 // ---------------------------------------------------------------------------
 
+/// Deletes the downloaded cbz from disk
+#[openapi(tag = "Chapters")]
 #[delete("/api/manga/<id>/chapters/<base>/<variant>")]
 pub async fn delete_chapter_api(
     pool: &State<SqlitePool>,
@@ -257,6 +264,8 @@ pub fn routes() -> Vec<rocket::Route> {
 // POST /api/manga/<id>/chapters/<base>/<variant>/mark-downloaded
 // ---------------------------------------------------------------------------
 
+/// Marks the given chapter as downloaded
+#[openapi(tag = "Chapters")]
 #[post("/api/manga/<id>/chapters/<base>/<variant>/mark-downloaded")]
 pub async fn mark_chapter_downloaded(
     pool: &State<SqlitePool>,
@@ -290,6 +299,8 @@ pub async fn mark_chapter_downloaded(
 // POST /api/manga/<id>/chapters/<base>/<variant>/reset
 // ---------------------------------------------------------------------------
 
+/// Reset the chapter back to missing, cancelling any running or queued tasks for the chapter.
+#[openapi(tag = "Chapters")]
 #[post("/api/manga/<id>/chapters/<base>/<variant>/reset")]
 pub async fn reset_chapter_api(
     pool: &State<SqlitePool>,
@@ -332,6 +343,8 @@ pub async fn reset_chapter_api(
 // POST /api/manga/<id>/chapters/<base>/<variant>/toggle-extra
 // ---------------------------------------------------------------------------
 
+/// Marks a given chapter as an 'extra' / .5 special.
+#[openapi(tag = "Chapters")]
 #[post("/api/manga/<id>/chapters/<base>/<variant>/toggle-extra")]
 pub async fn toggle_extra_api(
     pool: &State<SqlitePool>,
@@ -356,6 +369,8 @@ pub async fn toggle_extra_api(
 // POST /api/manga/<id>/chapters/<base>/<variant>/optimise
 // ---------------------------------------------------------------------------
 
+/// Triggers a optimise task for a given chapter (optimise re-encodes images to webp)
+#[openapi(tag = "Chapters")]
 #[post("/api/manga/<id>/chapters/<base>/<variant>/optimise")]
 pub async fn optimise_chapter_api(
     pool: &State<SqlitePool>,
@@ -391,6 +406,8 @@ pub async fn optimise_chapter_api(
 // POST /api/manga/<id>/chapters/<base>/<variant>/set-canonical
 // ---------------------------------------------------------------------------
 
+/// Sets a given chapter as canonical (as in, the 'best' release of a chapter, one that will be downloaded.)
+#[openapi(tag = "Chapters")]
 #[post(
     "/api/manga/<id>/chapters/<base>/<variant>/set-canonical",
     data = "<body>"

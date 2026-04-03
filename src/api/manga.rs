@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use chrono::Utc;
 use tracing::{debug, trace, warn};
 use rocket::{State, delete, get, http::Status, patch, post, serde::json::Json};
+use rocket_okapi::openapi;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use strsim;
@@ -24,14 +26,14 @@ use super::errors::{ApiError, ApiResult, bad_request, err, internal, not_found};
 // Request/Response types
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 pub struct AddMangaRequest {
     pub anilist_id: i32,
     pub library_id: String,
     pub relative_path: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 pub struct AddMangaManualRequest {
     pub library_id: String,
     pub relative_path: String,
@@ -46,17 +48,17 @@ pub struct AddMangaManualRequest {
     pub cover_url: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 pub(crate) struct PatchMangaRequest {
     monitored: Option<bool>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, JsonSchema)]
 pub struct DeleteMangaRequest {
     delete_files: Option<bool>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub(crate) struct ProviderInfo {
     name: String,
     needs_browser: bool,
@@ -66,7 +68,7 @@ pub(crate) struct ProviderInfo {
     default_score: i32,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct MangaProviderResponse {
     pub provider_name: String,
     /// `None` means this provider was searched but the manga was not found.
@@ -76,7 +78,7 @@ pub struct MangaProviderResponse {
     pub search_attempted_at: Option<i64>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct ProviderCandidate {
     pub title: String,
     pub url: String,
@@ -85,19 +87,19 @@ pub struct ProviderCandidate {
     pub score: f64,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 pub(crate) struct SetProviderUrlRequest {
     /// Pass `null` to clear the mapping for this provider.
     url: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 pub struct SetCoverUrlRequest {
     pub url: String,
 }
 
 /// Request to add/remove/hide synonyms for a manga
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, JsonSchema)]
 pub struct UpdateSynonymsRequest {
     /// Synonyms to add (will be marked as Manual source)
     pub add: Option<Vec<String>>,
@@ -122,6 +124,8 @@ async fn auto_unmonitor_completed_if_enabled(
 // GET /api/manga/search?q=
 // ---------------------------------------------------------------------------
 
+/// Searches Anilist for a given search term.
+#[openapi(tag = "Manga")]
 #[get("/api/manga/search?<q>")]
 pub async fn search_manga(al: &State<AniListMetadata>, q: &str) -> ApiResult<Vec<Manga>> {
     if q.trim().is_empty() {
@@ -138,6 +142,8 @@ pub async fn search_manga(al: &State<AniListMetadata>, q: &str) -> ApiResult<Vec
 // POST /api/manga
 // ---------------------------------------------------------------------------
 
+/// Add a manga from AniList by ID.
+#[openapi(tag = "Manga")]
 #[post("/api/manga", data = "<body>")]
 pub async fn add_manga(
     pool: &State<SqlitePool>,
@@ -234,6 +240,8 @@ pub async fn add_manga(
 // POST /api/manga/manual
 // ---------------------------------------------------------------------------
 
+/// Add a manga manually without AniList lookup.
+#[openapi(tag = "Manga")]
 #[post("/api/manga/manual", data = "<body>")]
 pub async fn add_manga_manual(
     pool: &State<SqlitePool>,
@@ -358,6 +366,8 @@ pub async fn add_manga_manual(
 // GET /api/manga/<id>
 // ---------------------------------------------------------------------------
 
+/// Get a manga by ID.
+#[openapi(tag = "Manga")]
 #[get("/api/manga/<id>")]
 pub async fn get_manga(pool: &State<SqlitePool>, id: &str) -> ApiResult<Manga> {
     let uuid = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
@@ -372,6 +382,8 @@ pub async fn get_manga(pool: &State<SqlitePool>, id: &str) -> ApiResult<Manga> {
 // DELETE /api/manga/<id>
 // ---------------------------------------------------------------------------
 
+/// Delete a manga by ID.
+#[openapi(tag = "Manga")]
 #[delete("/api/manga/<id>", data = "<body>")]
 pub async fn delete_manga(
     pool: &State<SqlitePool>,
@@ -413,6 +425,8 @@ pub async fn delete_manga(
 // PATCH /api/manga/<id>
 // ---------------------------------------------------------------------------
 
+/// Update manga properties (e.g., monitored status).
+#[openapi(tag = "Manga")]
 #[patch("/api/manga/<id>", data = "<body>")]
 pub async fn patch_manga(
     pool: &State<SqlitePool>,
@@ -436,6 +450,8 @@ pub async fn patch_manga(
 // GET /api/providers
 // ---------------------------------------------------------------------------
 
+/// List all available providers.
+#[openapi(tag = "Providers")]
 #[get("/api/providers")]
 pub async fn list_providers(
     registry: &State<std::sync::Arc<ProviderRegistry>>,
@@ -458,6 +474,8 @@ pub async fn list_providers(
 // POST /api/manga/<id>/scan
 // ---------------------------------------------------------------------------
 
+/// Trigger a full chapter list scan for a manga.
+#[openapi(tag = "Manga")]
 #[post("/api/manga/<id>/scan")]
 pub async fn scan_manga_api(
     pool: &State<SqlitePool>,
@@ -486,6 +504,8 @@ pub async fn scan_manga_api(
 // POST /api/manga/<id>/check-new
 // ---------------------------------------------------------------------------
 
+/// Check for new chapters from providers for a manga.
+#[openapi(tag = "Manga")]
 #[post("/api/manga/<id>/check-new")]
 pub async fn check_new_chapters_api(
     pool: &State<SqlitePool>,
@@ -515,6 +535,7 @@ pub async fn check_new_chapters_api(
 // ---------------------------------------------------------------------------
 
 /// Returns a list of providers for a given manga series id.
+#[openapi(tag = "Manga")]
 #[get("/api/manga/<id>/providers")]
 pub async fn list_manga_providers(
     pool: &State<SqlitePool>,
@@ -543,6 +564,8 @@ pub async fn list_manga_providers(
 // POST /api/manga/<id>/refresh
 // ---------------------------------------------------------------------------
 
+/// Refresh metadata for a manga from AniList.
+#[openapi(tag = "Manga")]
 #[post("/api/manga/<id>/refresh")]
 pub async fn refresh_manga_api(
     pool: &State<SqlitePool>,
@@ -571,6 +594,8 @@ pub async fn refresh_manga_api(
 // POST /api/manga/<id>/scan-disk
 // ---------------------------------------------------------------------------
 
+/// Scan disk for downloaded chapters for a manga.
+#[openapi(tag = "Manga")]
 #[post("/api/manga/<id>/scan-disk")]
 pub async fn scan_disk_api(
     pool: &State<SqlitePool>,
@@ -623,6 +648,7 @@ pub async fn serve_cover(pool: &State<SqlitePool>, id: &str) -> Option<rocket::f
 // ---------------------------------------------------------------------------
 
 /// Update synonyms for a manga - add new ones, hide existing AniList ones, or remove Manual ones
+#[openapi(tag = "Manga")]
 #[patch("/api/manga/<id>/synonyms", data = "<body>")]
 pub async fn update_synonyms(
     pool: &State<SqlitePool>,
@@ -757,6 +783,7 @@ pub async fn update_synonyms(
 
 /// Search a specific provider for this manga and return all results with scores,
 /// so the user can manually pick the correct series when there are ambiguous matches.
+#[openapi(tag = "Providers")]
 #[get("/api/manga/<id>/providers/<name>/candidates")]
 pub async fn provider_candidates(
     pool: &State<SqlitePool>,
@@ -839,6 +866,7 @@ pub async fn provider_candidates(
 
 /// Manually set (or clear) the provider URL for a manga/provider pair.
 /// Clears `last_synced_at` so the next scan re-scrapes from the new URL.
+#[openapi(tag = "Providers")]
 #[post("/api/manga/<id>/providers/<name>/url", data = "<body>")]
 pub async fn set_provider_url(
     pool: &State<SqlitePool>,
@@ -876,6 +904,8 @@ pub async fn set_provider_url(
 // POST /api/manga/<id>/cover — download cover from URL
 // ---------------------------------------------------------------------------
 
+/// Download and set a cover image from a URL for a manga.
+#[openapi(tag = "Manga")]
 #[post("/api/manga/<id>/cover", data = "<body>")]
 pub async fn upload_cover_url(
     pool: &State<SqlitePool>,
@@ -915,6 +945,8 @@ pub async fn upload_cover_url(
 // POST /api/manga/<id>/cover/upload — upload cover file directly
 // ---------------------------------------------------------------------------
 
+/// Upload a cover image file directly for a manga.
+#[openapi(tag = "Manga")]
 #[post("/api/manga/<id>/cover/upload", data = "<data>")]
 pub async fn upload_cover_file(
     pool: &State<SqlitePool>,

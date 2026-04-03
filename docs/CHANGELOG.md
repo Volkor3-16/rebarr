@@ -2,6 +2,11 @@
 
 This a informal changelog so i can keep track of what im doing.
 
+## 2026-04-03
+
+- Added `rocket_okapi` for swagger-ui and rapidoc endpoints
+- Added some documentation for each rocket endpoint.
+
 ## 2026-04-02
 
 - Default provider scores are now actually shown on the frontend

@@ -31,6 +31,20 @@ I'll remove this when I've got the first public release out, this is just a quic
 - [ ] Setup Wizard: Adding 49 series to library… should have some logging or progress.
 - [ ] Local chapters (ones where we've downloaded a split chapter (7.1, 7.2, 7.3) are all grouped under a full chapter (7) despite being the local chapter)
 
+### Assend (GraphQL frontend for Moku-like frontend?)
+
+- fuck that shiiiiittttttyyy ass frontend man holy shit just fork a competent one
+- why not just pretend to be suwayomi?
+    - We'd have to have just one(two?) extension, that is rebarr (and rebarr search)
+        - Rebarr: shows your list
+            - Downloading or opening will kick you out / load forever / error out and queue up a download with absolute highest priority, and finally load when done.
+        - Rebarr (search): searches anilist -> adding to (suwayomi) frontend queues up a rebarr library add and full provider search.
+
+    - This shit should hopefully let it work nicely in suwayomi (and even suwayomi android extension??)
+    - https://deepwiki.com/Suwayomi/Suwayomi-Server/2.4-graphql-api
+    - Also REST API?
+    - Also also OPDS API?
+
 ### Providers / Scraper
 
 - Providers steps shouldn't need a random ass `- open` and then hit another endpoint why have the open step at all?

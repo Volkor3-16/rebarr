@@ -1,4 +1,5 @@
 use chrono::{DateTime, Duration, Utc};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -57,7 +58,7 @@ pub struct Task {
     pub run_after: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct TaskProgress {
     pub step: Option<String>,
     pub label: Option<String>,
@@ -578,7 +579,7 @@ pub async fn cancel_by_chapter(pool: &SqlitePool, chapter_id: Uuid) -> Result<()
 // Recent tasks for the API / queue page
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct RecentTask {
     pub id: String,
     pub task_type: String,

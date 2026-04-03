@@ -1,4 +1,6 @@
 use rocket::{State, get, http::Status, post, serde::json::Json};
+use rocket_okapi::openapi;
+use schemars::JsonSchema;
 use serde::Serialize;
 use sqlx::SqlitePool;
 use std::sync::Arc;
@@ -13,6 +15,8 @@ use super::errors::{ApiError, ApiResult, bad_request, internal};
 // GET /api/tasks
 // ---------------------------------------------------------------------------
 
+/// List recent tasks with optional filtering by manga.
+#[openapi(tag = "Tasks")]
 #[get("/api/tasks?<manga_id>&<limit>")]
 pub async fn list_tasks(
     pool: &State<SqlitePool>,
@@ -31,7 +35,7 @@ pub async fn list_tasks(
 // GET /api/tasks/grouped
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct QueuedTask {
     pub id: String,
     pub task_type: String,
@@ -50,7 +54,7 @@ pub struct QueuedTask {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct QueueInfo {
     /// Display name: provider name for provider queues, "System" for system
     pub display_name: String,
@@ -84,6 +88,8 @@ struct QueuedTaskRow {
     updated_at: chrono::DateTime<chrono::Utc>,
 }
 
+/// List tasks grouped by queue with status information.
+#[openapi(tag = "Tasks")]
 #[get("/api/tasks/grouped")]
 pub async fn list_tasks_grouped(
     pool: &State<SqlitePool>,
@@ -192,6 +198,8 @@ pub async fn list_tasks_grouped(
 // POST /api/tasks/<id>/cancel
 // ---------------------------------------------------------------------------
 
+/// Cancel a running or pending task.
+#[openapi(tag = "Tasks")]
 #[post("/api/tasks/<id>/cancel")]
 pub async fn cancel_task(
     pool: &State<SqlitePool>,

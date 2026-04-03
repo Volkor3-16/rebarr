@@ -4,6 +4,7 @@
 /// (default: `./providers/`, or `REBARR_PROVIDERS_DIR`). No Rust code required.
 use std::collections::HashMap;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -54,7 +55,7 @@ pub struct ProviderDef {
 /// Well-known quality / characteristic tags for a provider.
 ///
 /// Unknown values in YAML cause a load error (intentional — keeps tags validated).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderTag {
     /// Provider is behind Cloudflare; may require a FlareSolverr instance.

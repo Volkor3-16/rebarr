@@ -1,4 +1,6 @@
 use rocket::{State, delete, get, put, serde::json::Json};
+use rocket_okapi::openapi;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -12,7 +14,7 @@ use crate::db::{chapter as db_chapter, provider as db_provider, provider_scores,
 // Response / request types
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct GlobalScoreResponse {
     /// Current global score override. None means no override is set (YAML default applies).
     pub score: Option<i32>,
@@ -22,7 +24,7 @@ pub struct GlobalScoreResponse {
     pub default_score: i32,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct SeriesScoreResponse {
     /// Current per-series score override. None means global/YAML default applies.
     pub score: Option<i32>,
@@ -36,13 +38,13 @@ pub struct SeriesScoreResponse {
     pub score_source: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 pub struct SetGlobalScoreRequest {
     pub score: i32,
     pub enabled: Option<bool>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 pub struct SetSeriesScoreRequest {
     pub score: Option<i32>,
     pub enabled: Option<bool>,
@@ -52,6 +54,8 @@ pub struct SetSeriesScoreRequest {
 // GET /api/providers/<name>/score
 // ---------------------------------------------------------------------------
 
+/// Get global score override for a provider.
+#[openapi(tag = "Provider Scores")]
 #[get("/api/providers/<name>/score")]
 pub async fn get_global_score(
     pool: &State<SqlitePool>,
@@ -77,6 +81,8 @@ pub async fn get_global_score(
 // PUT /api/providers/<name>/score
 // ---------------------------------------------------------------------------
 
+/// Set global score override for a provider.
+#[openapi(tag = "Provider Scores")]
 #[put("/api/providers/<name>/score", data = "<body>")]
 pub async fn set_global_score(
     pool: &State<SqlitePool>,
@@ -118,6 +124,8 @@ pub async fn set_global_score(
 // GET /api/manga/<id>/providers/<name>/score
 // ---------------------------------------------------------------------------
 
+/// Get per-series score override for a provider.
+#[openapi(tag = "Provider Scores")]
 #[get("/api/manga/<id>/providers/<name>/score")]
 pub async fn get_series_score(
     pool: &State<SqlitePool>,
@@ -165,6 +173,8 @@ pub async fn get_series_score(
 // PUT /api/manga/<id>/providers/<name>/score
 // ---------------------------------------------------------------------------
 
+/// Set per-series score override for a provider.
+#[openapi(tag = "Provider Scores")]
 #[put("/api/manga/<id>/providers/<name>/score", data = "<body>")]
 pub async fn set_series_score(
     pool: &State<SqlitePool>,
@@ -209,6 +219,8 @@ pub async fn set_series_score(
 // DELETE /api/providers/<name>/score — remove global override
 // ---------------------------------------------------------------------------
 
+/// Remove global score override for a provider.
+#[openapi(tag = "Provider Scores")]
 #[delete("/api/providers/<name>/score")]
 pub async fn delete_global_score(
     pool: &State<SqlitePool>,
@@ -239,6 +251,8 @@ pub async fn delete_global_score(
 // DELETE /api/manga/<id>/providers/<name>/score — remove series override
 // ---------------------------------------------------------------------------
 
+/// Remove per-series score override for a provider.
+#[openapi(tag = "Provider Scores")]
 #[delete("/api/manga/<id>/providers/<name>/score")]
 pub async fn delete_series_score(
     pool: &State<SqlitePool>,

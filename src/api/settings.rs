@@ -1,4 +1,6 @@
 use rocket::{State, get, http::Status, put, serde::json::Json};
+use rocket_okapi::openapi;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::db;
@@ -10,7 +12,7 @@ use super::errors::{ApiError, ApiResult, bad_request, internal};
 // Request/Response types
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct SettingsResponse {
     pub scan_interval_hours: u64,
     pub queue_paused: bool,
@@ -31,7 +33,7 @@ pub struct SettingsResponse {
     pub download_mode: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 pub struct UpdateSettingsRequest {
     pub scan_interval_hours: Option<u64>,
     pub queue_paused: Option<bool>,
@@ -53,6 +55,8 @@ pub struct UpdateSettingsRequest {
 // GET /api/settings
 // ---------------------------------------------------------------------------
 
+/// Get current application settings.
+#[openapi(tag = "Settings")]
 #[get("/api/settings")]
 pub async fn get_settings(pool: &State<sqlx::SqlitePool>) -> ApiResult<SettingsResponse> {
     let hours = db::settings::get(pool.inner(), "scan_interval_hours", "6")
@@ -128,6 +132,8 @@ pub async fn get_settings(pool: &State<sqlx::SqlitePool>) -> ApiResult<SettingsR
 // PUT /api/settings
 // ---------------------------------------------------------------------------
 
+/// Update application settings.
+#[openapi(tag = "Settings")]
 #[put("/api/settings", data = "<body>")]
 pub async fn update_settings(
     pool: &State<sqlx::SqlitePool>,

@@ -138,8 +138,7 @@ async fn rate_limit_is_enforced() {
     // Allow some tolerance for timing
     assert!(
         elapsed >= Duration::from_secs(11),
-        "Rate limiting not enforced: 3 requests at 10 RPM should take ~12s, took {:?}",
-        elapsed
+        "Rate limiting not enforced: 3 requests at 10 RPM should take ~12s, took {elapsed:?}"
     );
 }
 

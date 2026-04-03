@@ -1,4 +1,6 @@
 use rocket::{State, post, serde::json::Json};
+use rocket_okapi::openapi;
+use schemars::JsonSchema;
 use serde::Deserialize;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
@@ -13,12 +15,12 @@ use super::errors::{ApiResult, bad_request, internal};
 // Request types
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 pub struct ScanRequest {
     pub source_dir: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 pub struct ExecuteRequest {
     pub imports: Vec<ConfirmedImport>,
 }
@@ -28,6 +30,7 @@ pub struct ExecuteRequest {
 // ---------------------------------------------------------------------------
 
 /// Scan a directory for CBZ files and return import candidates with suggested manga matches.
+#[openapi(tag = "Import")]
 #[post("/api/import/scan", data = "<body>")]
 pub async fn scan_api(
     pool: &State<SqlitePool>,
@@ -56,6 +59,7 @@ pub async fn scan_api(
 
 /// Execute confirmed imports: rewrite CBZs with fresh ComicInfo.xml, move to library structure,
 /// and enqueue ScanDisk for each affected manga.
+#[openapi(tag = "Import")]
 #[post("/api/import/execute", data = "<body>")]
 pub async fn execute_api(
     pool: &State<SqlitePool>,
@@ -73,12 +77,12 @@ pub async fn execute_api(
 // Series import request types
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 pub struct SeriesScanRequest {
     pub source_dir: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 pub struct SeriesExecuteRequest {
     pub imports: Vec<ConfirmedSeriesImport>,
     #[serde(default)]
@@ -91,6 +95,7 @@ pub struct SeriesExecuteRequest {
 
 /// Scan a directory for immediate subdirectories (one per manga series).
 /// Returns folder names + shallow CBZ count. Does not touch AniList.
+#[openapi(tag = "Import")]
 #[post("/api/import/series-scan", data = "<body>")]
 pub async fn series_scan_api(
     body: Json<SeriesScanRequest>,
@@ -115,6 +120,7 @@ pub async fn series_scan_api(
 
 /// Bulk-create manga entries from confirmed series matches.
 /// Always queues ScanDisk for each added series; optionally queues BuildFullChapterList.
+#[openapi(tag = "Import")]
 #[post("/api/import/series-execute", data = "<body>")]
 pub async fn series_execute_api(
     pool: &State<SqlitePool>,

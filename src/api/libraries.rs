@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use tracing::debug;
 use rocket::{State, delete, get, post, put, serde::json::Json};
+use rocket_okapi::openapi;
+use schemars::JsonSchema;
 use serde::Deserialize;
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -17,13 +19,13 @@ use super::errors::{ApiResult, bad_request, internal, not_found};
 // Request/Response types
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 pub struct NewLibraryRequest {
     pub library_type: String,
     pub root_path: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 pub struct UpdateLibraryRequest {
     pub root_path: String,
 }
@@ -32,6 +34,8 @@ pub struct UpdateLibraryRequest {
 // GET /api/libraries
 // ---------------------------------------------------------------------------
 
+/// Returns all libraries in rebarr.
+#[openapi(tag = "Libraries")]
 #[get("/api/libraries")]
 pub async fn list_libraries(
     pool: &State<SqlitePool>,
@@ -47,6 +51,8 @@ pub async fn list_libraries(
 // POST /api/libraries
 // ---------------------------------------------------------------------------
 
+/// Creates a new library
+#[openapi(tag = "Libraries")]
 #[post("/api/libraries", data = "<body>")]
 pub async fn create_library(
     pool: &State<SqlitePool>,
@@ -82,6 +88,8 @@ pub async fn create_library(
 // GET /api/libraries/<id>
 // ---------------------------------------------------------------------------
 
+/// Returns the info about a specific library.
+#[openapi(tag = "Libraries")]
 #[get("/api/libraries/<id>")]
 pub async fn get_library(
     pool: &State<SqlitePool>,
@@ -100,6 +108,8 @@ pub async fn get_library(
 // GET /api/libraries/<id>/manga
 // ---------------------------------------------------------------------------
 
+/// Returns all manga series in a specific library.
+#[openapi(tag = "Libraries")]
 #[get("/api/libraries/<id>/manga")]
 pub async fn list_library_manga(pool: &State<SqlitePool>, id: &str) -> ApiResult<Vec<Manga>> {
     let uuid = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
@@ -114,6 +124,8 @@ pub async fn list_library_manga(pool: &State<SqlitePool>, id: &str) -> ApiResult
 // PUT /api/libraries/<id>
 // ---------------------------------------------------------------------------
 
+/// Updates/changes the root path of a library
+#[openapi(tag = "Libraries")]
 #[put("/api/libraries/<id>", data = "<body>")]
 pub async fn update_library(
     pool: &State<SqlitePool>,
@@ -138,6 +150,8 @@ pub async fn update_library(
 // DELETE /api/libraries/<id>
 // ---------------------------------------------------------------------------
 
+/// Deletes a library (and cleans up all leftovers)
+#[openapi(tag = "Libraries")]
 #[delete("/api/libraries/<id>")]
 pub async fn delete_library(
     pool: &State<SqlitePool>,

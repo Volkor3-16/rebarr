@@ -1,4 +1,6 @@
 use rocket::{State, delete, get, http::Status, post, serde::json::Json};
+use rocket_okapi::openapi;
+use schemars::JsonSchema;
 use serde::Deserialize;
 use sqlx::SqlitePool;
 
@@ -10,7 +12,7 @@ use super::errors::{ApiError, ApiResult, bad_request, internal};
 // Request types
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 pub struct AddTrustedGroupRequest {
     pub name: String,
 }
@@ -19,6 +21,8 @@ pub struct AddTrustedGroupRequest {
 // GET /api/trusted-groups
 // ---------------------------------------------------------------------------
 
+/// List all trusted scanlation groups.
+#[openapi(tag = "Trusted Groups")]
 #[get("/api/trusted-groups")]
 pub async fn list_trusted_groups(pool: &State<SqlitePool>) -> ApiResult<Vec<String>> {
     let groups = db::provider::get_trusted_groups(pool.inner())
@@ -31,6 +35,8 @@ pub async fn list_trusted_groups(pool: &State<SqlitePool>) -> ApiResult<Vec<Stri
 // POST /api/trusted-groups
 // ---------------------------------------------------------------------------
 
+/// Add a trusted scanlation group.
+#[openapi(tag = "Trusted Groups")]
 #[post("/api/trusted-groups", data = "<body>")]
 pub async fn add_trusted_group(
     pool: &State<SqlitePool>,
@@ -50,6 +56,8 @@ pub async fn add_trusted_group(
 // DELETE /api/trusted-groups/<name>
 // ---------------------------------------------------------------------------
 
+/// Remove a trusted scanlation group.
+#[openapi(tag = "Trusted Groups")]
 #[delete("/api/trusted-groups/<name>")]
 pub async fn remove_trusted_group(
     pool: &State<SqlitePool>,

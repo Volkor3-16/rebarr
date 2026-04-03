@@ -4,8 +4,11 @@ use std::time::Duration;
 
 use dotenvy::dotenv;
 use rocket::fs::FileServer;
+use rocket_okapi::rapidoc::{make_rapidoc, RapiDocConfig};
+use rocket_okapi::settings::UrlObject;
+use rocket_okapi::swagger_ui::{make_swagger_ui, SwaggerUIConfig};
 use tokio_util::sync::CancellationToken;
-use rebarr::api::{api_routes, frontend_routes};
+use rebarr::api::{extra_routes, frontend_routes, openapi_routes};
 use rebarr::db;
 use rebarr::http::{ALClient, AniListMetadata, WebhookDispatcher};
 use rebarr::scheduler::{CancelMap, start_worker};
@@ -87,8 +90,27 @@ async fn main() -> Result<(), Box<rocket::Error>> {
         .manage(Arc::clone(&registry))
         .manage(cancel_map)
         .mount("/", frontend_routes())
-        .mount("/", api_routes())
+        .mount("/", openapi_routes())
+        .mount("/", extra_routes())
         .mount("/web", FileServer::from("web"))
+        .mount(
+            "/swagger-ui/",
+            make_swagger_ui(&SwaggerUIConfig {
+                url: "../openapi.json".to_owned(),
+                ..Default::default()
+            }),
+        )
+        .mount(
+            "/rapidoc/",
+            make_rapidoc(&RapiDocConfig {
+                title: Some("Rebarr API Documentation".to_owned()),
+                general: rocket_okapi::rapidoc::GeneralConfig {
+                    spec_urls: vec![UrlObject::new("General", "../openapi.json")],
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+        )
         .ignite()
         .await?;
 

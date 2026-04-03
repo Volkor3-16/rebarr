@@ -3,10 +3,11 @@ use std::path::PathBuf;
 use anilist_moe::objects::media::Media;
 use chrono::{DateTime, Utc};
 use tracing::trace;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Library {
     pub uuid: Uuid, // The Unique ID of the library (for supporting diff types of 'manga')
     pub r#type: MangaType, // The type of the manga (Western Comics, Manga, whatever)
@@ -14,7 +15,7 @@ pub struct Library {
 }
 
 /// Contains all the important data about a Manga
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Manga {
     pub id: Uuid,                      // internal, canonical
     pub library_id: Uuid,              // The Library the manga belongs to
@@ -34,7 +35,7 @@ pub struct Manga {
 }
 
 /// Source of a synonym title
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub enum SynonymSource {
     /// Synonym fetched from AniList - can be hidden by user
     AniList,
@@ -43,7 +44,7 @@ pub enum SynonymSource {
 }
 
 /// A single alternative title with metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Synonym {
     pub title: String,
     pub source: SynonymSource,
@@ -78,7 +79,7 @@ impl Synonym {
 }
 
 /// Contains all the scraped metadata about a Manga
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MangaMetadata {
     pub title: String,                      // Title in English (or default lang)
     pub other_titles: Option<Vec<Synonym>>, // List of alternative names with metadata
@@ -103,13 +104,13 @@ pub struct MangaMetadata {
 }
 
 /// The 'type' of manga it is. Used for having western comics and manga in one server instance.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum MangaType {
     Comics,
     Manga,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum PublishingStatus {
     Completed,
     Ongoing,
@@ -120,7 +121,7 @@ pub enum PublishingStatus {
 }
 
 /// Contains all supported (and future supported?) Manga Providers
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum MangaSource {
     AniList,
     Local,
@@ -520,7 +521,7 @@ impl From<Media> for Manga {
 }
 
 /// All the data about a specific chapter (one row per provider + language per chapter number).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Chapter {
     pub id: Uuid,
     pub manga_id: Uuid,
@@ -557,7 +558,7 @@ impl Chapter {
 }
 
 /// Tracks whether a chapter has been downloaded.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub enum DownloadStatus {
     Missing,
     Queued,
@@ -580,7 +581,7 @@ impl DownloadStatus {
 }
 
 /// Alias titles are scraped from providers and saved once; they are not refreshed automatically.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MangaAlias {
     pub manga_id: Uuid,
     pub source: AliasSource,
@@ -588,7 +589,7 @@ pub struct MangaAlias {
 }
 
 /// Where an alias title came from.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum AliasSource {
     AniList,
     Site(String),

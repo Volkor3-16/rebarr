@@ -1,4 +1,6 @@
 use rocket::{State, get, serde::json::Json};
+use rocket_okapi::openapi;
+use schemars::JsonSchema;
 use serde::Serialize;
 use sqlx::SqlitePool;
 use std::net::{SocketAddr, TcpStream};
@@ -7,14 +9,14 @@ use std::time::Duration;
 use super::errors::{ApiResult, internal};
 use crate::db::settings as db_settings;
 
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct VersionInfo {
     pub version: String,
     pub build_type: String,
     pub git_commit: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct SystemInfo {
     /// RSS memory used by this process and all its descendants (MB).
     pub process_mem_mb: u64,
@@ -32,7 +34,7 @@ pub struct SystemInfo {
     pub queue_paused: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct DesktopHealth {
     /// True when Xvfb display socket exists (`/tmp/.X11-unix/X99`).
     pub xvfb: bool,
@@ -116,6 +118,8 @@ fn tcp_listening_on_local(port: u16) -> bool {
 // GET /api/system
 // ---------------------------------------------------------------------------
 
+/// Get system information and statistics.
+#[openapi(tag = "System")]
 #[get("/api/system")]
 pub async fn system_info(pool: &State<SqlitePool>) -> ApiResult<SystemInfo> {
     let process_mem_mb = process_tree_rss_mb();
@@ -168,6 +172,8 @@ pub async fn system_info(pool: &State<SqlitePool>) -> ApiResult<SystemInfo> {
 // GET /api/system/desktop
 // ---------------------------------------------------------------------------
 
+/// Get desktop environment health status.
+#[openapi(tag = "System")]
 #[get("/api/system/desktop")]
 pub async fn desktop_health() -> Json<DesktopHealth> {
     Json(DesktopHealth {
@@ -181,6 +187,8 @@ pub async fn desktop_health() -> Json<DesktopHealth> {
 // GET /api/version
 // ---------------------------------------------------------------------------
 
+/// Get application version and build information.
+#[openapi(tag = "System")]
 #[get("/api/version")]
 pub fn version_info() -> Json<VersionInfo> {
     // Determine build type based on environment variables
@@ -211,6 +219,8 @@ pub fn version_info() -> Json<VersionInfo> {
 // GET /api/changelog
 // ---------------------------------------------------------------------------
 
+/// Get the changelog content.
+#[openapi(tag = "System")]
 #[get("/api/changelog")]
 pub fn changelog() -> Option<String> {
     std::fs::read_to_string("docs/CHANGELOG.md").ok()

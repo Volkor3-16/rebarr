@@ -1,11 +1,12 @@
 use rocket::{http::Status, serde::json::Json};
+use schemars::JsonSchema;
 use serde::Serialize;
 
 // ---------------------------------------------------------------------------
 // Error helpers
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct ApiError {
     pub error: String,
 }
