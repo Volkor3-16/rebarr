@@ -150,6 +150,9 @@ cargo run --bin cli -- test -p WeebCentral "Berserk"
 # Test with visible browser + HTML dumps for debugging selectors
 cargo run --bin cli -- -V -k -H test -p WeebCentral "Berserk"
 
+# Test with full provider request/response trace
+cargo run --bin cli -- test -p WeebCentral --verbose "Berserk"
+
 # Also download the first chapter to ./test_dl/
 cargo run --bin cli -- test -p WeebCentral -d "Berserk"
 
@@ -163,6 +166,22 @@ cargo run --bin cli -- test --update     # re-seed all fixtures from live scrape
 ```
 
 Global flags (`-V` visible browser, `-k` keep open, `-H` dump HTML) go before the subcommand.
+
+`cli test --verbose` is the main provider-debugging workflow. It prints a step-by-step trace of the YAML engine, including expanded requests, response status/body previews, `json_path` extraction, `from_json` transforms, and a final "last trace" summary if the provider fails mid-run.
+
+Example trace shape:
+
+```text
+== Search ==
+  provider trace:
+    [#3 fetch] POST https://api.example.test/graphql -> search_results
+      headers: Content-Type: application/json, x-token: abc123
+      body: {"query":"{search(...)}"}
+      response: 200 OK ok=true final_url=https://api.example.test/graphql (842 bytes)
+      response body: {"data":{"search":{"rows":[...]}}}
+      json_path data.search.rows -> array [{"title":"Berserk","slug":"berserk"}]
+      stored 'search_results' = [{"title":"Berserk","slug":"berserk"}]
+```
 
 ## Thanks
 

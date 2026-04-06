@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use chrono::{Datelike, NaiveDate, NaiveDateTime, TimeZone, Utc};
+use serde::Deserialize;
 
 static DUMP_COUNTER: AtomicU32 = AtomicU32::new(0);
 
@@ -12,7 +13,7 @@ use tracing::{debug, info, warn};
 use crate::scraper::{
     def::{ActionDef, ContentKind, FieldDef, ForeachDef, InterceptDef, ProviderDef, StepDef},
     error::ScraperError,
-    {PageUrl, Provider, ProviderChapterInfo, ProviderSearchResult, ScraperCtx},
+    {PageUrl, Provider, ProviderChapterInfo, ProviderSearchResult, ScraperCtx, ScraperDebugLevel},
 };
 
 /// Diagnostic data collected during a `foreach` step.
@@ -21,6 +22,33 @@ struct ForeachStats {
     /// Per-field: (success_count, fail_count).
     field_counts: Vec<(String, usize, usize)>,
     first_record: Option<HashMap<String, String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BrowserFetchEnvelope {
+    ok: bool,
+    status: u16,
+    status_text: String,
+    url: String,
+    headers: HashMap<String, String>,
+    body: String,
+    error: Option<String>,
+}
+
+#[derive(Debug)]
+struct JsonPathSuccess {
+    value: String,
+    kind: &'static str,
+}
+
+#[derive(Debug)]
+enum JsonPathError {
+    InvalidJson(String),
+    MissingPath {
+        path: String,
+        missing_segment: String,
+        container_kind: &'static str,
+    },
 }
 
 /// A scraping provider driven by a YAML `ProviderDef`.
@@ -110,6 +138,35 @@ impl YamlProvider {
         } else {
             s
         }
+    }
+
+    fn trace_step_start(
+        &self,
+        ctx: &ScraperCtx,
+        step_index: usize,
+        step_name: &str,
+        detail: impl AsRef<str>,
+    ) {
+        let label = format!("#{step_index} {step_name}");
+        ctx.note_step(label.clone());
+        ctx.emit_debug(
+            ScraperDebugLevel::Verbose,
+            format!("    [{label}] {}", detail.as_ref()),
+        );
+    }
+
+    fn trace_step_detail(&self, ctx: &ScraperCtx, detail: impl AsRef<str>) {
+        ctx.emit_debug(
+            ScraperDebugLevel::Verbose,
+            format!("      {}", detail.as_ref()),
+        );
+    }
+
+    fn trace_warning(&self, ctx: &ScraperCtx, detail: impl AsRef<str>) {
+        ctx.emit_debug(
+            ScraperDebugLevel::Verbose,
+            format!("      warning: {}", detail.as_ref()),
+        );
     }
 
     // ------------------------------------------------------------------
@@ -248,11 +305,13 @@ impl YamlProvider {
         let mut pending_intercepts: Vec<InterceptDef> = Vec::new();
         let mut early_return: Option<String> = None;
 
-        for step in &action.steps {
+        for (step_index, step) in action.steps.iter().enumerate() {
+            let step_index = step_index + 1;
             tracing::trace!(step = ?std::mem::discriminant(step), "executing step");
             match step {
                 StepDef::Open { open: url_tmpl } => {
                     let url = self.expand(url_tmpl, &vars);
+                    self.trace_step_start(ctx, step_index, "open", format!("url={url}"));
                     debug!("open: {url}");
 
                     if let Some(ref p) = page {
@@ -389,6 +448,10 @@ impl YamlProvider {
                                 warn!("dump_html: failed to write {fname}: {e}");
                             } else {
                                 info!("dump_html: wrote {fname} ({} bytes)", html.len());
+                                self.trace_step_detail(
+                                    ctx,
+                                    format!("dumped html to {fname} ({} bytes)", html.len()),
+                                );
                             }
                         }
                     }
@@ -403,7 +466,18 @@ impl YamlProvider {
                                     body.len(),
                                     intercept.url_contains
                                 );
-                                let val = parse_capture_body(&body, intercept.json_path.as_deref());
+                                let val = match intercept.json_path.as_deref() {
+                                    Some(path) => match parse_json_path(&body, path) {
+                                        Ok(parsed) => parsed.value,
+                                        Err(err) => {
+                                            let detail = format_json_path_error(&body, path, &err);
+                                            warn!("[step] intercept json_path failed: {detail}");
+                                            self.trace_warning(ctx, detail);
+                                            body.clone()
+                                        }
+                                    },
+                                    None => body.clone(),
+                                };
                                 vars.insert(intercept.var.clone(), val);
                             }
                             None => {
@@ -419,6 +493,7 @@ impl YamlProvider {
 
                 StepDef::WaitFor { wait_for: selector } => {
                     let sel = self.expand(selector, &vars);
+                    self.trace_step_start(ctx, step_index, "wait_for", format!("selector={sel}"));
                     debug!("[step] wait_for → {sel}");
                     let p = require_page(&page, "wait_for")?;
                     match p.wait_for(&sel, 10_000).await {
@@ -438,6 +513,7 @@ impl YamlProvider {
 
                 StepDef::Click { click: selector } => {
                     let sel = self.expand(selector, &vars);
+                    self.trace_step_start(ctx, step_index, "click", format!("selector={sel}"));
                     debug!("[step] click → {sel}");
                     let p = require_page(&page, "click")?;
                     p.human_click(&sel)
@@ -448,6 +524,12 @@ impl YamlProvider {
                 StepDef::Type { type_def } => {
                     let selector = self.expand(&type_def.selector, &vars);
                     let value = self.expand(&type_def.value, &vars);
+                    self.trace_step_start(
+                        ctx,
+                        step_index,
+                        "type",
+                        format!("selector={selector} value={}", preview(&value, 80)),
+                    );
                     debug!("[step] type → {selector}");
                     let p = require_page(&page, "type")?;
                     p.human_type(&selector, &value)
@@ -456,20 +538,35 @@ impl YamlProvider {
                 }
 
                 StepDef::Sleep { sleep: ms } => {
+                    self.trace_step_start(ctx, step_index, "sleep", format!("{ms}ms"));
                     debug!("[step] sleep → {ms}ms");
                     tokio::time::sleep(Duration::from_millis(*ms)).await;
                 }
 
                 StepDef::Script { script: js_tmpl } => {
                     let js = self.expand(js_tmpl, &vars);
-                    let preview = &js[..js.len().min(80)];
-                    debug!("[step] script → {preview}…");
+                    let script_preview = &js[..js.len().min(80)];
+                    self.trace_step_start(
+                        ctx,
+                        step_index,
+                        "script",
+                        format!("script={}", preview(&js, 120)),
+                    );
+                    debug!("[step] script → {script_preview}…");
                     let p = require_page(&page, "script")?;
                     let _ = p.execute(&js).await;
                 }
 
                 StepDef::ExtractJs { extract_js: def } => {
                     let script = self.expand(&def.script, &vars);
+                    ctx.note_source_var(def.var.clone());
+                    ctx.note_parse_stage("extract_js");
+                    self.trace_step_start(
+                        ctx,
+                        step_index,
+                        "extract_js",
+                        format!("var={} script={}", def.var, preview(&script, 120)),
+                    );
                     debug!("[step] extract_js → var={}", def.var);
                     let p = require_page(&page, "extract_js")?;
                     match p.evaluate::<serde_json::Value>(&script).await {
@@ -478,8 +575,13 @@ impl YamlProvider {
                                 serde_json::Value::String(s) => s,
                                 other => other.to_string(),
                             };
-                            let preview = &s[..s.len().min(120)];
-                            debug!("[step] extract_js '{}' = {preview}", def.var);
+                            let rendered = preview(&s, 120);
+                            let rendered_kind = if s.is_empty() { "empty" } else { "value" };
+                            debug!("[step] extract_js '{}' = {rendered}", def.var);
+                            self.trace_step_detail(
+                                ctx,
+                                format!("stored {} as '{}' = {}", rendered_kind, def.var, rendered),
+                            );
                             vars.insert(def.var.clone(), s);
                         }
                         Err(e) => {
@@ -488,6 +590,10 @@ impl YamlProvider {
                                 self.def.name, def.var
                             );
                             debug!("[step] extract_js '{}' → FAILED: {e}", def.var);
+                            self.trace_warning(
+                                ctx,
+                                format!("extract_js '{}' failed: {e}", def.var),
+                            );
                         }
                     }
                 }
@@ -495,6 +601,23 @@ impl YamlProvider {
                 StepDef::Intercept {
                     intercept: intercept_def,
                 } => {
+                    ctx.note_source_var(intercept_def.var.clone());
+                    ctx.note_parse_stage(
+                        intercept_def
+                            .json_path
+                            .as_deref()
+                            .map(|path| format!("intercept json_path={path}"))
+                            .unwrap_or_else(|| "intercept raw body".to_owned()),
+                    );
+                    self.trace_step_start(
+                        ctx,
+                        step_index,
+                        "intercept",
+                        format!(
+                            "url_contains={} -> var={}",
+                            intercept_def.url_contains, intercept_def.var
+                        ),
+                    );
                     debug!(
                         "[step] intercept → url_contains='{}', var='{}'",
                         intercept_def.url_contains, intercept_def.var
@@ -509,8 +632,28 @@ impl YamlProvider {
                                     body.len(),
                                     intercept_def.url_contains
                                 );
-                                let val =
-                                    parse_capture_body(&body, intercept_def.json_path.as_deref());
+                                let val = match intercept_def.json_path.as_deref() {
+                                    Some(path) => match parse_json_path(&body, path) {
+                                        Ok(parsed) => {
+                                            self.trace_step_detail(
+                                                ctx,
+                                                format!(
+                                                    "json_path {path} -> {} ({})",
+                                                    parsed.kind,
+                                                    preview(&parsed.value, 120)
+                                                ),
+                                            );
+                                            parsed.value
+                                        }
+                                        Err(err) => {
+                                            let detail = format_json_path_error(&body, path, &err);
+                                            warn!("[step] intercept json_path failed: {detail}");
+                                            self.trace_warning(ctx, detail);
+                                            body.clone()
+                                        }
+                                    },
+                                    None => body.clone(),
+                                };
                                 vars.insert(intercept_def.var.clone(), val);
                             }
                             None => {
@@ -522,6 +665,13 @@ impl YamlProvider {
                                     "[step] intercept TIMEOUT for '{}'",
                                     intercept_def.url_contains
                                 );
+                                self.trace_warning(
+                                    ctx,
+                                    format!(
+                                        "intercept timed out for '{}'",
+                                        intercept_def.url_contains
+                                    ),
+                                );
                             }
                         }
                     } else {
@@ -530,6 +680,7 @@ impl YamlProvider {
                             "[step] intercept deferred (no page yet) for '{}'",
                             intercept_def.url_contains
                         );
+                        self.trace_step_detail(ctx, "deferred until the next open step");
                         pending_intercepts.push(intercept_def.clone());
                     }
                 }
@@ -537,6 +688,12 @@ impl YamlProvider {
                 StepDef::Foreach {
                     foreach: foreach_def,
                 } => {
+                    self.trace_step_start(
+                        ctx,
+                        step_index,
+                        "foreach",
+                        format!("selector={}", foreach_def.selector),
+                    );
                     debug!("[step] foreach → selector='{}'", foreach_def.selector);
                     let p = require_page(&page, "foreach")?;
                     let html = p
@@ -548,8 +705,22 @@ impl YamlProvider {
                         "[step] foreach → {} elements matched '{}'",
                         stats.element_count, foreach_def.selector
                     );
+                    self.trace_step_detail(
+                        ctx,
+                        format!(
+                            "{} elements matched, {} total result rows",
+                            stats.element_count,
+                            results.len()
+                        ),
+                    );
                     for (field, ok, fail) in &stats.field_counts {
                         debug!("         field '{field}': {ok} extracted, {fail} failed");
+                        if *fail > 0 {
+                            self.trace_warning(
+                                ctx,
+                                format!("field '{field}' had {fail} extraction failures"),
+                            );
+                        }
                     }
                     if let Some(ref first) = stats.first_record {
                         debug!("         sample (first match):");
@@ -560,11 +731,22 @@ impl YamlProvider {
                             let preview = &v[..v.len().min(100)];
                             debug!("           {k} = {preview}");
                         }
+                        self.trace_step_detail(
+                            ctx,
+                            format!("sample row: {}", preview_map(first, 120)),
+                        );
                     }
                 }
 
                 StepDef::Return { value: tmpl } => {
                     let val = self.expand(tmpl, &vars);
+                    ctx.note_parse_stage("return");
+                    self.trace_step_start(
+                        ctx,
+                        step_index,
+                        "return",
+                        format!("value={}", preview(&val, 120)),
+                    );
                     let count_hint = if val.starts_with('[') {
                         serde_json::from_str::<serde_json::Value>(&val)
                             .ok()
@@ -574,13 +756,15 @@ impl YamlProvider {
                     } else {
                         String::new()
                     };
-                    let preview = &val[..val.len().min(120)];
-                    debug!("[step] return → {preview}{count_hint}");
+                    let return_preview = preview(&val, 120);
+                    debug!("[step] return → {return_preview}{count_hint}");
+                    self.trace_step_detail(ctx, format!("returning {return_preview}{count_hint}"));
                     early_return = Some(val);
                     break;
                 }
 
                 StepDef::Scroll { scroll: target } => {
+                    self.trace_step_start(ctx, step_index, "scroll", format!("target={target}"));
                     debug!("[step] scroll → {target}");
                     let p = require_page(&page, "scroll")?;
                     let js = if target == "bottom" {
@@ -594,6 +778,25 @@ impl YamlProvider {
 
                 StepDef::Fetch { fetch: fetch_def } => {
                     let p = require_page(&page, "fetch")?;
+                    ctx.note_source_var(fetch_def.var.clone());
+                    ctx.note_parse_stage(
+                        fetch_def
+                            .json_path
+                            .as_deref()
+                            .map(|path| format!("fetch json_path={path}"))
+                            .unwrap_or_else(|| "fetch raw body".to_owned()),
+                    );
+                    self.trace_step_start(
+                        ctx,
+                        step_index,
+                        "fetch",
+                        format!(
+                            "{} {} -> {}",
+                            fetch_def.method.to_uppercase(),
+                            self.expand(&fetch_def.url, &vars),
+                            fetch_def.var
+                        ),
+                    );
 
                     if let Some(ref pagination) = fetch_def.pagination {
                         // Handle paginated fetch
@@ -618,122 +821,178 @@ impl YamlProvider {
                             }
 
                             debug!("[step] fetch (page {current_page}) → url={url}");
-
                             let method = fetch_def.method.to_uppercase();
-
-                            // Build headers object
-                            let mut headers_js = String::new();
-                            for (key, val) in &fetch_def.headers {
-                                let expanded_val = self.expand(val, &vars);
-                                headers_js.push_str(&format!(
-                                    "'{}': '{}',",
-                                    key,
-                                    expanded_val.replace('\'', "\\\'")
-                                ));
+                            let expanded_headers: HashMap<String, String> = fetch_def
+                                .headers
+                                .iter()
+                                .map(|(key, val)| (key.clone(), self.expand(val, &vars)))
+                                .collect();
+                            let request_body =
+                                fetch_def.body.as_ref().map(|body| self.expand(body, &vars));
+                            ctx.note_request(format!("{method} {url}"));
+                            self.trace_step_detail(
+                                ctx,
+                                format!("page {current_page} request: {method} {url}"),
+                            );
+                            self.trace_step_detail(
+                                ctx,
+                                format!("headers: {}", format_headers(&expanded_headers)),
+                            );
+                            if let Some(body) = request_body.as_deref() {
+                                self.trace_step_detail(
+                                    ctx,
+                                    format!("body: {}", preview(body, 160)),
+                                );
                             }
 
-                            // Build body if present - pass as raw string
-                            let body_js = fetch_def
-                                .body
-                                .as_ref()
-                                .map(|b| self.expand(b, &vars))
-                                .map(|b| format!(", body: `{}`", b.replace('`', "\\`")))
-                                .unwrap_or_default();
-
-                            let js = format!(
-                                r#"
-                                (async () => {{
-                                    const headers = {{{}}};
-                                    const opts = {{
-                                        method: '{}',
-                                        headers: headers{}
-                                    }};
-                                    try {{
-                                        const resp = await fetch('{}', opts);
-                                        return await resp.text();
-                                    }} catch(e) {{
-                                        return 'ERROR:' + e.message;
-                                    }}
-                                }})()
-                            "#,
-                                headers_js,
-                                method,
-                                body_js,
-                                url.replace('\'', "\\\'")
+                            let js = build_browser_fetch_js(
+                                &method,
+                                &url,
+                                &expanded_headers,
+                                request_body.as_deref(),
+                                false,
                             );
 
-                            match p.evaluate::<String>(&js).await {
-                                Ok(response) => {
-                                    if response.starts_with("ERROR:") {
-                                        warn!("[step] fetch failed: {}", response);
-                                        break;
-                                    }
-
-                                    // Parse response
-                                    if let Ok(json) =
-                                        serde_json::from_str::<serde_json::Value>(&response)
-                                    {
-                                        // Extract pagination metadata if configured
-                                        if let Some(ref meta_path) = pagination.meta_path {
-                                            let meta = parse_json_value(&json, meta_path);
-                                            if pagination.calculate_last_page {
-                                                // Calculate last_page from total and limit
-                                                let total = meta
-                                                    .get(&pagination.total_field)
-                                                    .and_then(|v| v.as_u64())
-                                                    .unwrap_or(0);
-                                                let limit = meta
-                                                    .get(&pagination.per_page_field)
-                                                    .and_then(|v| v.as_u64())
-                                                    .unwrap_or(100);
-                                                if limit > 0 {
-                                                    last_page = total.div_ceil(limit) as u32;
-                                                }
-                                            } else if let Some(last_page_val) =
-                                                meta.get(&pagination.last_page_field)
-                                            {
-                                                if let Some(lp) = last_page_val.as_u64() {
-                                                    last_page = lp as u32;
-                                                }
-                                            }
-                                        }
-
-                                        // Extract data items
-                                        let data_path =
-                                            fetch_def.json_path.as_deref().unwrap_or("");
-                                        let items = if data_path.is_empty() {
-                                            json.as_array().cloned().unwrap_or_default()
-                                        } else {
-                                            parse_json_value(&json, data_path)
-                                                .as_array()
-                                                .cloned()
-                                                .unwrap_or_default()
-                                        };
-
-                                        if items.is_empty() {
-                                            debug!(
-                                                "[step] fetch (page {current_page}) → empty response, stopping"
-                                            );
-                                            break;
-                                        }
-
-                                        let items_count = items.len();
-                                        all_items.extend(items);
-
-                                        debug!(
-                                            "[step] fetch (page {current_page}) → {items_count} items (total: {})",
-                                            all_items.len()
-                                        );
-                                    } else {
-                                        warn!("[step] fetch response is not valid JSON");
-                                        break;
-                                    }
-                                }
+                            let raw_response = match p.evaluate::<String>(&js).await {
+                                Ok(response) => response,
                                 Err(e) => {
                                     warn!("[step] fetch execute failed: {e}");
+                                    self.trace_warning(ctx, format!("fetch execute failed: {e}"));
                                     break;
                                 }
+                            };
+                            let envelope = match parse_browser_fetch_envelope(&raw_response) {
+                                Ok(envelope) => envelope,
+                                Err(e) => {
+                                    warn!("[step] fetch parse failed: {e}");
+                                    self.trace_warning(ctx, format!("fetch parse failed: {e}"));
+                                    break;
+                                }
+                            };
+                            if let Some(error) = &envelope.error {
+                                warn!("[step] fetch failed: {error}");
+                                self.trace_warning(ctx, format!("transport failed: {error}"));
+                                break;
                             }
+
+                            self.trace_step_detail(
+                                ctx,
+                                format!(
+                                    "response: {} {} ok={} final_url={} ({} bytes)",
+                                    envelope.status,
+                                    envelope.status_text,
+                                    envelope.ok,
+                                    envelope.url,
+                                    envelope.body.len()
+                                ),
+                            );
+                            self.trace_step_detail(
+                                ctx,
+                                format!("response headers: {}", format_headers(&envelope.headers)),
+                            );
+                            self.trace_step_detail(
+                                ctx,
+                                format!("response body: {}", preview(&envelope.body, 200)),
+                            );
+
+                            let json =
+                                match serde_json::from_str::<serde_json::Value>(&envelope.body) {
+                                    Ok(json) => json,
+                                    Err(e) => {
+                                        let detail = format!(
+                                            "fetch response is not valid JSON: {e}; body={}",
+                                            preview(&envelope.body, 160)
+                                        );
+                                        warn!("[step] {detail}");
+                                        self.trace_warning(ctx, detail);
+                                        break;
+                                    }
+                                };
+
+                            if let Some(ref meta_path) = pagination.meta_path {
+                                let meta = parse_json_value(&json, meta_path);
+                                if pagination.calculate_last_page {
+                                    let total = meta
+                                        .get(&pagination.total_field)
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0);
+                                    let limit = meta
+                                        .get(&pagination.per_page_field)
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(100);
+                                    if limit > 0 {
+                                        last_page = total.div_ceil(limit) as u32;
+                                    }
+                                } else if let Some(last_page_val) =
+                                    meta.get(&pagination.last_page_field)
+                                {
+                                    if let Some(lp) = last_page_val.as_u64() {
+                                        last_page = lp as u32;
+                                    }
+                                }
+                            }
+
+                            let items = if let Some(path) = fetch_def.json_path.as_deref() {
+                                match parse_json_path(&envelope.body, path) {
+                                    Ok(parsed) => {
+                                        self.trace_step_detail(
+                                            ctx,
+                                            format!(
+                                                "json_path {path} -> {} {}",
+                                                parsed.kind,
+                                                preview(&parsed.value, 160)
+                                            ),
+                                        );
+                                        match serde_json::from_str::<serde_json::Value>(
+                                            &parsed.value,
+                                        ) {
+                                            Ok(value) => {
+                                                value.as_array().cloned().unwrap_or_default()
+                                            }
+                                            Err(e) => {
+                                                let detail = format!(
+                                                    "json_path '{path}' did not produce valid JSON array: {e}; value={}",
+                                                    preview(&parsed.value, 160)
+                                                );
+                                                warn!("[step] {detail}");
+                                                self.trace_warning(ctx, detail);
+                                                Vec::new()
+                                            }
+                                        }
+                                    }
+                                    Err(err) => {
+                                        let detail =
+                                            format_json_path_error(&envelope.body, path, &err);
+                                        warn!("[step] fetch json_path failed: {detail}");
+                                        self.trace_warning(ctx, detail);
+                                        Vec::new()
+                                    }
+                                }
+                            } else {
+                                json.as_array().cloned().unwrap_or_default()
+                            };
+
+                            if items.is_empty() {
+                                debug!(
+                                    "[step] fetch (page {current_page}) → empty response, stopping"
+                                );
+                                self.trace_warning(
+                                    ctx,
+                                    format!("page {current_page} produced 0 items; stopping"),
+                                );
+                                break;
+                            }
+
+                            let items_count = items.len();
+                            all_items.extend(items);
+                            debug!(
+                                "[step] fetch (page {current_page}) → {items_count} items (total: {})",
+                                all_items.len()
+                            );
+                            self.trace_step_detail(
+                                ctx,
+                                format!("page {current_page} produced {items_count} items"),
+                            );
 
                             // Check if we've reached the last page
                             if current_page >= last_page {
@@ -752,78 +1011,151 @@ impl YamlProvider {
                             all_items.len(),
                             fetch_def.var
                         );
+                        self.trace_step_detail(
+                            ctx,
+                            format!(
+                                "stored {} paginated items in '{}'",
+                                all_items.len(),
+                                fetch_def.var
+                            ),
+                        );
                         vars.insert(fetch_def.var.clone(), value);
                     } else {
                         // Non-paginated fetch (original behavior)
                         let url = self.expand(&fetch_def.url, &vars);
                         debug!("[step] fetch → url={url}");
                         let method = fetch_def.method.to_uppercase();
-
-                        // Build headers object
-                        let mut headers_js = String::new();
-                        for (key, val) in &fetch_def.headers {
-                            let expanded_val = self.expand(val, &vars);
-                            headers_js.push_str(&format!(
-                                "'{}': '{}',",
-                                key,
-                                expanded_val.replace('\'', "\\\'")
-                            ));
+                        let expanded_headers: HashMap<String, String> = fetch_def
+                            .headers
+                            .iter()
+                            .map(|(key, val)| (key.clone(), self.expand(val, &vars)))
+                            .collect();
+                        let request_body =
+                            fetch_def.body.as_ref().map(|body| self.expand(body, &vars));
+                        ctx.note_request(format!("{method} {url}"));
+                        self.trace_step_detail(ctx, format!("request: {method} {url}"));
+                        self.trace_step_detail(
+                            ctx,
+                            format!("headers: {}", format_headers(&expanded_headers)),
+                        );
+                        if let Some(body) = request_body.as_deref() {
+                            self.trace_step_detail(ctx, format!("body: {}", preview(body, 160)));
                         }
 
-                        // Build body if present - pass as raw string
-                        let body_js = fetch_def
-                            .body
-                            .as_ref()
-                            .map(|b| self.expand(b, &vars))
-                            .map(|b| format!(", body: `{}`", b.replace('`', "\\`")))
-                            .unwrap_or_default();
-
-                        let js = format!(
-                            r#"
-                            (async () => {{
-                                const headers = {{{}}};
-                                const opts = {{
-                                    method: '{}',
-                                    headers: headers{}
-                                }};
-                                try {{
-                                    const resp = await fetch('{}', opts);
-                                    return await resp.text();
-                                }} catch(e) {{
-                                    return 'ERROR:' + e.message;
-                                }}
-                            }})()
-                        "#,
-                            headers_js,
-                            method,
-                            body_js,
-                            url.replace('\'', "\\\'")
+                        let js = build_browser_fetch_js(
+                            &method,
+                            &url,
+                            &expanded_headers,
+                            request_body.as_deref(),
+                            false,
                         );
 
                         match p.evaluate::<String>(&js).await {
-                            Ok(response) => {
-                                if response.starts_with("ERROR:") {
-                                    warn!("[step] fetch failed: {}", response);
-                                } else {
+                            Ok(raw_response) => match parse_browser_fetch_envelope(&raw_response) {
+                                Ok(envelope) => {
+                                    if let Some(error) = &envelope.error {
+                                        warn!("[step] fetch failed: {error}");
+                                        self.trace_warning(
+                                            ctx,
+                                            format!("transport failed: {error}"),
+                                        );
+                                        continue;
+                                    }
+
+                                    self.trace_step_detail(
+                                        ctx,
+                                        format!(
+                                            "response: {} {} ok={} final_url={} ({} bytes)",
+                                            envelope.status,
+                                            envelope.status_text,
+                                            envelope.ok,
+                                            envelope.url,
+                                            envelope.body.len()
+                                        ),
+                                    );
+                                    self.trace_step_detail(
+                                        ctx,
+                                        format!(
+                                            "response headers: {}",
+                                            format_headers(&envelope.headers)
+                                        ),
+                                    );
+                                    self.trace_step_detail(
+                                        ctx,
+                                        format!("response body: {}", preview(&envelope.body, 200)),
+                                    );
+
                                     let value = if let Some(ref path) = fetch_def.json_path {
-                                        parse_json_path(&response, path)
+                                        if looks_like_html(&envelope.body) {
+                                            let detail = format!(
+                                                "expected JSON for json_path '{path}' but response looks like HTML"
+                                            );
+                                            warn!("[step] {detail}");
+                                            self.trace_warning(ctx, detail);
+                                        }
+                                        match parse_json_path(&envelope.body, path) {
+                                            Ok(parsed) => {
+                                                self.trace_step_detail(
+                                                    ctx,
+                                                    format!(
+                                                        "json_path {path} -> {} {}",
+                                                        parsed.kind,
+                                                        preview(&parsed.value, 160)
+                                                    ),
+                                                );
+                                                if parsed.value.is_empty()
+                                                    || parsed.value == "[]"
+                                                    || parsed.value == "null"
+                                                {
+                                                    self.trace_warning(
+                                                        ctx,
+                                                        format!(
+                                                            "json_path '{path}' produced an empty value"
+                                                        ),
+                                                    );
+                                                }
+                                                parsed.value
+                                            }
+                                            Err(err) => {
+                                                let detail = format_json_path_error(
+                                                    &envelope.body,
+                                                    path,
+                                                    &err,
+                                                );
+                                                warn!("[step] fetch json_path failed: {detail}");
+                                                self.trace_warning(ctx, detail);
+                                                envelope.body
+                                            }
+                                        }
                                     } else {
-                                        response
+                                        envelope.body
                                     };
-                                    let end = (0..=120_usize.min(value.len()))
-                                        .rev()
-                                        .find(|&i| value.is_char_boundary(i))
-                                        .unwrap_or(0);
-                                    let preview = &value[..end];
                                     debug!(
                                         "[step] fetch stored in '{}': {}",
-                                        fetch_def.var, preview
+                                        fetch_def.var,
+                                        preview(&value, 120)
+                                    );
+                                    self.trace_step_detail(
+                                        ctx,
+                                        format!(
+                                            "stored '{}' = {}",
+                                            fetch_def.var,
+                                            preview(&value, 160)
+                                        ),
                                     );
                                     vars.insert(fetch_def.var.clone(), value);
                                 }
-                            }
+                                Err(e) => {
+                                    warn!("[step] fetch envelope parse failed: {e}");
+                                    self.trace_warning(
+                                        ctx,
+                                        format!("fetch envelope parse failed: {e}"),
+                                    );
+                                }
+                            },
                             Err(e) => {
                                 warn!("[step] fetch execute failed: {e}");
+                                self.trace_warning(ctx, format!("fetch execute failed: {e}"));
                             }
                         }
                     }
@@ -835,6 +1167,20 @@ impl YamlProvider {
                     let p = require_page(&page, "graphql")?;
 
                     let url = self.expand(&graphql_def.url, &vars);
+                    ctx.note_source_var(graphql_def.var.clone());
+                    ctx.note_parse_stage(
+                        graphql_def
+                            .json_path
+                            .as_deref()
+                            .map(|path| format!("graphql json_path={path}"))
+                            .unwrap_or_else(|| "graphql raw body".to_owned()),
+                    );
+                    self.trace_step_start(
+                        ctx,
+                        step_index,
+                        "graphql",
+                        format!("POST {url} -> {}", graphql_def.var),
+                    );
                     debug!("[step] graphql → url={url}");
 
                     // Expand templates in variables, then serialize as JSON.
@@ -857,79 +1203,109 @@ impl YamlProvider {
                         .replace('\r', "");
 
                     // Build headers object - start with Content-Type, then add custom headers
-                    let mut headers_js = String::from("'Content-Type': 'application/json',");
-                    for (key, val) in &graphql_def.headers {
-                        let expanded_val = self.expand(val, &vars);
-                        headers_js.push_str(&format!(
-                            "'{}': '{}',",
-                            key,
-                            expanded_val.replace('\'', "\\\'")
-                        ));
-                    }
+                    let mut expanded_headers: HashMap<String, String> = graphql_def
+                        .headers
+                        .iter()
+                        .map(|(key, val)| (key.clone(), self.expand(val, &vars)))
+                        .collect();
+                    expanded_headers
+                        .insert("Content-Type".to_owned(), "application/json".to_owned());
 
-                    let js = format!(
-                        r#"
-                        (async () => {{
-                            const opts = {{
-                                method: 'POST',
-                                headers: {{ {} }},
-                                credentials: 'include',
-                                body: JSON.stringify({{
-                                    query: '{}',
-                                    variables: {}
-                                }})
-                            }};
-                            try {{
-                                const resp = await fetch('{}', opts);
-                                return await resp.text();
-                            }} catch(e) {{
-                                return 'ERROR:' + e.message;
-                            }}
-                        }})()
-                    "#,
-                        headers_js,
-                        query_escaped,
-                        vars_json,
-                        url.replace('\'', "\\'")
+                    let request_body = format!(
+                        r#"{{"query":"{}","variables":{}}}"#,
+                        query_escaped, vars_json
+                    );
+                    ctx.note_request(format!("POST {url}"));
+                    self.trace_step_detail(ctx, format!("request: POST {url}"));
+                    self.trace_step_detail(
+                        ctx,
+                        format!("headers: {}", format_headers(&expanded_headers)),
+                    );
+                    self.trace_step_detail(ctx, format!("body: {}", preview(&request_body, 160)));
+
+                    let js = build_browser_fetch_js(
+                        "POST",
+                        &url,
+                        &expanded_headers,
+                        Some(&request_body),
+                        true,
                     );
 
                     match p.evaluate::<String>(&js).await {
-                        Ok(response) => {
-                            if response.starts_with("ERROR:") {
-                                warn!("[step] graphql failed: {}", response);
-                            } else {
-                                if ctx.verbose {
-                                    let end = (0..=500_usize.min(response.len()))
-                                        .rev()
-                                        .find(|&i| response.is_char_boundary(i))
-                                        .unwrap_or(0);
-                                    debug!(
-                                        "[step] graphql raw response ({} bytes): {}",
-                                        response.len(),
-                                        &response[..end]
-                                    );
+                        Ok(raw_response) => match parse_browser_fetch_envelope(&raw_response) {
+                            Ok(envelope) => {
+                                if let Some(error) = &envelope.error {
+                                    warn!("[step] graphql failed: {error}");
+                                    self.trace_warning(ctx, format!("transport failed: {error}"));
+                                    continue;
                                 }
+                                self.trace_step_detail(
+                                    ctx,
+                                    format!(
+                                        "response: {} {} ok={} final_url={} ({} bytes)",
+                                        envelope.status,
+                                        envelope.status_text,
+                                        envelope.ok,
+                                        envelope.url,
+                                        envelope.body.len()
+                                    ),
+                                );
+                                self.trace_step_detail(
+                                    ctx,
+                                    format!(
+                                        "response headers: {}",
+                                        format_headers(&envelope.headers)
+                                    ),
+                                );
+                                self.trace_step_detail(
+                                    ctx,
+                                    format!("response body: {}", preview(&envelope.body, 200)),
+                                );
                                 let value = if let Some(ref path) = graphql_def.json_path {
-                                    parse_json_path(&response, path)
+                                    match parse_json_path(&envelope.body, path) {
+                                        Ok(parsed) => {
+                                            self.trace_step_detail(
+                                                ctx,
+                                                format!(
+                                                    "json_path {path} -> {} {}",
+                                                    parsed.kind,
+                                                    preview(&parsed.value, 160)
+                                                ),
+                                            );
+                                            parsed.value
+                                        }
+                                        Err(err) => {
+                                            let detail =
+                                                format_json_path_error(&envelope.body, path, &err);
+                                            warn!("[step] graphql json_path failed: {detail}");
+                                            self.trace_warning(ctx, detail);
+                                            envelope.body
+                                        }
+                                    }
                                 } else {
-                                    response
+                                    envelope.body
                                 };
-                                if ctx.verbose {
-                                    let end = (0..=120_usize.min(value.len()))
-                                        .rev()
-                                        .find(|&i| value.is_char_boundary(i))
-                                        .unwrap_or(0);
-                                    let preview = &value[..end];
-                                    debug!(
-                                        "[step] graphql stored in '{}': {}",
-                                        graphql_def.var, preview
-                                    );
-                                }
+                                self.trace_step_detail(
+                                    ctx,
+                                    format!(
+                                        "stored '{}' = {}",
+                                        graphql_def.var,
+                                        preview(&value, 160)
+                                    ),
+                                );
                                 vars.insert(graphql_def.var.clone(), value);
                             }
-                        }
+                            Err(e) => {
+                                warn!("[step] graphql envelope parse failed: {e}");
+                                self.trace_warning(
+                                    ctx,
+                                    format!("graphql envelope parse failed: {e}"),
+                                );
+                            }
+                        },
                         Err(e) => {
                             warn!("[step] graphql execute failed: {e}");
+                            self.trace_warning(ctx, format!("graphql execute failed: {e}"));
                         }
                     }
                 }
@@ -937,6 +1313,14 @@ impl YamlProvider {
                 StepDef::FromJson {
                     from_json: from_json_def,
                 } => {
+                    ctx.note_source_var(from_json_def.var.clone());
+                    ctx.note_parse_stage("from_json");
+                    self.trace_step_start(
+                        ctx,
+                        step_index,
+                        "from_json",
+                        format!("source_var={}", from_json_def.var),
+                    );
                     debug!("[step] from_json → var={}", from_json_def.var);
 
                     let json_str = vars.get(&from_json_def.var).ok_or_else(|| {
@@ -948,8 +1332,20 @@ impl YamlProvider {
 
                     let json_array: Vec<serde_json::Value> = serde_json::from_str(json_str)
                         .map_err(|e| {
-                            ScraperError::Parse(format!("from_json: failed to parse JSON: {e}"))
+                            ScraperError::Parse(format_from_json_parse_error(
+                                &from_json_def.var,
+                                json_str,
+                                &e,
+                            ))
                         })?;
+                    self.trace_step_detail(
+                        ctx,
+                        format!(
+                            "parsed {} JSON items from '{}'",
+                            json_array.len(),
+                            from_json_def.var
+                        ),
+                    );
 
                     for item in json_array {
                         // Apply filter if configured
@@ -1007,19 +1403,53 @@ impl YamlProvider {
                                     val
                                 };
                                 record.insert(output_key.clone(), final_val);
+                            } else {
+                                let detail = format!(
+                                    "from_json missing field '{}' (json key '{}') in item {}",
+                                    output_key,
+                                    json_key,
+                                    preview(&item.to_string(), 160)
+                                );
+                                warn!("[step] {detail}");
+                                self.trace_warning(ctx, detail);
                             }
                         }
                         if !record.is_empty() {
+                            if results.is_empty() {
+                                self.trace_step_detail(
+                                    ctx,
+                                    format!(
+                                        "sample transformed row: {}",
+                                        preview_map(&record, 120)
+                                    ),
+                                );
+                            }
                             results.push(record);
                         }
                     }
 
                     debug!("[step] from_json → {} records extracted", results.len());
+                    if results.is_empty() {
+                        self.trace_warning(ctx, "from_json produced 0 rows");
+                    } else {
+                        self.trace_step_detail(
+                            ctx,
+                            format!("from_json produced {} rows", results.len()),
+                        );
+                    }
                 }
 
                 StepDef::FilterJson {
                     filter_json: filter_def,
                 } => {
+                    ctx.note_source_var(filter_def.var.clone());
+                    ctx.note_parse_stage("filter_json");
+                    self.trace_step_start(
+                        ctx,
+                        step_index,
+                        "filter_json",
+                        format!("source_var={}", filter_def.var),
+                    );
                     debug!("[step] filter_json → var={}", filter_def.var);
 
                     let json_str = vars.get(&filter_def.var).ok_or_else(|| {
@@ -1053,6 +1483,13 @@ impl YamlProvider {
                         "[step] filter_json → removed {} records ({} remaining)",
                         filtered_count,
                         json_array.len()
+                    );
+                    self.trace_step_detail(
+                        ctx,
+                        format!(
+                            "removed {filtered_count} records ({} remaining)",
+                            json_array.len()
+                        ),
                     );
 
                     // Store filtered array back
@@ -1648,20 +2085,159 @@ async fn poll_capture(page: &eoka::Page, url_fragment: &str) -> Option<String> {
     None
 }
 
-/// Parse an intercepted response body, optionally navigating a JSON path.
-fn parse_capture_body(body: &str, json_path: Option<&str>) -> String {
-    if let Some(path) = json_path {
-        if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(body) {
-            for key in path.split('.') {
-                json = json[key].take();
-            }
-            return match json {
-                serde_json::Value::String(s) => s,
-                other => other.to_string(),
-            };
-        }
+fn preview(s: &str, limit: usize) -> String {
+    let end = (0..=limit.min(s.len()))
+        .rev()
+        .find(|&i| s.is_char_boundary(i))
+        .unwrap_or(0);
+    let mut out = s[..end].replace('\n', "\\n");
+    if s.len() > end {
+        out.push_str("...");
     }
-    body.to_owned()
+    out
+}
+
+fn preview_map(values: &HashMap<String, String>, limit: usize) -> String {
+    let mut items: Vec<_> = values.iter().collect();
+    items.sort_by(|a, b| a.0.cmp(b.0));
+    let joined = items
+        .into_iter()
+        .map(|(k, v)| format!("{k}={}", preview(v, 40)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    preview(&joined, limit)
+}
+
+fn json_kind(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "bool",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
+    }
+}
+
+fn looks_like_html(body: &str) -> bool {
+    let trimmed = body.trim_start();
+    trimmed.starts_with("<!DOCTYPE html")
+        || trimmed.starts_with("<html")
+        || trimmed.starts_with("<body")
+}
+
+fn build_browser_fetch_js(
+    method: &str,
+    url: &str,
+    headers: &HashMap<String, String>,
+    body: Option<&str>,
+    include_credentials: bool,
+) -> String {
+    let mut headers_js = String::new();
+    for (key, val) in headers {
+        headers_js.push_str(&format!("'{}': '{}',", key, val.replace('\'', "\\\'")));
+    }
+
+    let body_js = body
+        .map(|b| format!(", body: `{}`", b.replace('`', "\\`")))
+        .unwrap_or_default();
+    let credentials_js = if include_credentials {
+        ", credentials: 'include'"
+    } else {
+        ""
+    };
+
+    format!(
+        r#"
+        (async () => {{
+            const headers = {{{}}};
+            const opts = {{
+                method: '{}',
+                headers: headers{}{}
+            }};
+            try {{
+                const resp = await fetch('{}', opts);
+                const body = await resp.text();
+                const headersObj = Object.fromEntries(Array.from(resp.headers.entries()));
+                return JSON.stringify({{
+                    ok: resp.ok,
+                    status: resp.status,
+                    status_text: resp.statusText,
+                    url: resp.url,
+                    headers: headersObj,
+                    body,
+                    error: null
+                }});
+            }} catch(e) {{
+                return JSON.stringify({{
+                    ok: false,
+                    status: 0,
+                    status_text: '',
+                    url: '{}',
+                    headers: {{}},
+                    body: '',
+                    error: e.message || String(e)
+                }});
+            }}
+        }})()
+    "#,
+        headers_js,
+        method,
+        credentials_js,
+        body_js,
+        url.replace('\'', "\\\'"),
+        url.replace('\'', "\\\'")
+    )
+}
+
+fn parse_browser_fetch_envelope(raw: &str) -> Result<BrowserFetchEnvelope, ScraperError> {
+    serde_json::from_str(raw).map_err(|e| {
+        ScraperError::Parse(format!(
+            "fetch bridge returned malformed response envelope: {e}; raw={}",
+            preview(raw, 160)
+        ))
+    })
+}
+
+fn format_headers(headers: &HashMap<String, String>) -> String {
+    if headers.is_empty() {
+        return "(none)".to_owned();
+    }
+    let mut items: Vec<_> = headers.iter().collect();
+    items.sort_by(|a, b| a.0.cmp(b.0));
+    items
+        .into_iter()
+        .map(|(k, v)| format!("{k}: {}", preview(v, 60)))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn format_json_path_error(body: &str, json_path: &str, err: &JsonPathError) -> String {
+    match err {
+        JsonPathError::InvalidJson(reason) => format!(
+            "json_path '{json_path}' could not parse response as JSON: {reason}; body={}",
+            preview(body, 160)
+        ),
+        JsonPathError::MissingPath {
+            path,
+            missing_segment,
+            container_kind,
+        } => format!(
+            "json_path '{json_path}' could not resolve segment '{missing_segment}' (resolved='{path}', container={container_kind}); body={}",
+            preview(body, 160)
+        ),
+    }
+}
+
+fn format_from_json_parse_error(
+    source_var: &str,
+    json_str: &str,
+    err: &serde_json::Error,
+) -> String {
+    format!(
+        "from_json: failed to parse JSON from '{source_var}': {err}; source={}",
+        preview(json_str, 160)
+    )
 }
 
 /// Escape a string for safe embedding in a JS single-quoted string literal.
@@ -1672,20 +2248,31 @@ fn js_escape(s: &str) -> String {
         .replace('\r', "\\r")
 }
 
-/// Parse a JSON string and navigate to a specific path, returning the result as a JSON string.
-fn parse_json_path(body: &str, json_path: &str) -> String {
-    if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(body) {
-        for key in json_path.split('.') {
-            json = json[key].take();
-        }
-        // If the result is a JSON string (not an object/array), return the original string value
-        // to preserve escaped content like nested JSON strings
-        if let serde_json::Value::String(s) = &json {
-            return s.clone();
-        }
-        return json.to_string();
+/// Parse a JSON string and navigate to a specific path.
+fn parse_json_path(body: &str, json_path: &str) -> Result<JsonPathSuccess, JsonPathError> {
+    let mut json = serde_json::from_str::<serde_json::Value>(body)
+        .map_err(|e| JsonPathError::InvalidJson(e.to_string()))?;
+    let mut resolved_path = Vec::new();
+
+    for key in json_path.split('.') {
+        let Some(next) = json.get(key).cloned() else {
+            return Err(JsonPathError::MissingPath {
+                path: resolved_path.join("."),
+                missing_segment: key.to_owned(),
+                container_kind: json_kind(&json),
+            });
+        };
+        resolved_path.push(key.to_owned());
+        json = next;
     }
-    body.to_owned()
+
+    let kind = json_kind(&json);
+    let value = if let serde_json::Value::String(s) = json {
+        s
+    } else {
+        json.to_string()
+    };
+    Ok(JsonPathSuccess { value, kind })
 }
 
 /// Extract a value from a JSON object using a key path (e.g., "name" or "thumbnail.url").
@@ -1708,4 +2295,67 @@ fn parse_json_value(json: &serde_json::Value, path: &str) -> serde_json::Value {
         current = current.get(key).cloned().unwrap_or(serde_json::Value::Null);
     }
     current
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        JsonPathError, build_browser_fetch_js, format_from_json_parse_error,
+        format_json_path_error, parse_json_path, preview,
+    };
+    use std::collections::HashMap;
+
+    #[test]
+    fn parse_json_path_returns_kind_and_value() {
+        let body = r#"{"data":{"search":{"rows":[{"title":"Berserk"}]}}}"#;
+        let parsed = parse_json_path(body, "data.search.rows").expect("json path should resolve");
+        assert_eq!(parsed.kind, "array");
+        assert_eq!(parsed.value, r#"[{"title":"Berserk"}]"#);
+    }
+
+    #[test]
+    fn parse_json_path_reports_missing_segment() {
+        let body = r#"{"data":{"search":{}}}"#;
+        let err = parse_json_path(body, "data.search.rows").expect_err("path should fail");
+        let detail = format_json_path_error(body, "data.search.rows", &err);
+        match err {
+            JsonPathError::MissingPath {
+                missing_segment,
+                container_kind,
+                ..
+            } => {
+                assert_eq!(missing_segment, "rows");
+                assert_eq!(container_kind, "object");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+        assert!(detail.contains("could not resolve segment 'rows'"));
+        assert!(detail.contains("container=object"));
+    }
+
+    #[test]
+    fn from_json_parse_error_includes_source_preview() {
+        let source = r#"{"oops":true}"#;
+        let err = serde_json::from_str::<Vec<serde_json::Value>>(source).unwrap_err();
+        let detail = format_from_json_parse_error("chapters_response", source, &err);
+        assert!(detail.contains("chapters_response"));
+        assert!(detail.contains(&preview(source, 160)));
+    }
+
+    #[test]
+    fn browser_fetch_js_embeds_response_envelope_fields() {
+        let mut headers = HashMap::new();
+        headers.insert("X-Test".to_owned(), "abc".to_owned());
+        let js = build_browser_fetch_js(
+            "POST",
+            "https://example.com/graphql",
+            &headers,
+            Some("{\"query\":\"{viewer{id}}\"}"),
+            true,
+        );
+        assert!(js.contains("status_text"));
+        assert!(js.contains("headersObj"));
+        assert!(js.contains("credentials: 'include'"));
+        assert!(js.contains("https://example.com/graphql"));
+    }
 }

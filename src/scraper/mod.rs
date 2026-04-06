@@ -6,7 +6,10 @@ pub mod error;
 pub mod executor;
 
 use async_trait::async_trait;
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 use tracing::{info, warn};
 
 use browser::BrowserPool;
@@ -66,6 +69,23 @@ pub struct PageUrl {
 ///
 /// Stored in Rocket's managed state so API handlers can reach all providers
 /// through one value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum ScraperDebugLevel {
+    #[default]
+    Off,
+    Summary,
+    Verbose,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ScraperDebugContext {
+    phase: Option<String>,
+    last_step: Option<String>,
+    last_request: Option<String>,
+    source_var: Option<String>,
+    parse_stage: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct ScraperCtx {
     /// Pre-configured HTTP client (respects timeouts, user-agent, etc.)
@@ -78,9 +98,9 @@ pub struct ScraperCtx {
     /// When true, dump page HTML to `./scraper_dump_N.html` after every `open` step.
     /// Useful for debugging provider YAML issues.
     pub dump_html: bool,
-    /// When true, print step-level diagnostics to stderr (selector match counts,
-    /// field extraction stats, variable values, etc.). Always enabled in scraper_test.
-    pub verbose: bool,
+    /// Controls user-facing provider trace output in the CLI.
+    pub debug_level: ScraperDebugLevel,
+    debug_context: Arc<Mutex<ScraperDebugContext>>,
 }
 
 impl ScraperCtx {
@@ -94,7 +114,85 @@ impl ScraperCtx {
             browser,
             executor,
             dump_html: false,
-            verbose: false,
+            debug_level: ScraperDebugLevel::Off,
+            debug_context: Arc::new(Mutex::new(ScraperDebugContext::default())),
+        }
+    }
+
+    pub fn set_debug_level(&mut self, level: ScraperDebugLevel) {
+        self.debug_level = level;
+    }
+
+    pub fn is_debug_enabled(&self, level: ScraperDebugLevel) -> bool {
+        self.debug_level >= level
+    }
+
+    pub fn begin_phase(&self, phase: impl Into<String>) {
+        let phase = phase.into();
+        let mut ctx = self.debug_context.lock().expect("debug context poisoned");
+        *ctx = ScraperDebugContext {
+            phase: Some(phase),
+            ..ScraperDebugContext::default()
+        };
+    }
+
+    pub fn clear_debug_context(&self) {
+        let mut ctx = self.debug_context.lock().expect("debug context poisoned");
+        let phase = ctx.phase.take();
+        *ctx = ScraperDebugContext {
+            phase,
+            ..ScraperDebugContext::default()
+        };
+    }
+
+    pub fn note_step(&self, step: impl Into<String>) {
+        let mut ctx = self.debug_context.lock().expect("debug context poisoned");
+        ctx.last_step = Some(step.into());
+    }
+
+    pub fn note_request(&self, request: impl Into<String>) {
+        let mut ctx = self.debug_context.lock().expect("debug context poisoned");
+        ctx.last_request = Some(request.into());
+    }
+
+    pub fn note_source_var(&self, var: impl Into<String>) {
+        let mut ctx = self.debug_context.lock().expect("debug context poisoned");
+        ctx.source_var = Some(var.into());
+    }
+
+    pub fn note_parse_stage(&self, stage: impl Into<String>) {
+        let mut ctx = self.debug_context.lock().expect("debug context poisoned");
+        ctx.parse_stage = Some(stage.into());
+    }
+
+    pub fn emit_debug(&self, level: ScraperDebugLevel, message: impl AsRef<str>) {
+        if self.is_debug_enabled(level) {
+            eprintln!("{}", message.as_ref());
+        }
+    }
+
+    pub fn last_debug_summary(&self) -> Option<String> {
+        let ctx = self.debug_context.lock().expect("debug context poisoned");
+        let mut parts = Vec::new();
+        if let Some(phase) = &ctx.phase {
+            parts.push(format!("phase={phase}"));
+        }
+        if let Some(step) = &ctx.last_step {
+            parts.push(format!("step={step}"));
+        }
+        if let Some(request) = &ctx.last_request {
+            parts.push(format!("request={request}"));
+        }
+        if let Some(source_var) = &ctx.source_var {
+            parts.push(format!("var={source_var}"));
+        }
+        if let Some(parse_stage) = &ctx.parse_stage {
+            parts.push(format!("parse={parse_stage}"));
+        }
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join(" | "))
         }
     }
 }

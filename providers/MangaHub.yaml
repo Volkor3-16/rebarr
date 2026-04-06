@@ -65,7 +65,7 @@ chapters:
           x-mhub-access: "{mhub_token}"
           origin: "https://mangahub.io"
           referer: "https://mangahub.io/"
-        body: '{"query":"{manga(x:m01,slug:\\"{manga_slug}\\"){chapters{number,title,createdAt}}}"}'
+        body: '{"query":"{manga(x:m01,slug:\\"{manga_slug}\\"){chapters{number,title,date}}}"}'
         var: chapters_response
         json_path: "data.manga.chapters"
     - extract_js:
@@ -79,7 +79,7 @@ chapters:
                 number_raw: String(ch.number || '0'),
                 title: ch.title || '',
                 url: '{base_url}/chapter/{manga_slug}/chapter-' + (ch.number || '0'),
-                date: ch.createdAt ? Math.floor(new Date(ch.createdAt).getTime() / 1000).toString() : ''
+                date: ch.date ? Math.floor(new Date(ch.date).getTime() / 1000).toString() : ''
               })));
             } catch(e) {
               return '[]';

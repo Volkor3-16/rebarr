@@ -6,6 +6,10 @@ This a informal changelog so i can keep track of what im doing.
 
 - Added ability to sort by latest chapter
 - Added filtering on the queue (defaults to downloaded chapters only)
+- WeebDex Removed (they shutdown 😭😭😭)
+- MangaHub working (literally createdAt -> date thats the whole change that stopped it from working)
+- I (codex) had to rework verbose mode for cli, so we can actually see what requests and responses.
+    - This should make adding new providers a LOT more easy... maybe.
 
 ## 2026-04-03
 

@@ -13,7 +13,7 @@ use strsim::jaro_winkler;
 use tracing::{error, info, warn};
 
 use rebarr::scraper::{
-    ProviderRegistry, ProviderSearchResult, ScraperCtx, browser::BrowserPool,
+    ProviderRegistry, ProviderSearchResult, ScraperCtx, ScraperDebugLevel, browser::BrowserPool,
     executor::ProviderExecutor,
 };
 
@@ -76,7 +76,7 @@ enum Cmd {
         /// Write/update fixture files from a live scrape instead of testing
         #[arg(long)]
         update: bool,
-        /// Print raw scraped data (search results, chapter list, page URLs) at each step
+        /// Print the full provider execution trace (requests, responses, transforms, warnings)
         #[arg(short, long)]
         verbose: bool,
     },
@@ -229,6 +229,21 @@ fn short_err(s: &str) -> &str {
     if s.len() > limit { &s[..limit] } else { s }
 }
 
+fn print_phase_header(name: &str, verbose: bool) {
+    println!("\n== {name} ==");
+    if verbose {
+        println!("  provider trace:");
+    }
+}
+
+fn exit_with_trace(ctx: &ScraperCtx, message: &str) -> ! {
+    error!("{message}");
+    if let Some(summary) = ctx.last_debug_summary() {
+        eprintln!("  last trace: {summary}");
+    }
+    std::process::exit(1);
+}
+
 // ─── Entry point ─────────────────────────────────────────────────────────────
 
 #[tokio::main]
@@ -271,7 +286,7 @@ async fn main() {
     let executor = Arc::new(ProviderExecutor::new(&registry, 3));
     let mut ctx = ScraperCtx::new(http, BrowserPool::new(), executor);
     ctx.dump_html = cli.dump_html;
-    ctx.verbose = true;
+    ctx.set_debug_level(ScraperDebugLevel::Off);
 
     match cli.command {
         Cmd::Providers => unreachable!(),
@@ -361,13 +376,29 @@ async fn cmd_test(
     update: bool,
     verbose: bool,
 ) {
+    let mut debug_ctx = ctx.clone();
+    debug_ctx.set_debug_level(if verbose {
+        ScraperDebugLevel::Verbose
+    } else {
+        ScraperDebugLevel::Off
+    });
+    debug_ctx.clear_debug_context();
+
     // ── Fixture mode (no query) ──────────────────────────────────────────────
     if query.is_none() || update {
         let fixtures_path = PathBuf::from(fixtures_dir);
         if update {
-            fixture_update(registry, ctx, provider_name, &fixtures_path, query, verbose).await;
+            fixture_update(
+                registry,
+                &debug_ctx,
+                provider_name,
+                &fixtures_path,
+                query,
+                verbose,
+            )
+            .await;
         } else {
-            fixture_run(registry, ctx, provider_name, &fixtures_path, verbose).await;
+            fixture_run(registry, &debug_ctx, provider_name, &fixtures_path, verbose).await;
         }
         return;
     }
@@ -391,30 +422,32 @@ async fn cmd_test(
 
     println!("Provider: {}\n", provider.name());
 
+    debug_ctx.begin_phase("search");
+    print_phase_header("Search", verbose);
     info!("Searching {:?} for {query:?}...", provider.name());
-    let results = provider.search(ctx, query).await.unwrap_or_else(|e| {
-        error!("Search failed: {e}");
-        std::process::exit(1);
-    });
+    let results = provider
+        .search(&debug_ctx, query)
+        .await
+        .unwrap_or_else(|e| exit_with_trace(&debug_ctx, &format!("Search failed: {e}")));
     if results.is_empty() {
-        error!("No results found for {query:?}");
-        std::process::exit(1);
+        exit_with_trace(&debug_ctx, &format!("No results found for {query:?}"));
     }
 
     let manga = pick_result(&results, query, false);
     println!();
 
+    debug_ctx.begin_phase("chapters");
+    print_phase_header("Chapters", verbose);
     info!("Fetching chapter list...");
     let chapters = provider
-        .chapters(ctx, &manga.url)
+        .chapters(&debug_ctx, &manga.url)
         .await
-        .unwrap_or_else(|e| {
-            error!("chapters() failed: {e}");
-            std::process::exit(1);
-        });
+        .unwrap_or_else(|e| exit_with_trace(&debug_ctx, &format!("chapters() failed: {e}")));
     if chapters.is_empty() {
-        error!("No chapters found. The provider may require a different manga URL.");
-        std::process::exit(1);
+        exit_with_trace(
+            &debug_ctx,
+            "No chapters found. The provider may require a different manga URL.",
+        );
     }
 
     println!("Found {} chapters:", chapters.len());
@@ -456,17 +489,18 @@ async fn cmd_test(
     };
 
     let chapter_url = ch.url.as_ref().unwrap_or_else(|| {
-        error!("Chapter {} has no URL", ch.number);
-        std::process::exit(1);
+        exit_with_trace(&debug_ctx, &format!("Chapter {} has no URL", ch.number));
     });
 
+    debug_ctx.begin_phase("pages");
+    print_phase_header("Pages", verbose);
     println!("\nFetching pages for chapter {}...", ch.raw_number);
     info!("pages() → {chapter_url}");
 
-    let pages = provider.pages(ctx, chapter_url).await.unwrap_or_else(|e| {
-        error!("pages() failed: {e}");
-        std::process::exit(1);
-    });
+    let pages = provider
+        .pages(&debug_ctx, chapter_url)
+        .await
+        .unwrap_or_else(|e| exit_with_trace(&debug_ctx, &format!("pages() failed: {e}")));
 
     println!("Found {} pages:", pages.len());
     for p in pages.iter().take(5) {
@@ -476,8 +510,10 @@ async fn cmd_test(
         println!("  ... and {} more", pages.len() - 5);
     }
     if pages.is_empty() {
-        error!("No pages found — check the 'pages' extract config in the provider YAML");
-        std::process::exit(1);
+        exit_with_trace(
+            &debug_ctx,
+            "No pages found — check the 'pages' extract config in the provider YAML",
+        );
     }
 
     if !do_download {
