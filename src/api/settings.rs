@@ -29,6 +29,8 @@ pub struct SettingsResponse {
     pub min_tier: u64,
     /// Whether AniList-completed series should be unmonitored on add/refresh.
     pub auto_unmonitor_completed: bool,
+    /// Whether already-downloaded chapters should be preserved as canonical winners.
+    pub disable_chapter_upgrades: bool,
     /// Download mode: "best_only" (try best release, fail immediately) or "must_have" (fallback on failure).
     pub download_mode: String,
 }
@@ -47,6 +49,7 @@ pub struct UpdateSettingsRequest {
     /// 1–4: minimum scanlator tier.
     pub min_tier: Option<u64>,
     pub auto_unmonitor_completed: Option<bool>,
+    pub disable_chapter_upgrades: Option<bool>,
     /// "best_only" or "must_have".
     pub download_mode: Option<String>,
 }
@@ -106,6 +109,11 @@ pub async fn get_settings(pool: &State<sqlx::SqlitePool>) -> ApiResult<SettingsR
             .await
             .unwrap_or_else(|_| "false".to_string())
             == "true";
+    let disable_chapter_upgrades =
+        db::settings::get(pool.inner(), "disable_chapter_upgrades", "false")
+            .await
+            .unwrap_or_else(|_| "false".to_string())
+            == "true";
     let download_mode_raw = db::settings::get(pool.inner(), "download_mode", "must_have")
         .await
         .unwrap_or_else(|_| "must_have".to_string());
@@ -124,6 +132,7 @@ pub async fn get_settings(pool: &State<sqlx::SqlitePool>) -> ApiResult<SettingsR
         default_monitored,
         min_tier,
         auto_unmonitor_completed,
+        disable_chapter_upgrades,
         download_mode,
     }))
 }
@@ -206,6 +215,15 @@ pub async fn update_settings(
         db::settings::set(
             pool.inner(),
             "auto_unmonitor_completed",
+            if enabled { "true" } else { "false" },
+        )
+        .await
+        .map_err(internal)?;
+    }
+    if let Some(enabled) = body.disable_chapter_upgrades {
+        db::settings::set(
+            pool.inner(),
+            "disable_chapter_upgrades",
             if enabled { "true" } else { "false" },
         )
         .await

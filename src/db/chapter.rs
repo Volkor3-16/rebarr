@@ -457,6 +457,8 @@ pub async fn update_canonical(
 
     // Load user-set overrides before re-scoring.
     let overrides = load_canonical_overrides(pool, manga_id).await?;
+    let disable_chapter_upgrades =
+        crate::db::settings::get(pool, "disable_chapter_upgrades", "false").await? == "true";
 
     // Group by (chapter_base, chapter_variant)
     let mut groups: std::collections::BTreeMap<(i32, i32), Vec<Chapter>> =
@@ -471,6 +473,25 @@ pub async fn update_canonical(
     let mut canonical_uuids: Vec<String> = Vec::with_capacity(groups.len());
 
     for ((base, variant), mut entries) in groups {
+        let key = format!("{base}:{variant}");
+        if let Some(ov_uuid) = overrides.get(&key) {
+            if valid_uuids.contains(ov_uuid.as_str()) {
+                canonical_uuids.push(ov_uuid.clone());
+                continue;
+            }
+        }
+
+        if disable_chapter_upgrades {
+            let downloaded_entries: Vec<_> = entries
+                .iter()
+                .filter(|entry| entry.download_status == DownloadStatus::Downloaded)
+                .cloned()
+                .collect();
+            if !downloaded_entries.is_empty() {
+                entries = downloaded_entries;
+            }
+        }
+
         // Language filter: prefer matching language but fall back to all
         if !preferred_language.is_empty() {
             let lang_filtered: Vec<_> = entries
@@ -516,18 +537,7 @@ pub async fn update_canonical(
         });
 
         if let Some(winner) = entries.into_iter().next() {
-            // Apply user override if present and the overridden chapter still exists.
-            let key = format!("{base}:{variant}");
-            let uuid = if let Some(ov_uuid) = overrides.get(&key) {
-                if valid_uuids.contains(ov_uuid.as_str()) {
-                    ov_uuid.clone()
-                } else {
-                    winner.id.to_string()
-                }
-            } else {
-                winner.id.to_string()
-            };
-            canonical_uuids.push(uuid);
+            canonical_uuids.push(winner.id.to_string());
         }
     }
 

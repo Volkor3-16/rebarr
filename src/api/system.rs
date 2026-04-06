@@ -222,8 +222,8 @@ pub fn version_info() -> Json<VersionInfo> {
 /// Get the changelog content.
 #[openapi(tag = "System")]
 #[get("/api/changelog")]
-pub fn changelog() -> Option<String> {
-    std::fs::read_to_string("docs/CHANGELOG.md").ok()
+pub fn changelog() -> &'static str {
+    include_str!("../../docs/CHANGELOG.md")
 }
 
 // ---------------------------------------------------------------------------

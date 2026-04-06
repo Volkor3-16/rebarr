@@ -271,6 +271,39 @@ async function checkVersionAndUpdate() {
   }
 }
 
+// Simple markdown renderer for changelog
+function renderMarkdown(text) {
+  let html = text
+    // Headers
+    .replace(/^### (.*$)/gim, '<h3>$1</h3>')
+    .replace(/^## (.*$)/gim, '<h2>$1</h2>')
+    .replace(/^# (.*$)/gim, '<h1>$1</h1>')
+    // Bold
+    .replace(/\*\*(.*?)\*\*/gim, '<strong>$1</strong>')
+    // Italic
+    .replace(/\*(.*?)\*/gim, '<em>$1</em>')
+    // Unordered lists with indentation
+    .replace(/^(\s*)- (.*$)/gim, (m, indent, content) => {
+      const level = Math.floor(indent.length / 4);
+      return `<li style="margin-left: ${level * 1.5}rem">${content}</li>`;
+    })
+    // Code blocks
+    .replace(/`(.*?)`/g, '<code>$1</code>');
+
+  // Wrap consecutive list items in <ul>
+  html = html.replace(/(<li.*?<\/li>\s*)+/g, '<ul>$&</ul>');
+
+  // Only add <br> for lines that are not inside lists/headers
+  html = html.split('\n').map(line => {
+    if (line.trim().startsWith('<') || line.trim() === '') {
+      return line;
+    }
+    return line + '<br>';
+  }).join('\n');
+
+  return html;
+}
+
 // Show changelog modal
 function showChangelogModal(version, changelog) {
   console.log('showChangelogModal called with version:', version);
@@ -283,7 +316,7 @@ function showChangelogModal(version, changelog) {
     <div class="modal changelog-modal">
       <h2>📋 REBARR ${version} - Full Changelog</h2>
       <div class="changelog-content">
-        <pre>${changelog.trim()}</pre>
+        ${renderMarkdown(changelog.trim())}
       </div>
       <div class="modal-actions">
         <button class="btn-primary" onclick="this.closest('.modal-overlay').remove()">Close</button>

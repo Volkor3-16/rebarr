@@ -15,6 +15,10 @@ I'll remove this when I've got the first public release out, this is just a quic
 
 - [ ] Make sure chapters are done nicely, `A Veternarian in Another World` - Local chapters aren't flagged as downloaded, despite being there.
     - Do we have ScanDisk task validate and check this?
+- [ ] Upgrade Policy (when do we replace existing chapters with a new (better?) copy?)
+    - Never (Downloaded chapters will never be replaced)
+    - Always (New & better chapters will replace older ones) - default, and what we have now
+- [ ] Importing is flakey
 
 ### Frontend
 
@@ -25,7 +29,7 @@ I'll remove this when I've got the first public release out, this is just a quic
     - Let users re-order the queue
 - [ ] Setup Wizard: Adding 49 series to library… should have some logging or progress.
 - [ ] Local chapters (ones where we've downloaded a split chapter (7.1, 7.2, 7.3) are all grouped under a full chapter (7) despite being the local chapter)
-- [ ] Solo Leveling breaks chapter list (I can see Chapter 200 & Chapter 200 - Side Story 20) (they're the same one). Strangely, clicking either only makes one drop down, it's like its half-broken...
+- [ ] Does the worker page show rate limited / disabled providers?
 
 ### Assend (GraphQL frontend for Moku-like frontend?)
 

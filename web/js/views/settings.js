@@ -7,6 +7,7 @@ import { showWizard } from './wizard.js';
 
 // Store provider default scores mapping: name -> default_score
 let _providerDefaults = {};
+let _settingsSaveSeq = 0;
 
 export async function viewSettings() {
   render(`<div class="settings">${skeleton(5)}</div>`);
@@ -96,14 +97,19 @@ export async function viewSettings() {
             <span>Auto-unmonitor completed AniList series</span>
           </label>
           <label class="flex gap-1 align-center">
+            <input type="checkbox" id="disable-chapter-upgrades" class="checkbox checkbox-sm" ${appSettings.disable_chapter_upgrades ? 'checked' : ''}>
+            <span>Disable chapter upgrades</span>
+          </label>
+          <label class="flex gap-1 align-center">
             <span>Download mode:</span>
             <select id="download-mode" class="select select-bordered select-sm" title="Best Only: try only the top-ranked release, fail immediately if unavailable. Must Have: try the best first, fall back to alternatives on failure.">
               <option value="must_have" ${appSettings.download_mode !== 'best_only' ? 'selected' : ''}>Must Have (fallback)</option>
               <option value="best_only" ${appSettings.download_mode === 'best_only' ? 'selected' : ''}>Best Only</option>
             </select>
           </label>
-          <button type="submit" class="btn btn-primary btn-sm">Save</button>
+          <button type="submit" id="settings-save-btn" class="btn btn-primary btn-sm">Save now</button>
         </form>
+        <p class="settings-card-desc" style="margin-top:0.75rem">When enabled, newly discovered chapters still download automatically, but rebarr will keep already-downloaded chapters as canonical until you replace them manually.</p>
         <div id="settings-status"></div>
       </div>
 
@@ -215,45 +221,101 @@ export async function viewSettings() {
     // Load existing global scores into inputs
     loadGlobalScores(providerList);
 
-    // Settings form handler
-    document.getElementById('settings-form').addEventListener('submit', async (e) => {
-      e.preventDefault();
-        const hours = parseInt(document.getElementById('scan-interval').value, 10);
-        const browserWorkers = parseInt(document.getElementById('browser-worker-count').value, 10);
-        const lang = document.getElementById('preferred-language').value.trim();
-        const autoUnmonitorCompleted = document.getElementById('auto-unmonitor-completed').checked;
-        const downloadMode = document.getElementById('download-mode').value;
-      const statusEl = document.getElementById('settings-status');
-
-      if (!hours || hours < 1 || hours > 168) {
-        statusEl.innerHTML = '<p class="error">Interval must be 1–168 hours.</p>';
-        return;
-      }
-      if (!browserWorkers || browserWorkers < 1 || browserWorkers > 16) {
-        statusEl.innerHTML = '<p class="error">Browser workers must be 1–16.</p>';
-        return;
-      }
-
-      try {
-        await settings.update({
-          scan_interval_hours: hours,
-          browser_worker_count: browserWorkers,
-          preferred_language: lang || null,
-          auto_unmonitor_completed: autoUnmonitorCompleted,
-          download_mode: downloadMode,
-        });
-        showToast('Settings saved');
-        statusEl.innerHTML = '';
-      } catch(err) {
-        statusEl.innerHTML = `<p class="error">Error: ${escape(err.message)}</p>`;
-      }
-    });
+    bindSchedulerAutoSave();
 
     loadTrustedGroups();
     loadWebhooks();
   } catch(e) {
     render(`<p class="error">Error: ${escape(e.message)}</p>`);
   }
+}
+
+async function saveSchedulerSettings(showToastOnSuccess = false) {
+  const hours = parseInt(document.getElementById('scan-interval').value, 10);
+  const browserWorkers = parseInt(document.getElementById('browser-worker-count').value, 10);
+  const lang = document.getElementById('preferred-language').value.trim();
+  const autoUnmonitorCompleted = document.getElementById('auto-unmonitor-completed').checked;
+  const disableChapterUpgrades = document.getElementById('disable-chapter-upgrades').checked;
+  const downloadMode = document.getElementById('download-mode').value;
+  const statusEl = document.getElementById('settings-status');
+  const saveBtn = document.getElementById('settings-save-btn');
+  const seq = ++_settingsSaveSeq;
+
+  if (!hours || hours < 1 || hours > 168) {
+    statusEl.innerHTML = '<p class="error">Interval must be 1–168 hours.</p>';
+    return false;
+  }
+  if (!browserWorkers || browserWorkers < 1 || browserWorkers > 16) {
+    statusEl.innerHTML = '<p class="error">Browser workers must be 1–16.</p>';
+    return false;
+  }
+
+  statusEl.innerHTML = '<small style="color:var(--text-muted)">Saving…</small>';
+  if (saveBtn) saveBtn.disabled = true;
+
+  try {
+    await settings.update({
+      scan_interval_hours: hours,
+      browser_worker_count: browserWorkers,
+      preferred_language: lang || null,
+      auto_unmonitor_completed: autoUnmonitorCompleted,
+      disable_chapter_upgrades: disableChapterUpgrades,
+      download_mode: downloadMode,
+    });
+    if (seq === _settingsSaveSeq) {
+      statusEl.innerHTML = '<small style="color:var(--success)">Saved</small>';
+      setTimeout(() => {
+        if (_settingsSaveSeq === seq && statusEl) statusEl.innerHTML = '';
+      }, 1500);
+    }
+    if (showToastOnSuccess) showToast('Settings saved');
+    return true;
+  } catch(err) {
+    if (seq === _settingsSaveSeq) {
+      statusEl.innerHTML = `<p class="error">Error: ${escape(err.message)}</p>`;
+    }
+    return false;
+  } finally {
+    if (saveBtn) saveBtn.disabled = false;
+  }
+}
+
+function bindSchedulerAutoSave() {
+  const form = document.getElementById('settings-form');
+  if (!form) return;
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    await saveSchedulerSettings(true);
+  });
+
+  const immediateIds = [
+    'auto-unmonitor-completed',
+    'disable-chapter-upgrades',
+    'download-mode',
+  ];
+  immediateIds.forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('change', () => { void saveSchedulerSettings(false); });
+  });
+
+  const delayedIds = [
+    'scan-interval',
+    'browser-worker-count',
+    'preferred-language',
+  ];
+  delayedIds.forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('change', () => { void saveSchedulerSettings(false); });
+    el.addEventListener('keydown', async (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      await saveSchedulerSettings(true);
+      el.blur();
+    });
+  });
 }
 
 async function loadGlobalScores(providerList) {

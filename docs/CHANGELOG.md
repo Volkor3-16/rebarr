@@ -16,6 +16,11 @@ This a informal changelog so i can keep track of what im doing.
 - Better chapter list building
     - We don't have dropdowns anymore for chapters where the variants are just extras (that are already on the main chapter list)
     - We don't flag 'Side Story' as a variant anymore, since that breaks most of them where they're full numbered chapters anyway.
+    - You now have to click the +1 before the chapter number to expand the alternative sources of the chapter.
+- Added a setting to disable upgrades for already existing chapters
+    - `I've imported some chapters, but after running 'Search All Providers', they're all replaced!` in the FAQ is relevant to this.
+- The changelog is now embedded during compilation, so it shows on production installs.
+    - Additionally, we actually render the text in markdown.
 
 ## 2026-04-03
 

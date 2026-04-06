@@ -258,6 +258,8 @@ async fn scrape_known_providers(
 
     let trusted_groups = db_provider::get_trusted_groups(pool).await?;
     let preferred_language = db_settings::get(pool, "preferred_language", "").await?;
+    let disable_chapter_upgrades =
+        db_settings::get(pool, "disable_chapter_upgrades", "false").await? == "true";
     let yaml_defaults = registry.yaml_default_scores();
     let provider_scores = db_scores::load_effective_scores(pool, manga.id, &yaml_defaults).await?;
     db_chapter::update_canonical(
@@ -271,7 +273,9 @@ async fn scrape_known_providers(
 
     if manga.monitored {
         enqueue_auto_downloads(pool, manga, &new_ids_for_download).await;
-        enqueue_upgrades(pool, manga, &trusted_groups).await;
+        if !disable_chapter_upgrades {
+            enqueue_upgrades(pool, manga, &trusted_groups).await;
+        }
     }
 
     let final_entries = db_provider::get_all_for_manga(pool, manga.id).await?;
@@ -374,6 +378,8 @@ async fn scrape_single_provider(
     // After scraping, update canonical chapters
     let trusted_groups = db_provider::get_trusted_groups(pool).await?;
     let preferred_language = db_settings::get(pool, "preferred_language", "").await?;
+    let disable_chapter_upgrades =
+        db_settings::get(pool, "disable_chapter_upgrades", "false").await? == "true";
     let yaml_defaults = registry.yaml_default_scores();
     let provider_scores = db_scores::load_effective_scores(pool, manga.id, &yaml_defaults).await?;
     db_chapter::update_canonical(
@@ -388,7 +394,9 @@ async fn scrape_single_provider(
     // Auto-download if monitored
     if manga.monitored {
         enqueue_auto_downloads(pool, manga, &new_ids_for_download).await;
-        enqueue_upgrades(pool, manga, &trusted_groups).await;
+        if !disable_chapter_upgrades {
+            enqueue_upgrades(pool, manga, &trusted_groups).await;
+        }
     }
 
     let final_entries = db_provider::get_all_for_manga(pool, manga.id).await?;

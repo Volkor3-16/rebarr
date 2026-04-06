@@ -523,6 +523,22 @@ img.cover-lg {
   padding: 0.5rem 0;
 }
 
+.chapter-overview-wrap {
+  margin-bottom: 1rem;
+}
+
+.chapter-overview-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.chapter-overview-count {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
 .ch-dot {
   width: 12px;
   height: 12px;
@@ -538,10 +554,11 @@ img.cover-lg {
 .ch-dot-queued      { background: var(--st-queued); }
 .ch-dot-downloading { background: var(--st-downloading); }
 .ch-dot-failed      { background: var(--st-failed); }
+.ch-dot-dimmed      { opacity: 0.25; }
 
 /* Chapter list styles */
 .ch-main {
-  cursor: pointer;
+  cursor: default;
 }
 
 .ch-main:hover {
@@ -583,6 +600,12 @@ img.cover-lg {
 .ch-source {
   font-size: 0.85em;
   color: var(--text-secondary);
+}
+
+.chapter-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
 }
 
 .ch-dl-icon {
@@ -978,6 +1001,66 @@ img.cover-lg {
   padding: 0.2rem 0.4rem;
 }
 
+/* Changelog markdown styling */
+.changelog-content h1 {
+  font-size: 1.4rem;
+  margin: 1rem 0 0.5rem 0;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.changelog-content h2 {
+  font-size: 1.2rem;
+  margin: 1rem 0 0.5rem 0;
+  color: var(--accent);
+  border-bottom: 1px solid var(--border-light);
+  padding-bottom: 0.3rem;
+  font-weight: 600;
+}
+
+.changelog-content h3 {
+  font-size: 1.1rem;
+  margin: 0.8rem 0 0.4rem 0;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.changelog-content ul {
+  list-style-type: disc !important;
+  list-style-position: outside !important;
+  padding-left: 1.5rem !important;
+  margin: 0.5rem 0 0.5rem 1.25rem !important;
+}
+
+.changelog-content li {
+  list-style-type: disc !important;
+  display: list-item !important;
+  margin: 0.25rem 0;
+  line-height: 1.5;
+}
+
+.changelog-content code {
+  background: var(--bg-secondary);
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 0.9em;
+}
+
+.changelog-content strong {
+  font-weight: 600;
+}
+
+.changelog-content em {
+  font-style: italic;
+}
+
+.changelog-content br {
+  display: block;
+  content: "";
+  margin: 0.2rem 0;
+}
+
 .queue-body {
   max-height: 300px;
   overflow-y: auto;
@@ -1266,7 +1349,6 @@ pre {
 
 /* Clickable row with expand animation */
 .ch-row {
-  cursor: pointer;
   transition: background var(--transition);
   position: relative;
 }
@@ -1275,31 +1357,8 @@ pre {
   background: var(--bg-secondary) !important;
 }
 
-.ch-row::after {
-  content: '›';
-  position: absolute;
-  right: 0.75rem;
-  top: 50%;
-  transform: translateY(-50%);
-  opacity: 0;
-  transition: opacity var(--transition), transform var(--transition);
-  color: var(--accent);
-  font-size: 1.2rem;
-}
-
-.ch-row:hover::after {
-  opacity: 1;
-  transform: translateY(-50%) translateX(3px);
-}
-
 .ch-row.expanded {
   background: var(--bg-tertiary);
-}
-
-.ch-row.expanded::after {
-  content: '⌄';
-  opacity: 1;
-  transform: translateY(-50%) translateX(3px);
 }
 
 /* Variant badge with +n */
@@ -1463,6 +1522,11 @@ pre {
   background: var(--accent-hover);
 }
 
+.alt-count-button {
+  border: none;
+  line-height: 1.2;
+}
+
 /* Provider cell — inline flex so badge sits next to name */
 .provider-cell {
   display: inline-flex;
@@ -1586,6 +1650,10 @@ pre {
   color: white;
 }
 
+.scanlator-pill {
+  border: none;
+}
+
 /* Table filter bar */
 .table-filter-bar {
   display: flex;
@@ -1610,6 +1678,10 @@ pre {
   display: flex;
   gap: 0.25rem;
   flex-wrap: wrap;
+}
+
+.provider-filter-chips {
+  align-items: center;
 }
 
 .filter-chip {
@@ -1639,6 +1711,12 @@ pre {
   min-width: auto;
 }
 
+.chapter-shortcut-hint {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
 /* Filter separator between filter groups */
 .filter-separator {
   color: var(--text-muted);
@@ -1666,6 +1744,23 @@ th.sortable.sorted .sort-indicator {
   opacity: 1;
 }
 
+.chapter-empty-state {
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+}
+
+.chapter-empty-state h4 {
+  margin: 0 0 0.5rem;
+}
+
+.chapter-empty-state p {
+  margin: 0 0 0.75rem;
+  color: var(--text-secondary);
+}
+
 /* Sort indicators - use MDI via CSS pseudo-elements or inline */
 .sort-indicator::before {
   font-family: 'Material Design Icons';
@@ -1689,6 +1784,11 @@ th.sortable.sorted .sort-indicator {
     flex: 1;
     justify-content: center;
     min-width: calc(50% - 0.25rem);
+  }
+
+  .chapter-shortcut-hint {
+    width: 100%;
+    margin-left: 0;
   }
   
   .scanlator-bubble .actions button,
@@ -2618,6 +2718,8 @@ body.bulk-bar-active { padding-bottom: 60px; }
   max-height: 80vh;
   display: flex;
   flex-direction: column;
+  opacity: 1 !important;
+  background: var(--bg) !important;
 }
 
 .changelog-modal h2 {

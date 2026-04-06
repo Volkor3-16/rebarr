@@ -7,12 +7,17 @@ import { escape, relTime, statusBadge, taskBadge, tierBadgeHtml, skeleton, showT
 let currentMangaId = null;
 let trustedGroupsCache = [];
 let chapterDataCache = [];
+let chapterSlotsCache = [];
+let allChapterGroupsCache = [];
+let visibleChapterGroupsCache = [];
 let providersCache = []; // Cache provider names for filtering
 let currentSort = { field: 'chapter', direction: 'desc' };
-let currentFilter = { search: '', status: '', provider: '' };
+let currentFilter = { search: '', status: '', provider: '', extrasOnly: false };
 let lastCheckedIdx = -1;
 let intersectionObserver = null;
 let hoveredChapterRow = null;
+let selectedSlotKeys = new Set();
+let expandedSlotKeys = new Set();
 
 // Loading overlay / banner state
 let tipsCache = null;
@@ -419,199 +424,435 @@ export async function viewSeries(id) {
   }
 }
 
-// Build a compact colored-square overview of all canonical chapters.
-// Each square = one chapter, color = download status. Click scrolls to that row.
-function buildChapterOverview(chapters) {
-  const canonical = chapters
-    .filter(ch => ch.is_canonical)
-    .sort((a, b) => a.chapter_base * 100 + (a.chapter_variant || 0) - (b.chapter_base * 100 + (b.chapter_variant || 0)));
-  if (canonical.length === 0) return '';
-  const dots = canonical.map(ch => {
-    const base = ch.chapter_base;
-    const variant = ch.chapter_variant;
-    const chNum = variant === 0 ? `Chapter ${base}` : `Chapter ${base}.${variant}`;
-    const titlePart = ch.title ? ` — ${ch.title}` : '';
-    const tip = `${chNum}${titlePart} (${ch.download_status})`;
-    const cls = `ch-dot ch-dot-${ch.download_status.toLowerCase()}`;
-    return `<span class="${cls}" title="${escape(tip)}" data-base="${base}" data-variant="${variant}" onclick="scrollToChapter(${base}, ${variant})"></span>`;
-  }).join('');
-  return `<div class="ch-overview">${dots}</div>`;
+function makeSlotKey(base, variant, isExtra) {
+  return `${base}:${variant}:${isExtra ? 'extra' : 'normal'}`;
 }
 
-// Chapter rendering helpers
-function chapterRow(mangaId, ch, isVariant = false, altCount = 0, extraActions = '') {
+function slotDomId(slotKey) {
+  return `slot-${slotKey.replace(/[^A-Za-z0-9_-]/g, '_')}`;
+}
+
+function chapterNumberValue(ch) {
+  return ch.chapter_base * 100 + (ch.chapter_variant || 0);
+}
+
+function compareRows(a, b) {
+  if (!!a.is_canonical !== !!b.is_canonical) return a.is_canonical ? -1 : 1;
+  const tierDiff = (a.tier || 4) - (b.tier || 4);
+  if (tierDiff !== 0) return tierDiff;
+  const releasedDiff = (b.released_at || 0) - (a.released_at || 0);
+  if (releasedDiff !== 0) return releasedDiff;
+  const sourceA = a.provider_name || a.scanlator_group || '';
+  const sourceB = b.provider_name || b.scanlator_group || '';
+  return sourceA.localeCompare(sourceB);
+}
+
+function buildChapterSlots(chapters) {
+  const slotMap = new Map();
+  for (const ch of chapters) {
+    const key = makeSlotKey(ch.chapter_base, ch.chapter_variant, !!ch.is_extra);
+    if (!slotMap.has(key)) {
+      slotMap.set(key, {
+        key,
+        chapter_base: ch.chapter_base,
+        chapter_variant: ch.chapter_variant,
+        is_extra: !!ch.is_extra,
+        rows: [],
+      });
+    }
+    slotMap.get(key).rows.push(ch);
+  }
+
+  return [...slotMap.values()].map(slot => {
+    const rows = [...slot.rows].sort(compareRows);
+    return {
+      ...slot,
+      rows,
+      canonicalRow: rows.find(row => row.is_canonical) || null,
+    };
+  });
+}
+
+function rowMatchesSearch(row, search) {
+  if (!search) return true;
+  const chNum = `Chapter ${row.chapter_base}${row.chapter_variant > 0 ? '.' + row.chapter_variant : ''}`;
+  return chNum.toLowerCase().includes(search)
+    || (row.title && row.title.toLowerCase().includes(search))
+    || (row.scanlator_group && row.scanlator_group.toLowerCase().includes(search))
+    || (row.provider_name && row.provider_name.toLowerCase().includes(search));
+}
+
+function rowMatchesProvider(row, provider) {
+  if (!provider) return true;
+  return row.provider_name === provider;
+}
+
+function applySlotFilters(slots, filter = currentFilter) {
+  const search = filter.search.trim().toLowerCase();
+
+  return slots
+    .filter(slot => !filter.extrasOnly || slot.is_extra)
+    .map(slot => {
+      const visibleRows = slot.rows.filter(row =>
+        rowMatchesSearch(row, search) && rowMatchesProvider(row, filter.provider)
+      );
+      if (visibleRows.length === 0) return null;
+
+      const sortedVisibleRows = [...visibleRows].sort(compareRows);
+      const mainRow = sortedVisibleRows.find(row => row.is_canonical) || sortedVisibleRows[0];
+      if (!mainRow) return null;
+      if (filter.status && mainRow.download_status !== filter.status) return null;
+
+      return {
+        ...slot,
+        visibleRows: sortedVisibleRows,
+        mainRow,
+        altRows: sortedVisibleRows.filter(row => row.id !== mainRow.id),
+      };
+    })
+    .filter(Boolean);
+}
+
+function compareVisibleSlots(a, b) {
+  let aVal;
+  let bVal;
+
+  switch (currentSort.field) {
+    case 'chapter':
+      aVal = chapterNumberValue(a.mainRow) + (a.is_extra ? 0.001 : 0);
+      bVal = chapterNumberValue(b.mainRow) + (b.is_extra ? 0.001 : 0);
+      return currentSort.direction === 'desc' ? bVal - aVal : aVal - bVal;
+    case 'status':
+      aVal = a.mainRow.download_status;
+      bVal = b.mainRow.download_status;
+      break;
+    case 'tier':
+      aVal = a.mainRow.tier || 4;
+      bVal = b.mainRow.tier || 4;
+      break;
+    case 'released':
+      aVal = a.mainRow.released_at || 0;
+      bVal = b.mainRow.released_at || 0;
+      break;
+    default:
+      return 0;
+  }
+
+  if (aVal < bVal) return currentSort.direction === 'asc' ? -1 : 1;
+  if (aVal > bVal) return currentSort.direction === 'asc' ? 1 : -1;
+
+  const chapterDiff = chapterNumberValue(b.mainRow) - chapterNumberValue(a.mainRow);
+  if (chapterDiff !== 0) return chapterDiff;
+  return a.key.localeCompare(b.key);
+}
+
+function buildChapterGroups(slots) {
+  const byBase = new Map();
+  for (const slot of slots) {
+    if (!byBase.has(slot.chapter_base)) byBase.set(slot.chapter_base, []);
+    byBase.get(slot.chapter_base).push(slot);
+  }
+
+  const groups = [];
+  for (const slotsForBase of byBase.values()) {
+    const extras = slotsForBase
+      .filter(slot => slot.is_extra)
+      .sort(compareVisibleSlots);
+
+    for (const slot of extras) {
+      groups.push({
+        key: slot.key,
+        mainSlot: slot,
+        mainRow: slot.mainRow,
+        subRows: slot.altRows,
+      });
+    }
+
+    const normalBase = slotsForBase.find(slot => !slot.is_extra && slot.chapter_variant === 0) || null;
+    const splitSlots = slotsForBase
+      .filter(slot => !slot.is_extra && slot.chapter_variant > 0)
+      .sort((a, b) => b.chapter_variant - a.chapter_variant);
+
+    if (normalBase) {
+      const subRows = [...normalBase.altRows];
+      for (const splitSlot of splitSlots) {
+        subRows.push(splitSlot.mainRow, ...splitSlot.altRows);
+      }
+
+      groups.push({
+        key: normalBase.key,
+        mainSlot: normalBase,
+        mainRow: normalBase.mainRow,
+        subRows: subRows.filter(Boolean),
+      });
+    } else {
+      for (const splitSlot of splitSlots) {
+        groups.push({
+          key: splitSlot.key,
+          mainSlot: splitSlot,
+          mainRow: splitSlot.mainRow,
+          subRows: splitSlot.altRows,
+        });
+      }
+    }
+  }
+
+  return groups.sort((a, b) => compareVisibleSlots(a.mainSlot, b.mainSlot));
+}
+
+function getVisibleSelectableGroupKeys() {
+  return visibleChapterGroupsCache
+    .filter(group => {
+      const status = group.mainRow?.download_status;
+      return status === 'Missing' || status === 'Failed';
+    })
+    .map(group => group.key);
+}
+
+function getGroupByKey(slotKey) {
+  return allChapterGroupsCache.find(group => group.key === slotKey) || null;
+}
+
+function getUniqueProviders() {
+  const providers = new Set();
+  for (const slot of chapterSlotsCache) {
+    for (const row of slot.rows) {
+      if (row.provider_name) providers.add(row.provider_name);
+    }
+  }
+  return [...providers].sort();
+}
+
+function hasActiveChapterFilters() {
+  return !!(currentFilter.search || currentFilter.status || currentFilter.provider || currentFilter.extrasOnly);
+}
+
+function renderChapterOverview() {
+  const canonical = chapterSlotsCache
+    .map(slot => slot.canonicalRow)
+    .filter(Boolean)
+    .sort((a, b) => chapterNumberValue(a) - chapterNumberValue(b));
+
+  if (canonical.length === 0) return '';
+
+  const visibleKeys = new Set();
+  for (const group of visibleChapterGroupsCache) {
+    visibleKeys.add(group.mainSlot.key);
+    for (const row of group.subRows) {
+      visibleKeys.add(makeSlotKey(row.chapter_base, row.chapter_variant, !!row.is_extra));
+    }
+  }
+  const visibleCount = visibleChapterGroupsCache.length;
+  const dots = canonical.map(ch => {
+    const slotKey = makeSlotKey(ch.chapter_base, ch.chapter_variant, !!ch.is_extra);
+    const chNum = ch.chapter_variant === 0 ? `Chapter ${ch.chapter_base}` : `Chapter ${ch.chapter_base}.${ch.chapter_variant}`;
+    const titlePart = ch.title ? ` — ${ch.title}` : '';
+    const tip = `${chNum}${titlePart} (${ch.download_status})`;
+    const cls = `ch-dot ch-dot-${ch.download_status.toLowerCase()}${visibleKeys.has(slotKey) ? '' : ' ch-dot-dimmed'}`;
+    return `<span class="${cls}" title="${escape(tip)}" onclick="scrollToChapter('${ch.id}', '${slotKey}')"></span>`;
+  }).join('');
+
+  return `<div class="chapter-overview-wrap">
+    <div class="chapter-overview-meta">
+      <span class="chapter-overview-count">${visibleCount} visible / ${canonical.length} total canonicals</span>
+    </div>
+    <div class="ch-overview">${dots}</div>
+  </div>`;
+}
+
+function buildProviderChipsHtml(uniqueProviders) {
+  if (uniqueProviders.length === 0) return '';
+  return `<div class="filter-chips provider-filter-chips">
+    <span class="filter-chip ${currentFilter.provider === '' ? 'active' : ''}" onclick="filterByProvider('')">All providers</span>
+    ${uniqueProviders.map(p => `<span class="filter-chip ${currentFilter.provider === p ? 'active' : ''}" onclick='filterByProvider(${JSON.stringify(p)})'>${escape(p)}</span>`).join('')}
+  </div>`;
+}
+
+function getFilterSummaryText() {
+  const parts = [];
+  if (currentFilter.search) parts.push(`search: "${currentFilter.search}"`);
+  if (currentFilter.status) parts.push(`status: ${currentFilter.status}`);
+  if (currentFilter.provider) parts.push(`provider: ${currentFilter.provider}`);
+  if (currentFilter.extrasOnly) parts.push('extras only');
+  return parts.join(' • ');
+}
+
+function chapterRow(mangaId, ch, {
+  groupKey,
+  isSubrow = false,
+  subRowCount = 0,
+  isExpanded = false,
+  isSelected = false,
+} = {}) {
   const base = ch.chapter_base;
   const variant = ch.chapter_variant;
   const chNum = variant === 0 ? `Chapter ${base}` : `Chapter ${base}.${variant}`;
-  
-  // Truncate long titles in the middle, keep full title as tooltip
   const rawTitle = ch.title || '';
   const truncatedTitle = truncateMiddle(rawTitle, 50);
-  const titleHtml = rawTitle 
-    ? ` — <span class="ch-title" title="${escape(rawTitle)}">${escape(truncatedTitle)}</span>` 
+  const titleHtml = rawTitle
+    ? ` — <span class="ch-title" title="${escape(rawTitle)}">${escape(truncatedTitle)}</span>`
     : '';
-  const chapterLabel = `<b title="A comic reader will be coming soon">${chNum}</b>${titleHtml}`;
+  const langHtml = (ch.language && ch.language.toLowerCase() !== 'en')
+    ? ` <span style="font-size:0.7em;padding:1px 3px;border-radius:3px;background:#555;color:#fff">${ch.language.toUpperCase()}</span>`
+    : '';
+
+  const expanderHtml = (!isSubrow && subRowCount > 0)
+    ? `<button class="alt-count-bubble alt-count-button" type="button"
+         aria-expanded="${isExpanded}"
+         aria-controls="${slotDomId(groupKey)}-expand"
+         onclick="toggleChapterExpand('${groupKey}')"
+         title="Show ${subRowCount} alternative${subRowCount === 1 ? '' : 's'}">+${subRowCount}</button>`
+    : '';
+
+  const chapterLabel = `<div class="chapter-cell">
+    ${expanderHtml}
+    <span><b title="A comic reader will be coming soon">${chNum}</b>${titleHtml}${langHtml}</span>
+  </div>`;
 
   const tierHtml = tierBadgeHtml(ch.tier || 4);
-
   const sourceUrl = ch.chapter_url;
   const sourceTitle = sourceUrl ? ` title="${escape(sourceUrl)}"` : '';
   const sourceName = ch.provider_name ? escape(ch.provider_name) : (ch.scanlator_group ? escape(ch.scanlator_group) : '—');
-  
-  // Show +N badge inline next to provider name when there are alternatives
-  const expandId = `${base}-${variant}`;
-  const altCountHtml = altCount > 0
-    ? `<span class="alt-count-bubble" onclick="event.stopPropagation(); toggleChapterExpand('ch-${expandId}', '${expandId}')" title="Click to see ${altCount} alternative${altCount === 1 ? '' : 's'}">+${altCount}</span>`
-    : '';
-
-  // Provider name (as link) with alt count badge inline
   const sourceHtml = sourceUrl
-    ? `<div class="provider-cell"><a href="${escape(sourceUrl)}" target="_blank" class="ch-source"${sourceTitle}>${sourceName}</a>${altCountHtml}</div>`
-    : `<div class="provider-cell"><span class="ch-source">${sourceName}</span>${altCountHtml}</div>`;
+    ? `<div class="provider-cell"><a href="${escape(sourceUrl)}" target="_blank" rel="noopener" class="ch-source"${sourceTitle}>${sourceName}</a></div>`
+    : `<div class="provider-cell"><span class="ch-source">${sourceName}</span></div>`;
 
-  let langHtml = '';
-  if (ch.language && ch.language.toLowerCase() !== 'en') {
-    langHtml = ` <span style="font-size:0.7em;padding:1px 3px;border-radius:3px;background:#555;color:#fff">${ch.language.toUpperCase()}</span>`;
-  }
-
-  const status = ch.download_status;
-  const canDl = status === 'Missing' || status === 'Failed';
-
-  // File size label for downloaded chapters
-  const fileSizeHtml = (status === 'Downloaded' && ch.file_size_bytes)
-    ? ` <span class="ch-filesize">${formatFileSize(ch.file_size_bytes)}</span>`
-    : '';
-
-  const cb = (!isVariant && canDl)
-    ? `<input type="checkbox" class="ch-checkbox" data-base="${base}" data-variant="${variant}" onclick="event.stopPropagation(); handleCheckboxClick(event, this)">`
-    : '';
-
-  const quickDlBtn = (canDl && !isVariant)
-    ? `<button class="ch-quick-dl"
-         onclick="event.stopPropagation(); doDownload('${mangaId}', ${base}, ${variant})"
-         title="Download">
-         <iconify-icon icon="mdi:download" width="14" height="14"></iconify-icon>
-       </button>`
-    : '';
-
-  // Scanlator bubble — click anywhere to toggle trusted state
   const scanlatorName = ch.scanlator_group || '—';
   const isTrusted = trustedGroupsCache.includes(scanlatorName);
   const trustedIndicator = isTrusted ? '<span class="trusted-indicator" title="Trusted scanlator"></span>' : '';
   const trustedClass = isTrusted ? ' scanlator-trusted' : '';
   const trustedTitle = isTrusted ? 'Trusted — click to remove from trusted' : 'Click to add to trusted';
-
   const scanlatorHtml = scanlatorName !== '—'
-    ? `<span class="badge badge-neutral synonym-pill${trustedClass}" title="${trustedTitle}" onclick="event.stopPropagation(); ${isTrusted ? `removeTrustedFromBubble('${escape(scanlatorName)}')` : `addTrustedFromBubble('${escape(scanlatorName)}')`}">${trustedIndicator}${escape(scanlatorName)}</span>`
+    ? `<button class="badge badge-neutral synonym-pill scanlator-pill${trustedClass}" type="button" title="${trustedTitle}" onclick="${isTrusted ? `removeTrustedFromBubble('${escape(scanlatorName)}')` : `addTrustedFromBubble('${escape(scanlatorName)}')`}">${trustedIndicator}${escape(scanlatorName)}</button>`
     : '—';
 
-  // Action menu (three-dot dropdown)
+  const status = ch.download_status;
+  const canDl = status === 'Missing' || status === 'Failed';
+  const fileSizeHtml = (status === 'Downloaded' && ch.file_size_bytes)
+    ? ` <span class="ch-filesize">${formatFileSize(ch.file_size_bytes)}</span>`
+    : '';
+  const checkboxHtml = (!isSubrow && canDl)
+    ? `<input type="checkbox" class="ch-checkbox" data-slot-key="${groupKey}" ${isSelected ? 'checked' : ''} onclick="handleCheckboxClick(event, this)">`
+    : '';
+  const quickDlBtn = (canDl && !isSubrow)
+    ? `<button class="ch-quick-dl" onclick="doDownload('${mangaId}', ${base}, ${variant})" title="Download">
+         <iconify-icon icon="mdi:download" width="14" height="14"></iconify-icon>
+       </button>`
+    : '';
+
   let actionMenuHtml = '';
-  if (!isVariant) {
-    const menuId = `menu-${base}-${variant}`;
-    const dlBtn = canDl ? `<button onclick="event.stopPropagation(); doDownload('${mangaId}', ${base}, ${variant})">Download</button>` : '';
+  if (!isSubrow) {
+    const menuId = `${slotDomId(groupKey)}-menu`;
+    const dlBtn = canDl ? `<button onclick="doDownload('${mangaId}', ${base}, ${variant})">Download</button>` : '';
     const canReset = (status === 'Failed' || status === 'Queued' || status === 'Downloading') && ch.is_canonical;
-    const resetBtn = canReset ? `<button onclick="event.stopPropagation(); doResetChapter('${mangaId}', ${base}, ${variant})">Reset</button>` : '';
-    const extraBtn = ch.is_canonical ? `<button onclick="event.stopPropagation(); doToggleExtra('${mangaId}', ${base}, ${variant})">${ch.is_extra ? 'Un-extra' : 'Extra'}</button>` : '';
-    const deleteBtn = (ch.is_canonical && status !== 'Missing') ? `<button class="danger" onclick="event.stopPropagation(); doDeleteChapter('${mangaId}', ${base}, ${variant})">Delete</button>` : '';
-    
+    const resetBtn = canReset ? `<button onclick="doResetChapter('${mangaId}', ${base}, ${variant})">Reset</button>` : '';
+    const extraBtn = ch.is_canonical ? `<button onclick="doToggleExtra('${mangaId}', ${base}, ${variant})">${ch.is_extra ? 'Un-extra' : 'Extra'}</button>` : '';
+    const deleteBtn = (ch.is_canonical && status !== 'Missing') ? `<button class="danger" onclick="doDeleteChapter('${mangaId}', ${base}, ${variant})">Delete</button>` : '';
+
     actionMenuHtml = `<div class="action-menu">
-      <button class="action-menu-btn" onclick="event.stopPropagation(); toggleActionMenu('${menuId}')"><iconify-icon icon="mdi:dots-vertical" width="18" height="18"></iconify-icon></button>
+      <button class="action-menu-btn" type="button" aria-haspopup="menu" aria-expanded="false"
+        onclick="toggleActionMenu('${menuId}')"><iconify-icon icon="mdi:dots-vertical" width="18" height="18"></iconify-icon></button>
       <div class="action-menu-dropdown" id="${menuId}">
         ${dlBtn}${resetBtn}${extraBtn}${deleteBtn}
       </div>
     </div>`;
   }
 
-  // Use button for variants
-  const useBtn = (isVariant && !ch.is_canonical)
-    ? `<button class="btn-sm" onclick='event.stopPropagation(); doSetCanonical("${mangaId}", ${base}, ${variant}, "${ch.id}")'>Use</button>`
+  const useBtn = (isSubrow && !ch.is_canonical)
+    ? `<button class="btn-sm" onclick='doSetCanonical("${mangaId}", ${base}, ${variant}, "${ch.id}")'>Use</button>`
     : '';
 
-  const rowClass = isVariant
+  const rowClass = isSubrow
     ? 'ch-variant ch-row'
     : `ch-main ch-row ch-row-${status.toLowerCase()}`;
-  const rowId = `ch-row-${base}-${variant}`;
+  const rowId = `${slotDomId(groupKey)}-${isSubrow ? ch.id : 'main'}`;
 
-  return {
-    row: `<tr class="${rowClass}" id="${rowId}" onclick="toggleChapterExpand('${rowId}', '${base}-${variant}')">
-      <td>${cb}</td>
-      <td>${chapterLabel}${langHtml}</td>
-      <td>${scanlatorHtml}</td>
-      <td>${tierHtml}</td>
-      <td>${sourceHtml}</td>
-      <td>${statusBadge(status)}${fileSizeHtml}</td>
-      <td><small>${relTime(ch.released_at)}</small></td>
-      <td><small>${relTime(ch.scraped_at)}</small></td>
-      <td>${useBtn}${quickDlBtn}${actionMenuHtml}${extraActions}</td>
-    </tr>`,
-    base, variant, status, tier: ch.tier || 4, title: chNum, released: ch.released_at
-  };
+  return `<tr class="${rowClass}" id="${rowId}">
+    <td>${checkboxHtml}</td>
+    <td>${chapterLabel}</td>
+    <td>${scanlatorHtml}</td>
+    <td>${tierHtml}</td>
+    <td>${sourceHtml}</td>
+    <td>${statusBadge(status)}${fileSizeHtml}</td>
+    <td><small>${relTime(ch.released_at)}</small></td>
+    <td><small>${relTime(ch.scraped_at)}</small></td>
+    <td>${useBtn}${quickDlBtn}${actionMenuHtml}</td>
+  </tr>`;
 }
 
-function chapterGroupHtml(mangaId, base, mainCh, v0alts, splitParts) {
-  if (!mainCh) return '';
+function chapterGroupHtml(mangaId, group) {
+  if (!group.mainRow) return '';
+  const isExpanded = expandedSlotKeys.has(group.key);
+  const mainRowHtml = chapterRow(mangaId, group.mainRow, {
+    groupKey: group.key,
+    isSubrow: false,
+    subRowCount: group.subRows.length,
+    isExpanded,
+    isSelected: selectedSlotKeys.has(group.key),
+  });
 
-  let subRows = [];
-  for (const alt of v0alts) {
-    subRows.push(chapterRow(mangaId, alt, true));
-  }
-  for (const sp of splitParts) {
-    if (sp.canonical) subRows.push(chapterRow(mangaId, sp.canonical, true));
-    for (const alt of sp.alts) {
-      subRows.push(chapterRow(mangaId, alt, true));
-    }
-  }
+  if (group.subRows.length === 0) return mainRowHtml;
 
-  const totalSub = v0alts.length + splitParts.reduce((n, sp) => n + 1 + sp.alts.length, 0);
+  const subRowsHtml = group.subRows
+    .map(row => chapterRow(mangaId, row, { groupKey: group.key, isSubrow: true }))
+    .join('');
 
-  // Pass alt count to show "+N more" in provider column
-  const mainRow = chapterRow(mangaId, mainCh, false, totalSub);
-
-  if (subRows.length === 0) return mainRow.row;
-
-  const groupId = `ch-${mainCh.chapter_base}-${mainCh.chapter_variant}`;
-  const expandId = `${mainCh.chapter_base}-${mainCh.chapter_variant}`;
-
-  // Build expandable section
-  const subRowsHtml = subRows.map(s => s.row).join('');
-  
-  return mainRow.row + 
-    `<tr class="ch-expandable" id="${groupId}">
+  return `${mainRowHtml}
+    <tr class="ch-expandable${isExpanded ? ' open' : ''}" id="${slotDomId(group.key)}-expand">
       <td colspan="9" style="padding:0;border:0;background:var(--bg-tertiary)">
         <div class="ch-expandable-inner">
-          <table style="width:100%">${subRowsHtml}</table>
+          <table style="width:100%"><tbody>${subRowsHtml}</tbody></table>
         </div>
       </td>
     </tr>`;
 }
 
-window.scrollToChapter = function(base, variant) {
-  document.getElementById(`ch-row-${base}-${variant}`)
+window.scrollToChapter = function(chapterId, slotKey) {
+  const containingGroup = allChapterGroupsCache.find(group =>
+    group.mainRow?.id === chapterId || group.subRows.some(row => row.id === chapterId)
+  );
+
+  if (containingGroup && containingGroup.subRows.some(row => row.id === chapterId)) {
+    expandedSlotKeys.add(containingGroup.key);
+    renderChapterSection();
+  }
+
+  const targetId = containingGroup?.mainRow?.id === chapterId
+    ? `${slotDomId(containingGroup.key)}-main`
+    : `${slotDomId(containingGroup?.key || slotKey)}-${chapterId}`;
+  document.getElementById(targetId)
     ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 };
 
-window.toggleChapterExpand = function(rowId, expandId) {
-  const row = document.getElementById(rowId);
-  const expandRow = document.getElementById(`ch-${expandId}`);
-  const badge = row?.querySelector('.variant-badge');
-  
+window.toggleChapterExpand = function(slotKey) {
+  if (expandedSlotKeys.has(slotKey)) {
+    expandedSlotKeys.delete(slotKey);
+  } else {
+    expandedSlotKeys.add(slotKey);
+  }
+
+  const expandRow = document.getElementById(`${slotDomId(slotKey)}-expand`);
+  const button = document.querySelector(`button[aria-controls="${slotDomId(slotKey)}-expand"]`);
   if (expandRow) {
-    expandRow.classList.toggle('open');
-    row?.classList.toggle('expanded');
-    badge?.classList.toggle('open');
+    const isOpen = expandedSlotKeys.has(slotKey);
+    expandRow.classList.toggle('open', isOpen);
+    button?.setAttribute('aria-expanded', String(isOpen));
   }
 };
 
 window.toggleActionMenu = function(menuId) {
-  // Close all other menus first
   document.querySelectorAll('.action-menu-dropdown.open').forEach(el => {
-    if (el.id !== menuId) el.classList.remove('open');
+    const btn = el.parentElement?.querySelector('.action-menu-btn');
+    if (el.id !== menuId) {
+      el.classList.remove('open');
+      btn?.setAttribute('aria-expanded', 'false');
+    }
   });
   
   const menu = document.getElementById(menuId);
   if (menu) {
-    menu.classList.toggle('open');
+    const isOpen = menu.classList.toggle('open');
+    menu.parentElement?.querySelector('.action-menu-btn')?.setAttribute('aria-expanded', String(isOpen));
   }
 };
 
@@ -620,6 +861,7 @@ document.addEventListener('click', (e) => {
   if (!e.target.closest('.action-menu')) {
     document.querySelectorAll('.action-menu-dropdown.open').forEach(el => {
       el.classList.remove('open');
+      el.parentElement?.querySelector('.action-menu-btn')?.setAttribute('aria-expanded', 'false');
     });
   }
 });
@@ -631,146 +873,133 @@ window.toggleVariants = function(groupId, toggleEl) {
   toggleEl.classList.toggle('open', isOpen);
 };
 
-// Filtering and sorting functions
-function filterAndSortChapters(chapters) {
-  let filtered = [...chapters];
-  
-  // Filter by search
-  if (currentFilter.search) {
-    const search = currentFilter.search.toLowerCase();
-    filtered = filtered.filter(ch => {
-      const chNum = `Chapter ${ch.chapter_base}${ch.chapter_variant > 0 ? '.' + ch.chapter_variant : ''}`;
-      return chNum.toLowerCase().includes(search) || 
-             (ch.title && ch.title.toLowerCase().includes(search)) ||
-             (ch.scanlator_group && ch.scanlator_group.toLowerCase().includes(search)) ||
-             (ch.provider_name && ch.provider_name.toLowerCase().includes(search));
-    });
-  }
-  
-  // Filter by status
-  if (currentFilter.status) {
-    if (currentFilter.status === 'Missing') {
-      // Build a set of (base,variant) pairs that are NOT missing
-      // (i.e. at least one provider has it downloaded/queued/downloading/failed)
-      const hasAnyNonMissing = new Set();
-      for (const ch of filtered) {
-        if (ch.download_status !== 'Missing') {
-          hasAnyNonMissing.add(`${ch.chapter_base}|${ch.chapter_variant}`);
-        }
-      }
-      // Only show chapters where NO provider has a non-missing status
-      filtered = filtered.filter(ch => !hasAnyNonMissing.has(`${ch.chapter_base}|${ch.chapter_variant}`));
-    } else {
-      filtered = filtered.filter(ch => ch.download_status === currentFilter.status);
-    }
-  }
-  
-  // Filter by provider
-  if (currentFilter.provider) {
-    filtered = filtered.filter(ch => ch.provider_name === currentFilter.provider);
-  }
-  
-  // Sort
-  filtered.sort((a, b) => {
-    let aVal, bVal;
-    switch (currentSort.field) {
-      case 'chapter':
-        aVal = a.chapter_base * 100 + (a.chapter_variant || 0);
-        bVal = b.chapter_base * 100 + (b.chapter_variant || 0);
-        return currentSort.direction === 'desc' ? bVal - aVal : aVal - bVal;
-      case 'status':
-        aVal = a.download_status;
-        bVal = b.download_status;
-        break;
-      case 'tier':
-        aVal = a.tier || 4;
-        bVal = b.tier || 4;
-        break;
-      case 'released':
-        aVal = new Date(a.released_at || 0).getTime();
-        bVal = new Date(b.released_at || 0).getTime();
-        break;
-      default:
-        return 0;
-    }
-    if (aVal < bVal) return currentSort.direction === 'asc' ? -1 : 1;
-    if (aVal > bVal) return currentSort.direction === 'asc' ? 1 : -1;
-    return 0;
-  });
-  
-  return filtered;
+function rebuildChapterDerivedState() {
+  chapterSlotsCache = buildChapterSlots(chapterDataCache);
+  allChapterGroupsCache = buildChapterGroups(applySlotFilters(chapterSlotsCache, {
+    search: '',
+    status: '',
+    provider: '',
+    extrasOnly: false,
+  }));
+  visibleChapterGroupsCache = buildChapterGroups(applySlotFilters(chapterSlotsCache));
+
+  const validKeys = new Set(allChapterGroupsCache.map(group => group.key));
+  selectedSlotKeys = new Set([...selectedSlotKeys].filter(key => validKeys.has(key)));
+  expandedSlotKeys = new Set([...expandedSlotKeys].filter(key => validKeys.has(key)));
 }
 
-// Build chapter table rows HTML from a flat chapters array.
-// Groups by base number, separates extras, handles split variants.
-function buildChapterRows(mangaId, chapters) {
-  const baseMap = new Map();
-  for (const ch of chapters) {
-    if (!baseMap.has(ch.chapter_base)) baseMap.set(ch.chapter_base, new Map());
-    const varMap = baseMap.get(ch.chapter_base);
-    if (!varMap.has(ch.chapter_variant)) varMap.set(ch.chapter_variant, []);
-    varMap.get(ch.chapter_variant).push(ch);
+function renderChapterTable(groups) {
+  if (groups.length === 0) return '';
+  const visibleSelectable = getVisibleSelectableGroupKeys();
+  const allVisibleSelected = visibleSelectable.length > 0 && visibleSelectable.every(key => selectedSlotKeys.has(key));
+  const rows = groups.map(group => chapterGroupHtml(currentMangaId, group)).join('');
+  return `<div class="chapters-table">
+    <table class="table table-xs">
+      <thead>
+        <tr>
+          <th style="width:30px"><input type="checkbox" title="Select all visible" ${allVisibleSelected ? 'checked' : ''} onchange="toggleSelectAll(this.checked)"></th>
+          <th>Chapter</th>
+          <th>Scanlator</th>
+          <th title="Scanlator tier: Official (verified release), Trusted (added by you), Unknown, or No Group">Score</th>
+          <th>Provider</th>
+          <th><iconify-icon icon="mdi:tray-download" width="24" height="24"></iconify-icon></th>
+          <th>Released</th>
+          <th>Scraped</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
+}
+
+function renderChapterFilters() {
+  const uniqueProviders = getUniqueProviders();
+  const shortcutHint = selectedSlotKeys.size > 0 ? 'Shortcuts: D download selected, A toggle all visible, Esc clear selection' : 'Shortcuts: A toggle all visible, D download selected, Esc clear selection';
+  const clearFiltersBtn = hasActiveChapterFilters()
+    ? `<button class="btn btn-sm btn-ghost" onclick="clearChapterFilters()">Clear filters</button>`
+    : '';
+
+  return `<div class="table-filter-bar">
+    <input id="chapter-search-input" type="text" class="search-input" placeholder="Search chapters..." value="${escape(currentFilter.search)}" oninput="filterChapters(this.value)">
+    <select class="sort-select" onchange="sortChapters(this.value)">
+      <option value="chapter-desc" ${currentSort.field === 'chapter' && currentSort.direction === 'desc' ? 'selected' : ''}>Newest first</option>
+      <option value="chapter-asc" ${currentSort.field === 'chapter' && currentSort.direction === 'asc' ? 'selected' : ''}>Oldest first</option>
+      <option value="released-desc" ${currentSort.field === 'released' && currentSort.direction === 'desc' ? 'selected' : ''}>Recently released</option>
+      <option value="released-asc" ${currentSort.field === 'released' && currentSort.direction === 'asc' ? 'selected' : ''}>Oldest released</option>
+      <option value="tier-asc" ${currentSort.field === 'tier' && currentSort.direction === 'asc' ? 'selected' : ''}>Best score first</option>
+      <option value="status-asc" ${currentSort.field === 'status' && currentSort.direction === 'asc' ? 'selected' : ''}>Status A-Z</option>
+      <option value="status-desc" ${currentSort.field === 'status' && currentSort.direction === 'desc' ? 'selected' : ''}>Status Z-A</option>
+    </select>
+    <div class="filter-chips">
+      <span class="filter-chip ${currentFilter.status === '' ? 'active' : ''}" onclick="filterByStatus('')">All</span>
+      <span class="filter-chip ${currentFilter.status === 'Missing' ? 'active' : ''}" onclick="filterByStatus('Missing')">Missing</span>
+      <span class="filter-chip ${currentFilter.status === 'Downloaded' ? 'active' : ''}" onclick="filterByStatus('Downloaded')">Downloaded</span>
+      <span class="filter-chip ${currentFilter.status === 'Queued' ? 'active' : ''}" onclick="filterByStatus('Queued')">Queued</span>
+      <span class="filter-chip ${currentFilter.status === 'Failed' ? 'active' : ''}" onclick="filterByStatus('Failed')">Failed</span>
+      <span class="filter-chip ${currentFilter.extrasOnly ? 'active' : ''}" onclick="toggleExtrasFilter()">Extras</span>
+    </div>
+    ${buildProviderChipsHtml(uniqueProviders)}
+    <button class="btn btn-sm btn-ghost" onclick="selectAllMissing()" title="Check all visible missing/failed chapters">
+      <iconify-icon icon="mdi:select-all" width="16" height="16"></iconify-icon>
+      Select Missing
+    </button>
+    ${clearFiltersBtn}
+    <span class="chapter-shortcut-hint">${shortcutHint}</span>
+  </div>`;
+}
+
+function renderChapterEmptyState() {
+  const summary = getFilterSummaryText();
+  return `<div class="chapter-empty-state">
+    <h4>No chapters match your filters.</h4>
+    ${summary ? `<p>${escape(summary)}</p>` : '<p>Try a different search or filter combination.</p>'}
+    <button class="btn btn-sm btn-primary" onclick="clearChapterFilters()">Clear filters</button>
+  </div>`;
+}
+
+function restoreChapterInputState(previousFocus) {
+  if (!previousFocus) return;
+  const el = document.getElementById(previousFocus.id);
+  if (!el) return;
+  el.focus();
+  if (typeof previousFocus.start === 'number' && typeof previousFocus.end === 'number' && typeof el.setSelectionRange === 'function') {
+    el.setSelectionRange(previousFocus.start, previousFocus.end);
   }
+}
 
-  const sortedBases = [...baseMap.keys()].sort((a, b) => b - a);
-  let rows = '';
+function renderChapterSection({ preserveFocus = false } = {}) {
+  const el = document.getElementById('chapters-list');
+  if (!el) return;
 
-  for (const base of sortedBases) {
-    const varMap = baseMap.get(base);
+  rebuildChapterDerivedState();
 
-    const extrasByVariant = new Map();
-    for (const [variant, chs] of varMap) {
-      const extraChs = chs.filter(ch => ch.is_extra);
-      if (extraChs.length > 0) extrasByVariant.set(variant, extraChs);
-    }
+  const activeEl = document.activeElement;
+  const previousFocus = preserveFocus && activeEl?.id === 'chapter-search-input'
+    ? { id: activeEl.id, start: activeEl.selectionStart, end: activeEl.selectionEnd }
+    : null;
 
-    const v0rows = (varMap.get(0) || []).filter(ch => !ch.is_extra);
-    const v0canonical = v0rows.find(ch => ch.is_canonical) || null;
-    const v0alts = v0rows.filter(ch => !ch.is_canonical).sort((a, b) => (a.tier || 4) - (b.tier || 4));
+  const content = chapterDataCache.length === 0
+    ? `
+      <div class="banner banner-info" style="margin: 1rem 0; padding: 1rem; border-radius: 8px; background: var(--bg-secondary); border: 1px solid var(--border-color);">
+        <h4 style="margin: 0 0 0.5rem 0;">No chapters yet!</h4>
+        <p style="margin: 0 0 0.75rem 0; color: var(--text-muted);">To get started, you'll need to:</p>
+        <ol style="margin: 0; padding-left: 1.25rem; color: var(--text-muted);">
+          <li>Enable/Disable providers for this series</li>
+          <li>Enable/Disable aliases (alternative titles)</li>
+          <li>Run 'Search All Providers' to discover chapters</li>
+        </ol>
+        <p style="margin: 0.75rem 0 0 0; font-size: 0.875rem; color: var(--text-muted);">
+          Tip: More aliases = slower searches. Each one is tried on every provider, so only include the best. (I personally keep 3)
+        </p>
+      </div>`
+    : `${renderChapterFilters()}
+      ${renderChapterOverview()}
+      ${visibleChapterGroupsCache.length > 0 ? renderChapterTable(visibleChapterGroupsCache) : renderChapterEmptyState()}`;
 
-    const splitParts = [...varMap.keys()]
-      .filter(v => v > 0)
-      .sort((a, b) => b - a)
-      .map(v => {
-        const vrows = varMap.get(v).filter(ch => !ch.is_extra);
-        if (vrows.length === 0) return null;
-        return {
-          canonical: vrows.find(ch => ch.is_canonical) || null,
-          alts: vrows.filter(ch => !ch.is_canonical).sort((a, b) => (a.tier || 4) - (b.tier || 4)),
-        };
-      })
-      .filter(Boolean);
-
-    let mainCh = v0canonical;
-    let effectiveV0alts = v0alts;
-    if (!mainCh) {
-      if (v0alts.length > 0) {
-        mainCh = v0alts[0];
-        effectiveV0alts = v0alts.slice(1);
-      }
-    }
-
-    const sortedExtraVariants = [...extrasByVariant.keys()].sort((a, b) => b - a);
-    for (const v of sortedExtraVariants) {
-      const vChs = extrasByVariant.get(v);
-      const canonical = vChs.find(ch => ch.is_canonical) || vChs[0];
-      const alts = vChs.filter(ch => ch !== canonical).sort((a, b) => (a.tier || 4) - (b.tier || 4));
-      rows += chapterGroupHtml(mangaId, base, canonical, alts, []);
-    }
-
-    if (mainCh) {
-      rows += chapterGroupHtml(mangaId, base, mainCh, effectiveV0alts, splitParts);
-    } else {
-      for (const sp of splitParts) {
-        const spMain = sp.canonical || sp.alts[0];
-        if (spMain) {
-          const spAlts = sp.canonical ? sp.alts : sp.alts.slice(1);
-          rows += chapterGroupHtml(mangaId, base, spMain, spAlts, []);
-        }
-      }
-    }
-  }
-  return rows;
+  el.innerHTML = content;
+  restoreChapterInputState(previousFocus);
+  updateBulkBar();
 }
 
 // Patch a canonical chapter entry in the cache and re-render without fetching.
@@ -778,8 +1007,26 @@ function patchCachedChapter(base, variant, fields) {
   const idx = chapterDataCache.findIndex(
     ch => ch.chapter_base == base && ch.chapter_variant == variant && ch.is_canonical
   );
-  if (idx !== -1) chapterDataCache[idx] = { ...chapterDataCache[idx], ...fields };
-  renderFilteredChapters(filterAndSortChapters(chapterDataCache));
+  if (idx === -1) return;
+
+  const current = chapterDataCache[idx];
+  const oldKey = makeSlotKey(current.chapter_base, current.chapter_variant, !!current.is_extra);
+  const next = { ...current, ...fields };
+  const newKey = makeSlotKey(next.chapter_base, next.chapter_variant, !!next.is_extra);
+  chapterDataCache[idx] = next;
+
+  if (oldKey !== newKey) {
+    if (selectedSlotKeys.has(oldKey)) {
+      selectedSlotKeys.delete(oldKey);
+      selectedSlotKeys.add(newKey);
+    }
+    if (expandedSlotKeys.has(oldKey)) {
+      expandedSlotKeys.delete(oldKey);
+      expandedSlotKeys.add(newKey);
+    }
+  }
+
+  renderChapterSection();
 }
 
 export async function loadChapters(mangaId) {
@@ -797,83 +1044,7 @@ export async function loadChapters(mangaId) {
     const chapters = await mangaApi.chapters(mangaId);
     chapterDataCache = chapters; // Cache for filtering
     chaptersEverLoaded = true; // Mark that we've loaded chapters at least once
-    
-    if (chapters.length === 0) {
-      el.innerHTML = `
-        <div class="banner banner-info" style="margin: 1rem 0; padding: 1rem; border-radius: 8px; background: var(--bg-secondary); border: 1px solid var(--border-color);">
-          <h4 style="margin: 0 0 0.5rem 0;">No chapters yet!</h4>
-          <p style="margin: 0 0 0.75rem 0; color: var(--text-muted);">To get started, you'll need to:</p>
-          <ol style="margin: 0; padding-left: 1.25rem; color: var(--text-muted);">
-            <li>Enable/Disable providers for this series</li>
-            <li>Enable/Disable aliases (alternative titles)</li>
-            <li>Run 'Search All Providers' to discover chapters</li>
-          </ol>
-          <p style="margin: 0.75rem 0 0 0; font-size: 0.875rem; color: var(--text-muted);">
-            Tip: More aliases = slower searches. Each one is tried on every provider, so only include the best. (I personally keep 3)
-          </p>
-        </div>
-      `;
-      // Restore scroll position
-      window.scrollTo(0, savedScrollY);
-      return;
-    }
-
-    const rows = buildChapterRows(mangaId, chapters);
-
-    // Build filter bar
-    const sortIndicator = (field) => {
-      if (currentSort.field !== field) return '↕';
-      return currentSort.direction === 'desc' ? '↓' : '↑';
-    };
-
-    // Get unique providers for filter chips
-    const uniqueProviders = getUniqueProviders();
-    const providerFilterHtml = buildProviderChipsHtml(uniqueProviders);
-
-    lastCheckedIdx = -1;
-    el.innerHTML = `
-      <div class="table-filter-bar">
-        <input type="text" class="search-input" placeholder="Search chapters..." value="${escape(currentFilter.search)}" oninput="filterChapters(this.value)">
-        <select class="sort-select" onchange="sortChapters(this.value)">
-          <option value="chapter-desc" ${currentSort.field === 'chapter' && currentSort.direction === 'desc' ? 'selected' : ''}>Newest first</option>
-          <option value="chapter-asc" ${currentSort.field === 'chapter' && currentSort.direction === 'asc' ? 'selected' : ''}>Oldest first</option>
-          <option value="released-desc" ${currentSort.field === 'released' && currentSort.direction === 'desc' ? 'selected' : ''}>Recently released</option>
-          <option value="released-asc" ${currentSort.field === 'released' && currentSort.direction === 'asc' ? 'selected' : ''}>Oldest released</option>
-          <option value="tier-asc" ${currentSort.field === 'tier' ? 'selected' : ''}>Best score first</option>
-        </select>
-        <div class="filter-chips">
-          <span class="filter-chip ${currentFilter.status === '' ? 'active' : ''}" onclick="filterByStatus('')">All</span>
-          <span class="filter-chip ${currentFilter.status === 'Missing' ? 'active' : ''}" onclick="filterByStatus('Missing')">Missing</span>
-          <span class="filter-chip ${currentFilter.status === 'Downloaded' ? 'active' : ''}" onclick="filterByStatus('Downloaded')">Downloaded</span>
-          <span class="filter-chip ${currentFilter.status === 'Queued' ? 'active' : ''}" onclick="filterByStatus('Queued')">Queued</span>
-          <span class="filter-chip ${currentFilter.status === 'Failed' ? 'active' : ''}" onclick="filterByStatus('Failed')">Failed</span>
-        </div>
-        ${providerFilterHtml}
-        <button class="btn btn-sm btn-ghost" onclick="selectAllMissing()" title="Check all missing/failed chapters">
-          <iconify-icon icon="mdi:select-all" width="16" height="16"></iconify-icon>
-          Select Missing
-        </button>
-      </div>
-      ${buildChapterOverview(chapters)}
-      <div class="chapters-table">
-        <table class="table table-xs">
-          <thead>
-            <tr>
-              <th style="width:30px"><input type="checkbox" title="Select all" onchange="toggleSelectAll(this.checked)"></th>
-              <th>Chapter </th>
-              <th>Scanlator</th>
-              <th title="Scanlator tier: Official (verified release), Trusted (added by you), Unknown, or No Group">Score</th>
-              <th>Provider</th>
-              <th><iconify-icon icon="mdi:tray-download" width="24" height="24"></iconify-icon></th>
-              <th>Released</th>
-              <th>Scraped</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-    `;
+    renderChapterSection();
     
     // Restore scroll position after content update to prevent scroll jump
     window.scrollTo(0, savedScrollY);
@@ -887,202 +1058,38 @@ export async function loadChapters(mangaId) {
 // Filter functions
 window.filterChapters = function(search) {
   currentFilter.search = search;
-  // Re-render with current data
-  const filtered = filterAndSortChapters(chapterDataCache);
-  renderFilteredChapters(filtered);
+  renderChapterSection({ preserveFocus: true });
 };
 
 window.filterByStatus = function(status) {
   currentFilter.status = status;
-  const filtered = filterAndSortChapters(chapterDataCache);
-  renderFilteredChapters(filtered);
+  renderChapterSection();
 };
 
 window.filterByProvider = function(provider) {
-  // Toggle off if already selected
   if (currentFilter.provider === provider) {
     currentFilter.provider = '';
   } else {
     currentFilter.provider = provider;
   }
-  const filtered = filterAndSortChapters(chapterDataCache);
-  renderFilteredChapters(filtered);
+  renderChapterSection();
 };
 
 window.sortChapters = function(value) {
   const [field, direction] = value.split('-');
   currentSort = { field, direction };
-  const filtered = filterAndSortChapters(chapterDataCache);
-  renderFilteredChapters(filtered);
+  renderChapterSection();
 };
 
-// Get unique providers from chapter data for filter chips
-function getUniqueProviders() {
-  const providers = new Set();
-  for (const ch of chapterDataCache) {
-    if (ch.provider_name) {
-      providers.add(ch.provider_name);
-    }
-  }
-  return [...providers].sort();
-}
+window.toggleExtrasFilter = function() {
+  currentFilter.extrasOnly = !currentFilter.extrasOnly;
+  renderChapterSection();
+};
 
-// Build the filter chips HTML for providers
-function buildProviderChipsHtml(uniqueProviders) {
-  if (uniqueProviders.length === 0) return '';
-  return `<span class="filter-separator">|</span>
-          <span class="filter-chip ${currentFilter.provider === '' ? 'active' : ''}" onclick="filterByProvider('')">All</span>
-          ${uniqueProviders.map(p => `<span class="filter-chip ${currentFilter.provider === p ? 'active' : ''}" onclick="filterByProvider('${escape(p)}')">${escape(p)}</span>`).join('')}`;
-}
-
-function renderFilteredChapters(filteredChapters) {
-  const el = document.getElementById('chapters-list');
-  if (!el || !currentMangaId) return;
-  
-  // Get unique providers for filter chips
-  const uniqueProviders = getUniqueProviders();
-  
-  // Check if filter bar already exists in DOM
-  const existingFilterBar = el.querySelector('.table-filter-bar');
-  
-  if (filteredChapters.length === 0) {
-    // Update existing filter bar or create new one
-    if (existingFilterBar) {
-      // Update the chips and input without destroying them
-      const searchInput = existingFilterBar.querySelector('.search-input');
-      const sortSelect = existingFilterBar.querySelector('.sort-select');
-      
-      if (searchInput) searchInput.value = currentFilter.search;
-      if (sortSelect) sortSelect.value = `${currentSort.field}-${currentSort.direction}`;
-      
-      // Update status chips (first 5 filter-chip elements are always status chips)
-      const allFilterChips = existingFilterBar.querySelectorAll('.filter-chip');
-      const statuses = ['', 'Missing', 'Downloaded', 'Queued', 'Failed'];
-      for (let i = 0; i < Math.min(5, allFilterChips.length); i++) {
-        allFilterChips[i].classList.toggle('active', currentFilter.status === statuses[i]);
-      }
-      
-      // Check if provider filter already exists
-      const existingSeparator = existingFilterBar.querySelector('.filter-separator');
-      if (!existingSeparator && uniqueProviders.length > 0) {
-        // Add provider chips after status chips
-        const providerHtml = buildProviderChipsHtml(uniqueProviders);
-        const filterChipsDivs = existingFilterBar.querySelectorAll('.filter-chips');
-        const lastFilterChips = filterChipsDivs[filterChipsDivs.length - 1];
-        if (lastFilterChips) {
-          lastFilterChips.insertAdjacentHTML('afterend', providerHtml);
-        }
-      }
-    }
-    
-    // Show empty message
-    let emptyMsg = el.querySelector('.empty-message');
-    if (!emptyMsg) {
-      emptyMsg = document.createElement('p');
-      emptyMsg.className = 'empty-message';
-      emptyMsg.style.cssText = 'padding:1rem;text-align:center;color:var(--text-muted)';
-      emptyMsg.textContent = 'No chapters match your filters.';
-      el.appendChild(emptyMsg);
-    }
-    
-    // Hide table
-    const tableContainer = el.querySelector('.chapters-table');
-    if (tableContainer) tableContainer.style.display = 'none';
-    
-    const overview = el.querySelector('.ch-overview');
-    if (overview) overview.style.display = 'none';
-    
-    return;
-  }
-  
-  // We have results - build the table body from filtered data
-  const rows = buildChapterRows(currentMangaId, filteredChapters);
-
-  // Update existing filter bar to preserve focus
-  if (existingFilterBar) {
-    const searchInput = existingFilterBar.querySelector('.search-input');
-    const sortSelect = existingFilterBar.querySelector('.sort-select');
-    
-    if (searchInput) searchInput.value = currentFilter.search;
-    if (sortSelect) sortSelect.value = `${currentSort.field}-${currentSort.direction}`;
-    
-    // Update status chips (first 5 filter-chip elements are always status chips)
-    const allFilterChips = existingFilterBar.querySelectorAll('.filter-chip');
-    const statuses = ['', 'Missing', 'Downloaded', 'Queued', 'Failed'];
-    for (let i = 0; i < Math.min(5, allFilterChips.length); i++) {
-      allFilterChips[i].classList.toggle('active', currentFilter.status === statuses[i]);
-    }
-    
-    // Check if provider filter already exists (from initial load)
-    const existingSeparator = existingFilterBar.querySelector('.filter-separator');
-    if (!existingSeparator && uniqueProviders.length > 0) {
-      // Add provider chips after status chips
-      const providerHtml = buildProviderChipsHtml(uniqueProviders);
-      // Find the last filter-chips div and add provider chips after it
-      const filterChipsDivs = existingFilterBar.querySelectorAll('.filter-chips');
-      const lastFilterChips = filterChipsDivs[filterChipsDivs.length - 1];
-      if (lastFilterChips) {
-        lastFilterChips.insertAdjacentHTML('afterend', providerHtml);
-      }
-    } else if (existingSeparator) {
-      // Update active state for provider chips - they're siblings with status chips
-      const allChips = existingFilterBar.querySelectorAll('.filter-chip');
-      allChips.forEach(chip => {
-        if (chip.classList.contains('filter-separator')) return;
-        if (chip.textContent === 'All' && chip.previousElementSibling?.classList.contains('filter-separator')) {
-          // This is the "All" provider chip
-          chip.classList.toggle('active', currentFilter.provider === '');
-        } else if (chip.previousElementSibling?.classList.contains('filter-separator') || 
-                   chip.previousElementSibling?.textContent === 'All') {
-          // This is a provider chip
-          chip.classList.toggle('active', chip.textContent === currentFilter.provider);
-        }
-      });
-    }
-  }
-  
-  // Update table body only
-  const tbody = el.querySelector('.chapters-table tbody');
-  if (tbody) {
-    lastCheckedIdx = -1;
-    tbody.innerHTML = rows;
-    el.querySelector('.chapters-table').style.display = '';
-  } else {
-    // Table doesn't exist, create it
-    const tableHtml = `
-      <div class="chapters-table">
-        <table>
-          <thead>
-            <tr>
-              <th style="width:30px"><input type="checkbox" title="Select all" onchange="toggleSelectAll(this.checked)"></th>
-              <th>Chapter </th>
-              <th>Scanlator</th>
-              <th title="Scanlator tier: Official (verified release), Trusted (added by you), Unknown, or No Group">Score</th>
-              <th>Provider</th>
-              <th><iconify-icon icon="mdi:tray-download" width="24" height="24"></iconify-icon></th>
-              <th>Released</th>
-              <th>Scraped</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>`;
-    
-    // Append table after filter bar
-    if (existingFilterBar) {
-      existingFilterBar.insertAdjacentHTML('afterend', tableHtml);
-    }
-  }
-  
-  // Show/hide overview
-  const overview = el.querySelector('.ch-overview');
-  if (overview) overview.style.display = '';
-  
-  // Remove empty message if present
-  const emptyMsg = el.querySelector('.empty-message');
-  if (emptyMsg) emptyMsg.remove();
-}
+window.clearChapterFilters = function() {
+  currentFilter = { search: '', status: '', provider: '', extrasOnly: false };
+  renderChapterSection();
+};
 
 export async function loadProviders(mangaId) {
   const el = document.getElementById('providers-list');
@@ -1544,25 +1551,39 @@ window.toggleSynopsis = function() {
 };
 
 window.toggleSelectAll = function(checked) {
-  document.querySelectorAll('.ch-checkbox').forEach(cb => cb.checked = checked);
+  for (const key of getVisibleSelectableGroupKeys()) {
+    if (checked) selectedSlotKeys.add(key);
+    else selectedSlotKeys.delete(key);
+  }
+  renderChapterSection();
   updateBulkBar();
 };
 
+function getSelectedGroups() {
+  return [...selectedSlotKeys]
+    .map(key => getGroupByKey(key))
+    .filter(Boolean);
+}
+
 window.doDownloadSelected = async function(mangaId) {
-  const checked = Array.from(document.querySelectorAll('.ch-checkbox:checked')).reverse();
-  if (checked.length === 0) { showToast('Select at least one chapter.', 'warning'); return; }
+  const selectedGroups = getSelectedGroups().reverse();
+  if (selectedGroups.length === 0) { showToast('Select at least one chapter.', 'warning'); return; }
   let count = 0, errors = 0;
-  for (const cb of checked) {
+  for (const group of selectedGroups) {
     try {
-      await mangaApi.downloadChapter(mangaId, cb.dataset.base, cb.dataset.variant);
+      await mangaApi.downloadChapter(mangaId, group.mainRow.chapter_base, group.mainRow.chapter_variant);
       count++;
     } catch(e) { errors++; }
   }
-  for (const cb of checked) {
-    const idx = chapterDataCache.findIndex(ch => ch.chapter_base == cb.dataset.base && ch.chapter_variant == cb.dataset.variant && ch.is_canonical);
+  for (const group of selectedGroups) {
+    const idx = chapterDataCache.findIndex(ch =>
+      ch.chapter_base == group.mainRow.chapter_base &&
+      ch.chapter_variant == group.mainRow.chapter_variant &&
+      ch.is_canonical
+    );
     if (idx !== -1) chapterDataCache[idx] = { ...chapterDataCache[idx], download_status: 'Queued' };
   }
-  renderFilteredChapters(filterAndSortChapters(chapterDataCache));
+  renderChapterSection();
   updateBulkBar();
   if (count > 0) {
     showToast(`Queued ${count} download${count === 1 ? '' : 's'}${errors > 0 ? `, ${errors} failed` : ''}`);
@@ -1572,20 +1593,29 @@ window.doDownloadSelected = async function(mangaId) {
 };
 
 window.doDownloadAllMissing = async function(mangaId) {
-  const cbs = Array.from(document.querySelectorAll('.ch-checkbox')).reverse();
-  if (cbs.length === 0) { showToast('No missing chapters to download.', 'warning'); return; }
+  const groups = visibleChapterGroupsCache
+    .filter(group => {
+      const status = group.mainRow?.download_status;
+      return status === 'Missing' || status === 'Failed';
+    })
+    .reverse();
+  if (groups.length === 0) { showToast('No missing chapters to download.', 'warning'); return; }
   let count = 0, errors = 0;
-  for (const cb of cbs) {
+  for (const group of groups) {
     try {
-      await mangaApi.downloadChapter(mangaId, cb.dataset.base, cb.dataset.variant);
+      await mangaApi.downloadChapter(mangaId, group.mainRow.chapter_base, group.mainRow.chapter_variant);
       count++;
     } catch(e) { errors++; }
   }
-  for (const cb of cbs) {
-    const idx = chapterDataCache.findIndex(ch => ch.chapter_base == cb.dataset.base && ch.chapter_variant == cb.dataset.variant && ch.is_canonical);
+  for (const group of groups) {
+    const idx = chapterDataCache.findIndex(ch =>
+      ch.chapter_base == group.mainRow.chapter_base &&
+      ch.chapter_variant == group.mainRow.chapter_variant &&
+      ch.is_canonical
+    );
     if (idx !== -1) chapterDataCache[idx] = { ...chapterDataCache[idx], download_status: 'Queued' };
   }
-  renderFilteredChapters(filterAndSortChapters(chapterDataCache));
+  renderChapterSection();
   updateBulkBar();
   if (errors > 0) {
     showToast(`Queued ${count}, ${errors} failed`, 'error');
@@ -1620,12 +1650,17 @@ function setupBulkBar(mangaId) {
 function updateBulkBar() {
   const bar = document.getElementById('bulk-action-bar');
   if (!bar) return;
-  const n = document.querySelectorAll('.ch-checkbox:checked').length;
+  const n = selectedSlotKeys.size;
   if (n > 0) {
     bar.classList.add('visible');
     document.body.classList.add('bulk-bar-active');
     const el = document.getElementById('bulk-count');
-    if (el) el.textContent = `${n} chapter${n === 1 ? '' : 's'} selected`;
+    if (el) {
+      const hidden = [...selectedSlotKeys].filter(key => !visibleChapterGroupsCache.some(group => group.key === key)).length;
+      el.textContent = hidden > 0
+        ? `${n} chapter${n === 1 ? '' : 's'} selected (${hidden} hidden)`
+        : `${n} chapter${n === 1 ? '' : 's'} selected`;
+    }
   } else {
     bar.classList.remove('visible');
     document.body.classList.remove('bulk-bar-active');
@@ -1638,40 +1673,60 @@ window.toggleProvidersSection = function() {
   try { localStorage.setItem('rebarr-providers-collapsed', collapsed ? '1' : '0'); } catch(e) {}
 };
 
-window.clearBulkSelection = function() { toggleSelectAll(false); };
+window.clearBulkSelection = function() {
+  selectedSlotKeys.clear();
+  renderChapterSection();
+  updateBulkBar();
+};
 
 window.selectAllMissing = function() {
-  document.querySelectorAll('.ch-checkbox').forEach(cb => cb.checked = true);
+  for (const key of getVisibleSelectableGroupKeys()) {
+    selectedSlotKeys.add(key);
+  }
+  renderChapterSection();
   updateBulkBar();
 };
 
 window.doBulkMarkDownloaded = async function(mangaId) {
-  const checked = Array.from(document.querySelectorAll('.ch-checkbox:checked'));
-  if (!checked.length) { showToast('Select at least one chapter.', 'warning'); return; }
+  const selectedGroups = getSelectedGroups();
+  if (!selectedGroups.length) { showToast('Select at least one chapter.', 'warning'); return; }
   let count = 0, errors = 0;
-  for (const cb of checked) {
-    try { await mangaApi.markDownloaded(mangaId, cb.dataset.base, cb.dataset.variant); count++; }
+  for (const group of selectedGroups) {
+    try { await mangaApi.markDownloaded(mangaId, group.mainRow.chapter_base, group.mainRow.chapter_variant); count++; }
     catch(e) { errors++; }
   }
-  for (const cb of checked) {
+  for (const group of selectedGroups) {
     const idx = chapterDataCache.findIndex(ch =>
-      ch.chapter_base == cb.dataset.base && ch.chapter_variant == cb.dataset.variant && ch.is_canonical);
+      ch.chapter_base == group.mainRow.chapter_base &&
+      ch.chapter_variant == group.mainRow.chapter_variant &&
+      ch.is_canonical);
     if (idx !== -1) chapterDataCache[idx] = { ...chapterDataCache[idx], download_status: 'Downloaded' };
   }
-  renderFilteredChapters(filterAndSortChapters(chapterDataCache));
+  renderChapterSection();
   updateBulkBar();
   showToast(`Marked ${count} as downloaded${errors > 0 ? `, ${errors} failed` : ''}`);
 };
 
 window.handleCheckboxClick = function(e, cb) {
-  const allCbs = Array.from(document.querySelectorAll('.ch-checkbox'));
-  const currentIdx = allCbs.indexOf(cb);
+  const visibleKeys = getVisibleSelectableGroupKeys();
+  const slotKey = cb.dataset.slotKey;
+  const currentIdx = visibleKeys.indexOf(slotKey);
+  const nextChecked = !selectedSlotKeys.has(slotKey);
+
+  if (nextChecked) selectedSlotKeys.add(slotKey);
+  else selectedSlotKeys.delete(slotKey);
+
   if (e.shiftKey && lastCheckedIdx !== -1 && currentIdx !== -1) {
     const lo = Math.min(lastCheckedIdx, currentIdx);
     const hi = Math.max(lastCheckedIdx, currentIdx);
-    for (let i = lo; i <= hi; i++) allCbs[i].checked = cb.checked;
+    for (let i = lo; i <= hi; i++) {
+      const key = visibleKeys[i];
+      if (nextChecked) selectedSlotKeys.add(key);
+      else selectedSlotKeys.delete(key);
+    }
   }
   if (currentIdx !== -1) lastCheckedIdx = currentIdx;
+  renderChapterSection();
   updateBulkBar();
 };
 
@@ -1898,23 +1953,24 @@ document.addEventListener('keydown', (e) => {
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
   switch(e.key) {
     case 'd': {
-      const n = document.querySelectorAll('.ch-checkbox:checked').length;
+      const n = selectedSlotKeys.size;
       if (n === 0) showToast('Select chapters first, or use "Download All Missing"', 'info');
       else window.doDownloadSelected(currentMangaId);
       break;
     }
     case 'a': {
-      const anyUnchecked = Array.from(document.querySelectorAll('.ch-checkbox')).some(cb => !cb.checked);
+      const visibleKeys = getVisibleSelectableGroupKeys();
+      const anyUnchecked = visibleKeys.some(key => !selectedSlotKeys.has(key));
       window.toggleSelectAll(anyUnchecked);
       break;
     }
     case 's': {
       const cb = hoveredChapterRow?.querySelector('.ch-checkbox');
-      if (cb) { cb.checked = !cb.checked; window.handleCheckboxClick({ shiftKey: false }, cb); }
+      if (cb) window.handleCheckboxClick({ shiftKey: false }, cb);
       break;
     }
     case 'Escape':
-      window.toggleSelectAll(false);
+      window.clearBulkSelection();
       break;
   }
 });
@@ -1926,9 +1982,4 @@ document.addEventListener('mouseover', (e) => {
 });
 document.addEventListener('mouseout', (e) => {
   if (e.target.closest('.ch-row') && !e.relatedTarget?.closest('.ch-row')) hoveredChapterRow = null;
-});
-
-// Bulk bar update on checkbox change
-document.addEventListener('change', (e) => {
-  if (e.target.classList.contains('ch-checkbox')) updateBulkBar();
 });

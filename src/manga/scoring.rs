@@ -60,7 +60,7 @@ pub fn compute_tier(group: Option<&str>, trusted: &[String], provider_name: Opti
     match group {
         None | Some("") => 4,
         Some(g) => {
-            if g.trim().eq_ignore_ascii_case("official") {
+            if g.trim().trim_end_matches(|c: char| c == '?' || c == '!' || c == '.').eq_ignore_ascii_case("official") {
                 1
             } else if trusted.iter().any(|t| t.eq_ignore_ascii_case(g)) {
                 2
@@ -125,6 +125,27 @@ mod tests {
     #[test]
     fn tier_official_with_whitespace_is_one() {
         assert_eq!(compute_tier(Some("  official  "), &[], None), 1);
+    }
+
+    #[test]
+    fn tier_official_with_question_mark_is_one() {
+        assert_eq!(compute_tier(Some("Official?"), &[], None), 1);
+        assert_eq!(compute_tier(Some("official?"), &[], None), 1);
+        assert_eq!(compute_tier(Some("OFFICIAL?"), &[], None), 1);
+    }
+
+    #[test]
+    fn tier_official_with_exclamation_mark_is_one() {
+        assert_eq!(compute_tier(Some("Official!"), &[], None), 1);
+        assert_eq!(compute_tier(Some("official!"), &[], None), 1);
+        assert_eq!(compute_tier(Some("OFFICIAL!"), &[], None), 1);
+    }
+
+    #[test]
+    fn tier_official_with_period_is_one() {
+        assert_eq!(compute_tier(Some("Official."), &[], None), 1);
+        assert_eq!(compute_tier(Some("official."), &[], None), 1);
+        assert_eq!(compute_tier(Some("OFFICIAL."), &[], None), 1);
     }
 
     #[test]

@@ -27,8 +27,8 @@ use helpers::{
     test_ctx, test_db,
 };
 use rebarr::{
-    db::{chapter as db_chapter, provider as db_provider},
-    manga::{core::MangaType, merge},
+    db::{chapter as db_chapter, provider as db_provider, settings as db_settings},
+    manga::{core::DownloadStatus, core::MangaType, merge},
     scraper::ProviderRegistry,
 };
 use sqlx::SqlitePool;
@@ -434,5 +434,179 @@ async fn local_provider_wins_canonical_over_all_others() {
             .iter()
             .all(|c| c.download_status == rebarr::manga::core::DownloadStatus::Downloaded),
         "after import: canonical chapters should be the Downloaded Local ones"
+    );
+}
+
+#[tokio::test]
+async fn upgrades_disabled_keeps_downloaded_chapter_canonical() {
+    let pool = test_db().await;
+    let manga = setup_manga(&pool).await;
+
+    db_settings::set(&pool, "disable_chapter_upgrades", "true")
+        .await
+        .unwrap();
+    db_provider::add_trusted_group(&pool, "TrustedGroup")
+        .await
+        .unwrap();
+
+    let registry1 = make_registry(
+        vec![],
+        vec![ch_group("1", "RandomGroup")],
+    );
+    let ctx1 = test_ctx(&registry1);
+    merge::scan_manga(&pool, &registry1, &ctx1, &manga, Uuid::new_v4())
+        .await
+        .expect("initial scan failed");
+
+    let provider_b_ch1 = db_chapter::get_all_for_chapter(&pool, manga.id, 1, 0)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|chapter| chapter.provider_name.as_deref() == Some("ProviderB"))
+        .expect("provider B chapter 1 should exist");
+    db_chapter::set_status(
+        &pool,
+        provider_b_ch1.id,
+        DownloadStatus::Downloaded,
+        Some(chrono::Utc::now()),
+    )
+    .await
+    .unwrap();
+
+    let registry2 = make_registry(
+        vec![ch_group("1", "TrustedGroup")],
+        vec![ch_group("1", "RandomGroup")],
+    );
+    let ctx2 = test_ctx(&registry2);
+    merge::scan_manga(&pool, &registry2, &ctx2, &manga, Uuid::new_v4())
+        .await
+        .expect("scan with better provider failed");
+
+    let canonical = db_chapter::get_canonical_for_manga(&pool, manga.id)
+        .await
+        .unwrap();
+    let winner = canonical
+        .iter()
+        .find(|chapter| chapter.chapter_base == 1 && chapter.chapter_variant == 0)
+        .expect("chapter 1 should remain canonical");
+    assert_eq!(
+        winner.provider_name.as_deref(),
+        Some("ProviderB"),
+        "downloaded chapter should remain canonical when upgrades are disabled"
+    );
+    assert_eq!(
+        winner.download_status,
+        DownloadStatus::Downloaded,
+        "canonical winner should stay on the downloaded row"
+    );
+    assert_eq!(
+        count_pending_downloads(&pool, manga.id).await,
+        0,
+        "no upgrade download should be queued when the setting is enabled"
+    );
+}
+
+#[tokio::test]
+async fn upgrades_enabled_promotes_better_source_and_queues_upgrade() {
+    let pool = test_db().await;
+    let manga = setup_manga(&pool).await;
+
+    db_provider::add_trusted_group(&pool, "TrustedGroup")
+        .await
+        .unwrap();
+
+    let registry1 = make_registry(
+        vec![],
+        vec![ch_group("1", "RandomGroup")],
+    );
+    let ctx1 = test_ctx(&registry1);
+    merge::scan_manga(&pool, &registry1, &ctx1, &manga, Uuid::new_v4())
+        .await
+        .expect("initial scan failed");
+
+    let provider_b_ch1 = db_chapter::get_all_for_chapter(&pool, manga.id, 1, 0)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|chapter| chapter.provider_name.as_deref() == Some("ProviderB"))
+        .expect("provider B chapter 1 should exist");
+    db_chapter::set_status(
+        &pool,
+        provider_b_ch1.id,
+        DownloadStatus::Downloaded,
+        Some(chrono::Utc::now()),
+    )
+    .await
+    .unwrap();
+
+    let registry2 = make_registry(
+        vec![ch_group("1", "TrustedGroup")],
+        vec![ch_group("1", "RandomGroup")],
+    );
+    let ctx2 = test_ctx(&registry2);
+    merge::scan_manga(&pool, &registry2, &ctx2, &manga, Uuid::new_v4())
+        .await
+        .expect("scan with better provider failed");
+
+    let canonical = db_chapter::get_canonical_for_manga(&pool, manga.id)
+        .await
+        .unwrap();
+    let winner = canonical
+        .iter()
+        .find(|chapter| chapter.chapter_base == 1 && chapter.chapter_variant == 0)
+        .expect("chapter 1 should remain canonical");
+    assert_eq!(
+        winner.provider_name.as_deref(),
+        Some("ProviderA"),
+        "better source should become canonical when upgrades are enabled"
+    );
+    assert_eq!(
+        winner.download_status,
+        DownloadStatus::Missing,
+        "the better canonical row is not downloaded yet"
+    );
+    let pending_bases = pending_download_chapter_bases(&pool, manga.id).await;
+    assert!(
+        pending_bases.contains(&1),
+        "an upgrade download for chapter 1 should be queued by default"
+    );
+}
+
+#[tokio::test]
+async fn upgrades_disabled_still_auto_downloads_new_unseen_chapters() {
+    let pool = test_db().await;
+    let manga = setup_manga(&pool).await;
+
+    db_settings::set(&pool, "disable_chapter_upgrades", "true")
+        .await
+        .unwrap();
+
+    let registry1 = make_registry(
+        vec![],
+        vec![ch_group("1", "RandomGroup")],
+    );
+    let ctx1 = test_ctx(&registry1);
+    merge::scan_manga(&pool, &registry1, &ctx1, &manga, Uuid::new_v4())
+        .await
+        .expect("initial scan failed");
+    assert_eq!(
+        count_pending_downloads(&pool, manga.id).await,
+        0,
+        "first-time sync should still avoid backfilling the entire backlog"
+    );
+
+    let registry2 = make_registry(
+        vec![],
+        vec![ch_group("1", "RandomGroup"), ch_group("2", "RandomGroup")],
+    );
+    let ctx2 = test_ctx(&registry2);
+    merge::check_new_chapters(&pool, &registry2, &ctx2, &manga, Uuid::new_v4())
+        .await
+        .expect("incremental scan failed");
+
+    assert_eq!(
+        pending_download_chapter_bases(&pool, manga.id).await,
+        vec![2],
+        "new unseen chapters should still auto-download with upgrades disabled"
     );
 }
