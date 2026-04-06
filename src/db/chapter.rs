@@ -752,6 +752,18 @@ pub async fn delete_all_for_manga(pool: &SqlitePool, manga_id: Uuid) -> Result<(
     Ok(())
 }
 
+/// Delete all MISSING chapters from a specific provider for a manga.
+/// Leaves downloaded chapters intact.
+pub async fn delete_missing_for_provider(pool: &SqlitePool, manga_id: Uuid, provider_name: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM Chapters WHERE manga_id = ? AND provider_name = ? AND download_status = 'Missing'")
+        .bind(manga_id.to_string())
+        .bind(provider_name)
+        .execute(pool)
+        .await?;
+    
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Upgrade candidate detection
 // ---------------------------------------------------------------------------

@@ -210,6 +210,13 @@ pub async fn set_series_score(
         .await
         .map_err(internal)?;
 
+    // When disabling a provider for this series, purge all missing chapters from that provider
+    if !enabled {
+        db_chapter::delete_missing_for_provider(pool.inner(), manga_id, name)
+            .await
+            .map_err(internal)?;
+    }
+
     // Regenerate canonical chapters for this manga.
     let trusted_groups = db_provider::get_trusted_groups(pool.inner())
         .await
