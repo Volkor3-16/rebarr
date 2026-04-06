@@ -5,6 +5,7 @@ WORKDIR /build
 
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
+COPY docs ./docs
 COPY migrations ./migrations
 COPY providers ./providers
 COPY web ./web
