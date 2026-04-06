@@ -13,11 +13,6 @@ I'll remove this when I've got the first public release out, this is just a quic
 
 ### Backend
 
-- [ ] Provider repo download system
-    - Don't include providers in the system by default (stock rebarr should only work for local management)
-    - During setup wizard, ask the user to paste in a repo (or multiple)
-    - Automatic updates and all that nice stuff
-    - Add more providers
 - [ ] Make sure chapters are done nicely, `A Veternarian in Another World` - Local chapters aren't flagged as downloaded, despite being there.
     - Do we have ScanDisk task validate and check this?
 
@@ -48,14 +43,15 @@ I'll remove this when I've got the first public release out, this is just a quic
 
 ### Providers / Scraper
 
-- Providers steps shouldn't need a random ass `- open` and then hit another endpoint why have the open step at all?
-    - I tried an AI Slop version of this, didn't work correctly, will re-look properly later. this breaks js scripts that need the page open
 - Use `setBlockedResourceTypes` to block useless requests (some images, CSS, fonts, media, whatever)
 - Add adblock to chromium?
 - Clownflare challenge polling loop parses the full html every 0.5s, we can clean this up a bit.
-- [ ] Get Mangago working
-- [ ] Get MangaHub working (no chapters returned)
 - [ ] Comix can't handle titles with "The Girl From the Other Side: Siúil, a Rún". The show as "danke-Empire" (is that the uploader? scanlator? the scanlator group is "Official?" so idk.)
+- [ ] Provider repo download system
+    - Don't include providers in the system by default (stock rebarr should only work for local management)
+    - During setup wizard, ask the user to paste in a repo (or multiple)
+    - Automatic updates and all that nice stuff
+    - Add more providers
 
 ## Features
 

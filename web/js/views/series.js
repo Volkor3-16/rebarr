@@ -733,11 +733,13 @@ function buildChapterRows(mangaId, chapters) {
       .sort((a, b) => b - a)
       .map(v => {
         const vrows = varMap.get(v).filter(ch => !ch.is_extra);
+        if (vrows.length === 0) return null;
         return {
           canonical: vrows.find(ch => ch.is_canonical) || null,
           alts: vrows.filter(ch => !ch.is_canonical).sort((a, b) => (a.tier || 4) - (b.tier || 4)),
         };
-      });
+      })
+      .filter(Boolean);
 
     let mainCh = v0canonical;
     let effectiveV0alts = v0alts;

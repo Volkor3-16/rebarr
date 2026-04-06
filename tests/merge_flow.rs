@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use async_trait::async_trait;
 use helpers::{
     insert_library, insert_manga,
-    static_provider::{StaticProvider, ch, ch_group},
+    static_provider::{StaticChapter, StaticProvider, ch, ch_group},
     test_ctx, test_db,
 };
 use rebarr::{
@@ -172,6 +172,75 @@ async fn scan_handles_half_chapters() {
     let half = chapters.iter().find(|c| c.chapter_variant == 5);
     assert!(half.is_some(), "chapter 12.5 (variant=5) not found");
     assert_eq!(half.unwrap().chapter_base, 12);
+}
+
+/// Numbered chapters with "Side Story" in the title should stay normal chapters.
+#[tokio::test]
+async fn scan_does_not_mark_side_story_titles_as_extra() {
+    let pool = test_db().await;
+    let lib = insert_library(&pool).await;
+    let manga = insert_manga(&pool, lib.uuid, "SideStorySeries").await;
+
+    let provider = StaticProvider::new("static").with_series(
+        "SideStorySeries",
+        "static://side-story",
+        vec![
+            StaticChapter::new("200").with_title("Side Story 20"),
+            ch("201"),
+        ],
+    );
+    let registry = provider_registry(provider);
+    let ctx = test_ctx(&registry);
+
+    merge::scan_manga(&pool, &registry, &ctx, &manga, Uuid::new_v4())
+        .await
+        .expect("scan_manga failed");
+
+    let chapters = db_chapter::get_all_for_manga(&pool, manga.id)
+        .await
+        .expect("get chapters");
+    let side_story = chapters
+        .iter()
+        .find(|c| c.chapter_base == 200 && c.chapter_variant == 0)
+        .expect("chapter 200 should exist");
+
+    assert!(
+        !side_story.is_extra,
+        "side story titles should not be auto-marked as extras"
+    );
+}
+
+/// Variant extras should still be classified as extras.
+#[tokio::test]
+async fn scan_keeps_true_extra_variants_marked_as_extra() {
+    let pool = test_db().await;
+    let lib = insert_library(&pool).await;
+    let manga = insert_manga(&pool, lib.uuid, "ExtraVariantSeries").await;
+
+    let provider = StaticProvider::new("static").with_series(
+        "ExtraVariantSeries",
+        "static://extra-variant",
+        vec![
+            StaticChapter::new("12.5").with_title("Extra"),
+            ch("13"),
+        ],
+    );
+    let registry = provider_registry(provider);
+    let ctx = test_ctx(&registry);
+
+    merge::scan_manga(&pool, &registry, &ctx, &manga, Uuid::new_v4())
+        .await
+        .expect("scan_manga failed");
+
+    let chapters = db_chapter::get_all_for_manga(&pool, manga.id)
+        .await
+        .expect("get chapters");
+    let extra = chapters
+        .iter()
+        .find(|c| c.chapter_base == 12 && c.chapter_variant == 5)
+        .expect("chapter 12.5 should exist");
+
+    assert!(extra.is_extra, "real extra variants should stay marked extra");
 }
 
 /// Two scanlator groups providing the same chapter number both get stored.

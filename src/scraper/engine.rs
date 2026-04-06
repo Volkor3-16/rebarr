@@ -1755,7 +1755,6 @@ fn infer_is_extra(title: Option<&str>) -> bool {
         "omake",
         "special",
         "bonus",
-        "side story",
         "side chapter",
         "interlude",
         "gaiden",
@@ -2305,7 +2304,7 @@ fn parse_json_value(json: &serde_json::Value, path: &str) -> serde_json::Value {
 mod tests {
     use super::{
         JsonPathError, build_browser_fetch_js, format_from_json_parse_error,
-        format_json_path_error, parse_json_path, preview,
+        format_json_path_error, infer_is_extra, parse_json_path, preview,
     };
     use std::collections::HashMap;
 
@@ -2361,5 +2360,25 @@ mod tests {
         assert!(js.contains("headersObj"));
         assert!(js.contains("credentials: 'include'"));
         assert!(js.contains("https://example.com/graphql"));
+    }
+
+    #[test]
+    fn infer_is_extra_does_not_treat_side_story_as_extra() {
+        assert!(!infer_is_extra(Some("Side Story 20")));
+        assert!(!infer_is_extra(Some("Chapter 200 - Side Story 20")));
+    }
+
+    #[test]
+    fn infer_is_extra_still_detects_real_extra_keywords() {
+        for title in [
+            "Chapter 12.5 Extra",
+            "Bonus chapter",
+            "Interlude",
+            "Gaiden 3",
+            "Omake",
+            "Special edition",
+        ] {
+            assert!(infer_is_extra(Some(title)), "expected '{title}' to be extra");
+        }
     }
 }

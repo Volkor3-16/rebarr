@@ -13,6 +13,9 @@ This a informal changelog so i can keep track of what im doing.
 - I (codex) had to rework verbose mode for cli, so we can actually see what requests and responses.
     - This should make adding new providers a LOT more easy... maybe.
 - Fixed Comix provider (they changed their API)
+- Better chapter list building
+    - We don't have dropdowns anymore for chapters where the variants are just extras (that are already on the main chapter list)
+    - We don't flag 'Side Story' as a variant anymore, since that breaks most of them where they're full numbered chapters anyway.
 
 ## 2026-04-03
 

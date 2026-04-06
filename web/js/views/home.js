@@ -6,6 +6,7 @@ import { escape, skeleton } from '../utils.js';
 
 // Sort state persisted to localStorage
 const SORT_KEY = 'rebarr_home_sort';
+const SEARCH_INPUT_ID = 'home-search-input';
 
 const SORT_OPTIONS = [
   { field: 'title',      label: 'A–Z',             defaultDir: 'asc' },
@@ -31,6 +32,36 @@ function saveSort(s) {
 let homeSort = loadSort();
 let cachedLibs = [];
 let cachedMangaLists = [];
+let currentSearchQuery = '';
+
+function normalizeSearchText(str) {
+  return str.toLowerCase()
+    .replace(/[^a-z0-9\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f]/g, '')
+    .trim();
+}
+
+function filterManga(mangas, query) {
+  if (!query || query.length === 0) return mangas;
+  
+  const normalizedQuery = normalizeSearchText(query);
+  
+  return mangas.filter(manga => {
+    // Check main title
+    const mainTitle = normalizeSearchText(manga.metadata?.title ?? '');
+    if (mainTitle.includes(normalizedQuery)) return true;
+    
+    // Check all alternative/other titles
+    if (manga.metadata?.other_titles && Array.isArray(manga.metadata.other_titles)) {
+      for (const altTitle of manga.metadata.other_titles) {
+        if (normalizeSearchText(altTitle.title ?? '').includes(normalizedQuery)) {
+          return true;
+        }
+      }
+    }
+    
+    return false;
+  });
+}
 
 function sortManga(mangas) {
   return [...mangas].sort((a, b) => {
@@ -57,6 +88,20 @@ function sortManga(mangas) {
   });
 }
 
+function buildSearchBar() {
+  return `<div class="search-bar flex gap-1 mb-2">
+    <input 
+      type="text" 
+      id="${SEARCH_INPUT_ID}" 
+      placeholder="Search series... (Press / to focus)" 
+      oninput="setHomeSearch(this.value)"
+      value="${escape(currentSearchQuery)}"
+      style="flex-grow: 1"
+    >
+    ${currentSearchQuery.length > 0 ? `<button class="btn btn-ghost" onclick="clearHomeSearch()">✕</button>` : ''}
+  </div>`;
+}
+
 function buildSortBar() {
   return `<div class="sort-bar">
     <span class="label">Sort:</span>
@@ -69,8 +114,16 @@ function buildSortBar() {
 }
 
 function buildCards(mangas) {
-  if (mangas.length === 0) return '<p><small>No manga yet.</small></p>';
-  return `<div class="card-grid">${sortManga(mangas).map(m => {
+  const filtered = filterManga(mangas, currentSearchQuery);
+  
+  if (filtered.length === 0) {
+    if (currentSearchQuery.length > 0) {
+      return '<p><small>No series match your search.</small></p>';
+    }
+    return '<p><small>No manga yet.</small></p>';
+  }
+  
+  return `<div class="card-grid">${sortManga(filtered).map(m => {
     const dl = m.downloaded_count ?? 0;
     const total = m.chapter_count != null ? m.chapter_count : '?';
     const title = m.metadata?.title ?? 'Unknown';
@@ -115,7 +168,9 @@ export async function viewHome() {
 }
 
 function renderHome(libs, mangaLists) {
-  let html = buildSortBar();
+  let html = buildSearchBar();
+  html += buildSortBar();
+  
   libs.forEach((lib, i) => {
     const mangas = mangaLists[i];
     const type = lib.type === 'Comics' ? 'Comics' : 'Manga';
@@ -144,6 +199,41 @@ window.setHomeSort = function(field) {
     renderHome(cachedLibs, cachedMangaLists);
   }
 };
+
+window.setHomeSearch = function(query) {
+  currentSearchQuery = query;
+  if (cachedLibs.length > 0) {
+    renderHome(cachedLibs, cachedMangaLists);
+    // Preserve focus and cursor position after re-render
+    const input = document.getElementById(SEARCH_INPUT_ID);
+    if (input && document.activeElement === input || query.length > 0) {
+      input.focus();
+      // Move cursor to end of input
+      const len = input.value.length;
+      input.setSelectionRange(len, len);
+    }
+  }
+};
+
+window.clearHomeSearch = function() {
+  currentSearchQuery = '';
+  if (cachedLibs.length > 0) {
+    renderHome(cachedLibs, cachedMangaLists);
+  }
+  document.getElementById(SEARCH_INPUT_ID)?.focus();
+};
+
+// Global / hotkey handler
+document.addEventListener('keydown', (e) => {
+  if (e.key === '/' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+    e.preventDefault();
+    const input = document.getElementById(SEARCH_INPUT_ID);
+    if (input) {
+      input.focus();
+      input.select();
+    }
+  }
+});
 
 // Make viewHome available for router
 window.viewHome = viewHome;
