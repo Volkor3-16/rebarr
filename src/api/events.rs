@@ -2,8 +2,8 @@ use rocket::get;
 use rocket::response::stream::{Event as RocketEvent, EventStream};
 use serde::Serialize;
 use tokio::sync::broadcast;
-use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::BroadcastStream;
 
 /// Capacity for the broadcast channel.  Clients that fall behind by this many
 /// messages will be disconnected and can reconnect to get a fresh snapshot.
@@ -11,11 +11,10 @@ const CHANNEL_CAPACITY: usize = 64;
 
 /// Lazy-initialised broadcast sender.  All producers call `sender().send(...)`
 /// and the SSE endpoint clones the receiver via `sender().subscribe()`.
-static SENDER: std::sync::LazyLock<broadcast::Sender<String>> =
-    std::sync::LazyLock::new(|| {
-        let (tx, _) = broadcast::channel(CHANNEL_CAPACITY);
-        tx
-    });
+static SENDER: std::sync::LazyLock<broadcast::Sender<String>> = std::sync::LazyLock::new(|| {
+    let (tx, _) = broadcast::channel(CHANNEL_CAPACITY);
+    tx
+});
 
 fn sender() -> &'static broadcast::Sender<String> {
     &SENDER

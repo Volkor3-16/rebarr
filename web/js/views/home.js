@@ -8,11 +8,12 @@ import { escape, skeleton } from '../utils.js';
 const SORT_KEY = 'rebarr_home_sort';
 
 const SORT_OPTIONS = [
-  { field: 'title',      label: 'A–Z',       defaultDir: 'asc' },
-  { field: 'downloaded', label: 'Downloaded', defaultDir: 'desc' },
-  { field: 'chapters',   label: 'Chapters',   defaultDir: 'desc' },
-  { field: 'added',      label: 'Added',      defaultDir: 'desc' },
-  { field: 'checked',    label: 'Checked',    defaultDir: 'desc' },
+  { field: 'title',      label: 'A–Z',             defaultDir: 'asc' },
+  { field: 'downloaded', label: 'Downloaded',       defaultDir: 'desc' },
+  { field: 'chapters',   label: 'Chapters',         defaultDir: 'desc' },
+  { field: 'latest',     label: 'Latest Chapter',   defaultDir: 'desc' },
+  { field: 'added',      label: 'Added',            defaultDir: 'desc' },
+  { field: 'checked',    label: 'Checked',          defaultDir: 'desc' },
 ];
 
 function loadSort() {
@@ -48,6 +49,8 @@ function sortManga(mangas) {
         return dir * ((a.created_at ?? 0) - (b.created_at ?? 0));
       case 'checked':
         return dir * ((a.last_checked_at ?? 0) - (b.last_checked_at ?? 0));
+      case 'latest':
+        return dir * ((a.last_chapter_at ?? 0) - (b.last_chapter_at ?? 0));
       default:
         return 0;
     }

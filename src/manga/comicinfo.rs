@@ -579,9 +579,7 @@ pub fn generate_chapter_xml(
 
     let notes = match (series_notes, chapter_notes) {
         (Some(series_json), Some(chapter_json)) => {
-            format!(
-                "{{\"series\":{series_json},\"chapter\":{chapter_json}}}"
-            )
+            format!("{{\"series\":{series_json},\"chapter\":{chapter_json}}}")
         }
         (Some(series_json), None) => {
             format!("{{\"series\":{series_json}}}")
@@ -622,7 +620,10 @@ pub async fn write_series_comicinfo(series_dir: &Path, manga: &Manga) -> std::io
 }
 
 /// Replace the ComicInfo.xml inside an existing CBZ while preserving all other files.
-pub async fn rewrite_chapter_comicinfo(cbz_path: &Path, comic_info_xml: &str) -> std::io::Result<()> {
+pub async fn rewrite_chapter_comicinfo(
+    cbz_path: &Path,
+    comic_info_xml: &str,
+) -> std::io::Result<()> {
     let src = cbz_path.to_owned();
     let xml = comic_info_xml.to_owned();
     let tmp = cbz_path.with_extension("cbz.tmp");
@@ -634,8 +635,8 @@ pub async fn rewrite_chapter_comicinfo(cbz_path: &Path, comic_info_xml: &str) ->
 
         let out_file = std::fs::File::create(&dst)?;
         let mut zip = zip::ZipWriter::new(out_file);
-        let opts =
-            zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
 
         zip.start_file("ComicInfo.xml", opts)?;
         zip.write_all(xml.as_bytes())?;

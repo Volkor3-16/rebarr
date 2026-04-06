@@ -6,8 +6,8 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::{db, db::task::RecentTask, scraper::ProviderRegistry, scheduler::worker::CancelMap};
 use crate::manga::core::DownloadStatus;
+use crate::{db, db::task::RecentTask, scheduler::worker::CancelMap, scraper::ProviderRegistry};
 
 use super::errors::{ApiError, ApiResult, bad_request, internal};
 
@@ -113,7 +113,8 @@ pub async fn list_tasks_grouped(
     .map_err(internal)?;
 
     // Group by queue
-    let mut queues: std::collections::HashMap<String, Vec<QueuedTask>> = std::collections::HashMap::new();
+    let mut queues: std::collections::HashMap<String, Vec<QueuedTask>> =
+        std::collections::HashMap::new();
     for row in rows {
         let chapter_number_raw = row.chapter_base.map(|base| {
             let variant = row.chapter_variant.unwrap_or(0);
@@ -123,7 +124,9 @@ pub async fn list_tasks_grouped(
                 format!("{base}.{variant}")
             }
         });
-        let progress = row.payload.as_deref()
+        let progress = row
+            .payload
+            .as_deref()
             .and_then(|json| serde_json::from_str::<db::task::TaskProgress>(json).ok());
 
         let task = QueuedTask {
@@ -173,10 +176,15 @@ pub async fn list_tasks_grouped(
         // Sort: running first (oldest first), then pending (oldest first)
         let mut tasks = tasks;
         tasks.sort_by(|a, b| {
-            let ar = a.status == "Running"; let br = b.status == "Running";
-            if ar && !br { std::cmp::Ordering::Less }
-            else if !ar && br { std::cmp::Ordering::Greater }
-            else { a.created_at.cmp(&b.created_at) }
+            let ar = a.status == "Running";
+            let br = b.status == "Running";
+            if ar && !br {
+                std::cmp::Ordering::Less
+            } else if !ar && br {
+                std::cmp::Ordering::Greater
+            } else {
+                a.created_at.cmp(&b.created_at)
+            }
         });
 
         result.push(QueueInfo {

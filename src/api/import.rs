@@ -6,8 +6,10 @@ use sqlx::SqlitePool;
 use std::path::PathBuf;
 
 use crate::http::metadata::AniListMetadata;
-use crate::importer::{self, ConfirmedImport, ConfirmedSeriesImport, FolderEntry,
-                      ImportCandidate, ImportSummary, SeriesImportSummary};
+use crate::importer::{
+    self, ConfirmedImport, ConfirmedSeriesImport, FolderEntry, ImportCandidate, ImportSummary,
+    SeriesImportSummary,
+};
 
 use super::errors::{ApiResult, bad_request, internal};
 
@@ -97,9 +99,7 @@ pub struct SeriesExecuteRequest {
 /// Returns folder names + shallow CBZ count. Does not touch AniList.
 #[openapi(tag = "Import")]
 #[post("/api/import/series-scan", data = "<body>")]
-pub async fn series_scan_api(
-    body: Json<SeriesScanRequest>,
-) -> ApiResult<Vec<FolderEntry>> {
+pub async fn series_scan_api(body: Json<SeriesScanRequest>) -> ApiResult<Vec<FolderEntry>> {
     let dir = PathBuf::from(&body.source_dir);
     if !dir.exists() {
         return Err(bad_request(format!(

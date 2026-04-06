@@ -6,8 +6,9 @@ mod helpers;
 use std::sync::Arc;
 
 use helpers::{
-    insert_library, insert_manga, test_ctx, test_db,
+    insert_library, insert_manga,
     static_provider::{StaticProvider, ch, ch_group},
+    test_ctx, test_db,
 };
 use rebarr::{
     db::{chapter as db_chapter, provider as db_provider},
@@ -35,12 +36,11 @@ async fn scan_inserts_chapters_for_clean_numbering() {
     let lib = insert_library(&pool).await;
     let manga = insert_manga(&pool, lib.uuid, "Berserk").await;
 
-    let provider = StaticProvider::new("static")
-        .with_series(
-            "Berserk",
-            "static://berserk",
-            vec![ch("1"), ch("2"), ch("3"), ch("10")],
-        );
+    let provider = StaticProvider::new("static").with_series(
+        "Berserk",
+        "static://berserk",
+        vec![ch("1"), ch("2"), ch("3"), ch("10")],
+    );
     let registry = provider_registry(provider);
     let ctx = test_ctx(&registry);
 
@@ -125,7 +125,11 @@ async fn scan_stores_multiple_groups_for_same_chapter() {
     assert_eq!(chapters.len(), 3);
 
     let ch1s: Vec<_> = chapters.iter().filter(|c| c.chapter_base == 1).collect();
-    assert_eq!(ch1s.len(), 2, "both scanlator groups for ch1 should be stored");
+    assert_eq!(
+        ch1s.len(),
+        2,
+        "both scanlator groups for ch1 should be stored"
+    );
 }
 
 /// Letter-suffixed chapters ("6a", "6b") parse into correct variants.
@@ -152,8 +156,12 @@ async fn scan_handles_letter_variant_chapters() {
         .expect("get chapters");
     assert_eq!(chapters.len(), 3);
 
-    let ch6a = chapters.iter().find(|c| c.chapter_base == 6 && c.chapter_variant == 1);
-    let ch6b = chapters.iter().find(|c| c.chapter_base == 6 && c.chapter_variant == 2);
+    let ch6a = chapters
+        .iter()
+        .find(|c| c.chapter_base == 6 && c.chapter_variant == 1);
+    let ch6b = chapters
+        .iter()
+        .find(|c| c.chapter_base == 6 && c.chapter_variant == 2);
     assert!(ch6a.is_some(), "6a → variant 1 not found");
     assert!(ch6b.is_some(), "6b → variant 2 not found");
 }
@@ -191,7 +199,10 @@ async fn scan_is_idempotent() {
         .expect("get chapters")
         .len();
 
-    assert_eq!(first_count, second_count, "second scan should not add duplicates");
+    assert_eq!(
+        first_count, second_count,
+        "second scan should not add duplicates"
+    );
 }
 
 /// A no-browser provider with no matching series stores a not-found marker.
@@ -201,8 +212,11 @@ async fn scan_records_not_found_when_no_match() {
     let lib = insert_library(&pool).await;
     let manga = insert_manga(&pool, lib.uuid, "UnknownTitle12345").await;
 
-    let provider = StaticProvider::new("static")
-        .with_series("CompleteDifferent", "static://other", vec![ch("1")]);
+    let provider = StaticProvider::new("static").with_series(
+        "CompleteDifferent",
+        "static://other",
+        vec![ch("1")],
+    );
     let registry = provider_registry(provider);
     let ctx = test_ctx(&registry);
 
@@ -218,5 +232,8 @@ async fn scan_records_not_found_when_no_match() {
         .await
         .expect("get providers");
     assert_eq!(entries.len(), 1);
-    assert!(entries[0].provider_url.is_none(), "not-found entry should have no URL");
+    assert!(
+        entries[0].provider_url.is_none(),
+        "not-found entry should have no URL"
+    );
 }

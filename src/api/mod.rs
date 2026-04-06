@@ -21,13 +21,13 @@ pub(crate) mod frontend;
 
 // re-export the route functions
 pub use chapters::routes as chapter_routes;
+pub use events::routes as event_routes;
 pub use frontend::routes as frontend_routes;
 pub use import::routes as import_routes;
 pub use libraries::routes as library_routes;
 pub use manga::routes as manga_routes;
 pub use provider_scores::routes as provider_score_routes;
 pub use settings::routes as settings_routes;
-pub use events::routes as event_routes;
 pub use system::routes as system_routes;
 pub use tasks::routes as task_routes;
 pub use trusted_groups::routes as trusted_group_routes;

@@ -1,11 +1,11 @@
-use std::sync::atomic::{AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use governor::Quota;
 use governor::clock::DefaultClock;
 use governor::middleware::NoOpMiddleware;
 use governor::state::{InMemoryState, NotKeyed};
-use governor::Quota;
 use nonzero_ext::nonzero;
 use reqwest::header::HeaderMap;
 use tokio::time::sleep;
@@ -123,10 +123,7 @@ impl MetadataRateLimiter {
             if let Ok(val) = remaining.to_str() {
                 if let Ok(n) = val.parse::<u32>() {
                     self.remaining.store(n, Ordering::Relaxed);
-                    debug!(
-                        "[metadata:{}] X-RateLimit-Remaining: {}",
-                        self.name, n
-                    );
+                    debug!("[metadata:{}] X-RateLimit-Remaining: {}", self.name, n);
                 }
             }
         }
@@ -136,10 +133,7 @@ impl MetadataRateLimiter {
             if let Ok(val) = reset.to_str() {
                 if let Ok(ts) = val.parse::<i64>() {
                     self.reset_at.store(ts, Ordering::Relaxed);
-                    debug!(
-                        "[metadata:{}] X-RateLimit-Reset: {}",
-                        self.name, ts
-                    );
+                    debug!("[metadata:{}] X-RateLimit-Reset: {}", self.name, ts);
                 }
             }
         }
@@ -149,10 +143,7 @@ impl MetadataRateLimiter {
             if let Ok(val) = retry.to_str() {
                 if let Ok(secs) = val.parse::<u64>() {
                     self.retry_after.store(secs, Ordering::Relaxed);
-                    debug!(
-                        "[metadata:{}] Retry-After: {}s",
-                        self.name, secs
-                    );
+                    debug!("[metadata:{}] Retry-After: {}s", self.name, secs);
                 }
             }
         }
@@ -213,6 +204,9 @@ mod tests {
         assert_eq!(limiter.retry_after.load(Ordering::Relaxed), 4);
 
         limiter.handle_rate_limited(5);
-        assert_eq!(limiter.retry_after.load(Ordering::Relaxed), 64.min(MAX_BACKOFF_SECS));
+        assert_eq!(
+            limiter.retry_after.load(Ordering::Relaxed),
+            64.min(MAX_BACKOFF_SECS)
+        );
     }
 }

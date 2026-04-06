@@ -2,11 +2,11 @@
 
 /// Creation of ComicInfo.xml handler
 pub mod comicinfo;
+/// Core Manga Stuffs
+pub mod core;
 /// Download handler for cover images
 pub mod covers;
 pub mod files;
-/// Core Manga Stuffs
-pub mod core;
 /// Merging provider-supplied chapter lists into a merged list for viewing
 pub mod merge;
 /// Scoring provider chapters

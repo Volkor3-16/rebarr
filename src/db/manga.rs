@@ -53,6 +53,7 @@ struct MangaRow {
     metadata_updated_at: i64,
     monitored: bool,
     last_checked_at: Option<i64>,
+    last_chapter_at: Option<i64>,
     // ComicInfo fields
     writer: Option<String>,
     penciller: Option<String>,
@@ -140,6 +141,7 @@ fn manga_from_parts(row: MangaRow, tags: Vec<String>) -> Result<Manga, sqlx::Err
         created_at: row.created_at,
         metadata_updated_at: row.metadata_updated_at,
         last_checked_at: row.last_checked_at,
+        last_chapter_at: row.last_chapter_at,
         metadata: MangaMetadata {
             title: row.title,
             other_titles,
@@ -225,6 +227,7 @@ pub async fn insert(pool: &SqlitePool, manga: &Manga) -> Result<(), sqlx::Error>
             title, other_titles, synopsis, publishing_status,
             start_year, start_month, start_day, end_year, chapter_count, downloaded_count,
             metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at,
+            last_checked_at, last_chapter_at,
             writer, penciller, inker, colorist, letterer, editor, translator,
             genre, community_rating
         ) VALUES (
@@ -232,6 +235,7 @@ pub async fn insert(pool: &SqlitePool, manga: &Manga) -> Result<(), sqlx::Error>
             ?, ?, ?, ?,
             ?, ?, ?, ?, ?, ?,
             ?, ?, ?, ?, ?,
+            ?, ?,
             ?, ?, ?, ?, ?, ?, ?,
             ?, ?
         )"#,
@@ -256,6 +260,8 @@ pub async fn insert(pool: &SqlitePool, manga: &Manga) -> Result<(), sqlx::Error>
     .bind(manga.monitored as i64)
     .bind(manga.created_at)
     .bind(manga.metadata_updated_at)
+    .bind(manga.last_checked_at)
+    .bind(manga.last_chapter_at)
     .bind(serialize_string_vector(&manga.metadata.writer))
     .bind(serialize_string_vector(&manga.metadata.penciller))
     .bind(serialize_string_vector(&manga.metadata.inker))
@@ -288,7 +294,7 @@ pub async fn get_by_id(pool: &SqlitePool, id: Uuid) -> Result<Option<Manga>, sql
             uuid, library_id, anilist_id, mal_id, relative_path,
             title, other_titles, synopsis, publishing_status,
             start_year, start_month, start_day, end_year, chapter_count, downloaded_count,
-            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at,
+            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at, last_chapter_at,
             writer, penciller, inker, colorist, letterer, editor, translator,
             genre, community_rating
         FROM Manga WHERE uuid = ?"#,
@@ -319,7 +325,7 @@ pub async fn get_all_for_library(
             uuid, library_id, anilist_id, mal_id, relative_path,
             title, other_titles, synopsis, publishing_status,
             start_year, start_month, start_day, end_year, chapter_count, downloaded_count,
-            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at,
+            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at, last_chapter_at,
             writer, penciller, inker, colorist, letterer, editor, translator,
             genre, community_rating
         FROM Manga WHERE library_id = ? ORDER BY title ASC"#,
@@ -360,7 +366,7 @@ pub async fn exists_by_external_ids(
             uuid, library_id, anilist_id, mal_id, relative_path,
             title, other_titles, synopsis, publishing_status,
             start_year, start_month, start_day, end_year, chapter_count, downloaded_count,
-            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at,
+            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at, last_chapter_at,
             writer, penciller, inker, colorist, letterer, editor, translator,
             genre, community_rating
         FROM Manga 
@@ -393,7 +399,7 @@ pub async fn get_by_anilist_id(
             uuid, library_id, anilist_id, mal_id, relative_path,
             title, other_titles, synopsis, publishing_status,
             start_year, start_month, start_day, end_year, chapter_count, downloaded_count,
-            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at,
+            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at, last_chapter_at,
             writer, penciller, inker, colorist, letterer, editor, translator,
             genre, community_rating
         FROM Manga WHERE anilist_id = ? LIMIT 1"#,
@@ -509,6 +515,29 @@ pub async fn update_last_checked(pool: &SqlitePool, id: Uuid) -> Result<(), sqlx
     Ok(())
 }
 
+/// Update the last_chapter_at timestamp for a manga.
+/// Called when a new chapter is added or downloaded.
+pub async fn update_last_chapter(pool: &SqlitePool, id: Uuid) -> Result<(), sqlx::Error> {
+    // Get the latest timestamp from all chapters
+    let latest: Option<i64> = sqlx::query_scalar(
+        "SELECT MAX(MAX(downloaded_at, released_at, scraped_at)) 
+         FROM Chapters 
+         WHERE manga_id = ?",
+    )
+    .bind(id.to_string())
+    .fetch_optional(pool)
+    .await?
+    .flatten();
+
+    sqlx::query("UPDATE Manga SET last_chapter_at = ? WHERE uuid = ?")
+        .bind(latest)
+        .bind(id.to_string())
+        .execute(pool)
+        .await?;
+
+    Ok(())
+}
+
 /// Get manga that are due for a chapter check.
 /// Returns manga where monitored = 1 AND (last_checked_at IS NULL OR now - last_checked_at > interval_hours)
 pub async fn get_due_for_check(
@@ -522,7 +551,7 @@ pub async fn get_due_for_check(
             uuid, library_id, anilist_id, mal_id, relative_path,
             title, other_titles, synopsis, publishing_status,
             start_year, start_month, start_day, end_year, chapter_count, downloaded_count,
-            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at,
+            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at, last_chapter_at,
             writer, penciller, inker, colorist, letterer, editor, translator,
             genre, community_rating
         FROM Manga 
@@ -613,7 +642,7 @@ pub async fn get_all_monitored(pool: &SqlitePool) -> Result<Vec<Manga>, sqlx::Er
             uuid, library_id, anilist_id, mal_id, relative_path,
             title, other_titles, synopsis, publishing_status,
             start_year, start_month, start_day, end_year, chapter_count, downloaded_count,
-            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at,
+            metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at, last_chapter_at,
             writer, penciller, inker, colorist, letterer, editor, translator,
             genre, community_rating
         FROM Manga WHERE monitored = 1 ORDER BY title ASC"#,
@@ -627,4 +656,193 @@ pub async fn get_all_monitored(pool: &SqlitePool) -> Result<Vec<Manga>, sqlx::Er
         out.push(manga_from_parts(row, tags)?);
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use chrono::{TimeZone, Utc};
+
+    use crate::db::{self, chapter as db_chapter, library as db_library};
+    use crate::manga::core::{
+        Chapter, DownloadStatus, Library, MangaMetadata, MangaSource, MangaType,
+    };
+
+    async fn test_pool() -> (SqlitePool, std::path::PathBuf) {
+        let path = std::env::temp_dir().join(format!("rebarr-test-{}.db", Uuid::new_v4()));
+        let db_url = format!("sqlite:{}", path.display());
+        let pool = db::init(&db_url).await.expect("test db init");
+        (pool, path)
+    }
+
+    async fn cleanup_pool(pool: SqlitePool, path: std::path::PathBuf) {
+        pool.close().await;
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+    }
+
+    async fn insert_test_library(pool: &SqlitePool) -> Library {
+        let library = Library {
+            uuid: Uuid::new_v4(),
+            r#type: MangaType::Manga,
+            root_path: std::env::temp_dir().join(format!("rebarr-lib-{}", Uuid::new_v4())),
+        };
+        db_library::insert(pool, &library)
+            .await
+            .expect("insert library");
+        library
+    }
+
+    async fn insert_test_manga(pool: &SqlitePool, library_id: Uuid) -> Manga {
+        let manga = Manga {
+            id: Uuid::new_v4(),
+            library_id,
+            anilist_id: Some(4242),
+            mal_id: Some(2424),
+            metadata: MangaMetadata {
+                title: "Test Manga".to_owned(),
+                other_titles: None,
+                synopsis: None,
+                publishing_status: PublishingStatus::Ongoing,
+                tags: vec!["Action".to_owned()],
+                start_year: Some(2024),
+                start_month: None,
+                start_day: None,
+                end_year: None,
+                writer: None,
+                penciller: None,
+                inker: None,
+                colorist: None,
+                letterer: None,
+                editor: None,
+                translator: None,
+                genre: None,
+                community_rating: None,
+            },
+            relative_path: PathBuf::from("test-manga"),
+            downloaded_count: None,
+            chapter_count: None,
+            metadata_source: MangaSource::Local,
+            thumbnail_url: None,
+            monitored: true,
+            created_at: 1_700_000_000,
+            metadata_updated_at: 1_700_000_000,
+            last_checked_at: None,
+            last_chapter_at: None,
+        };
+        insert(pool, &manga).await.expect("insert manga");
+        manga
+    }
+
+    async fn insert_test_chapter(
+        pool: &SqlitePool,
+        manga_id: Uuid,
+        chapter_base: i32,
+        released_at: Option<i64>,
+        downloaded_at: Option<i64>,
+        scraped_at: Option<i64>,
+    ) {
+        let chapter = Chapter {
+            id: Uuid::new_v4(),
+            manga_id,
+            chapter_base,
+            chapter_variant: 0,
+            is_extra: false,
+            title: None,
+            language: "EN".to_owned(),
+            scanlator_group: None,
+            provider_name: Some("Local".to_owned()),
+            chapter_url: None,
+            download_status: DownloadStatus::Downloaded,
+            released_at: released_at.and_then(|ts| Utc.timestamp_opt(ts, 0).single()),
+            downloaded_at: downloaded_at.and_then(|ts| Utc.timestamp_opt(ts, 0).single()),
+            scraped_at: scraped_at.and_then(|ts| Utc.timestamp_opt(ts, 0).single()),
+            file_size_bytes: None,
+        };
+        db_chapter::insert(pool, &chapter)
+            .await
+            .expect("insert chapter");
+    }
+
+    #[tokio::test]
+    async fn update_last_chapter_uses_latest_available_timestamp() {
+        let (pool, path) = test_pool().await;
+        let library = insert_test_library(&pool).await;
+        let manga = insert_test_manga(&pool, library.uuid).await;
+
+        insert_test_chapter(&pool, manga.id, 1, Some(100), None, Some(90)).await;
+        insert_test_chapter(&pool, manga.id, 2, Some(110), Some(200), Some(120)).await;
+
+        update_last_chapter(&pool, manga.id)
+            .await
+            .expect("update last chapter");
+
+        let fetched = get_by_id(&pool, manga.id)
+            .await
+            .expect("fetch manga")
+            .expect("manga exists");
+        assert_eq!(fetched.last_chapter_at, Some(200));
+
+        cleanup_pool(pool, path).await;
+    }
+
+    #[tokio::test]
+    async fn update_last_chapter_returns_null_when_no_chapter_timestamps_exist() {
+        let (pool, path) = test_pool().await;
+        let library = insert_test_library(&pool).await;
+        let manga = insert_test_manga(&pool, library.uuid).await;
+
+        insert_test_chapter(&pool, manga.id, 1, None, None, None).await;
+
+        update_last_chapter(&pool, manga.id)
+            .await
+            .expect("update last chapter");
+
+        let fetched = get_by_id(&pool, manga.id)
+            .await
+            .expect("fetch manga")
+            .expect("manga exists");
+        assert_eq!(fetched.last_chapter_at, None);
+
+        cleanup_pool(pool, path).await;
+    }
+
+    #[tokio::test]
+    async fn manga_row_queries_return_last_chapter_at() {
+        let (pool, path) = test_pool().await;
+        let library = insert_test_library(&pool).await;
+        let manga = insert_test_manga(&pool, library.uuid).await;
+
+        insert_test_chapter(&pool, manga.id, 1, Some(100), Some(250), Some(90)).await;
+        update_last_chapter(&pool, manga.id)
+            .await
+            .expect("update last chapter");
+
+        let by_external =
+            exists_by_external_ids(&pool, library.uuid, manga.anilist_id, manga.mal_id)
+                .await
+                .expect("exists_by_external_ids")
+                .expect("manga exists");
+        assert_eq!(by_external.last_chapter_at, Some(250));
+
+        let by_anilist = get_by_anilist_id(&pool, manga.anilist_id.expect("anilist id"))
+            .await
+            .expect("get_by_anilist_id")
+            .expect("manga exists");
+        assert_eq!(by_anilist.last_chapter_at, Some(250));
+
+        let due = get_due_for_check(&pool, 6)
+            .await
+            .expect("get_due_for_check");
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].last_chapter_at, Some(250));
+
+        let monitored = get_all_monitored(&pool).await.expect("get_all_monitored");
+        assert_eq!(monitored.len(), 1);
+        assert_eq!(monitored[0].last_chapter_at, Some(250));
+
+        cleanup_pool(pool, path).await;
+    }
 }

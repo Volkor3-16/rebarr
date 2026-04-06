@@ -40,7 +40,12 @@ impl AniListMetadata {
         for attempt in 0..MAX_RETRIES {
             self.limiter.wait_for_permit().await;
 
-            match self.client.manga().search_manga(title, Some(1), Some(10)).await {
+            match self
+                .client
+                .manga()
+                .search_manga(title, Some(1), Some(10))
+                .await
+            {
                 Ok(page) => {
                     let results: Vec<Manga> = page
                         .data
@@ -119,7 +124,12 @@ impl AniListMetadata {
         for attempt in 0..MAX_RETRIES {
             self.limiter.wait_for_permit().await;
 
-            match self.client.manga().get_popular_manga(Some(1), Some(25)).await {
+            match self
+                .client
+                .manga()
+                .get_popular_manga(Some(1), Some(25))
+                .await
+            {
                 Ok(page) => {
                     let results: Vec<Manga> =
                         page.data.into_iter().map(|media| media.into()).collect();

@@ -2,9 +2,9 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use tracing::warn;
 use serde::Serialize;
 use sqlx::SqlitePool;
+use tracing::warn;
 use uuid::Uuid;
 
 use crate::db::{self, webhook as db_webhook};
@@ -55,9 +55,7 @@ impl WebhookDispatcher {
             {
                 Ok(targets) => targets,
                 Err(e) => {
-                    warn!(
-                        "[webhook] failed to load targets for {task_type} {task_status}: {e}"
-                    );
+                    warn!("[webhook] failed to load targets for {task_type} {task_status}: {e}");
                     return;
                 }
             };
@@ -70,9 +68,7 @@ impl WebhookDispatcher {
                 Ok(Some(payload)) => payload,
                 Ok(None) => return,
                 Err(e) => {
-                    warn!(
-                        "[webhook] failed to build payload for task {task_id}: {e}"
-                    );
+                    warn!("[webhook] failed to build payload for task {task_id}: {e}");
                     return;
                 }
             };
@@ -103,10 +99,7 @@ impl WebhookDispatcher {
                         target.target_url,
                         resp.status()
                     ),
-                    Err(e) => warn!(
-                        "[webhook] delivery to {} failed: {}",
-                        target.target_url, e
-                    ),
+                    Err(e) => warn!("[webhook] delivery to {} failed: {}", target.target_url, e),
                 }
             }
         });
@@ -132,9 +125,15 @@ fn render_body(template: &str, payload: &TaskWebhookPayload) -> String {
         ("max_attempts", payload.max_attempts.to_string()),
         ("last_error", payload.last_error.clone().unwrap_or_default()),
         ("manga_id", payload.manga_id.clone().unwrap_or_default()),
-        ("manga_title", payload.manga_title.clone().unwrap_or_default()),
+        (
+            "manga_title",
+            payload.manga_title.clone().unwrap_or_default(),
+        ),
         ("chapter_id", payload.chapter_id.clone().unwrap_or_default()),
-        ("chapter_number_raw", payload.chapter_number_raw.clone().unwrap_or_default()),
+        (
+            "chapter_number_raw",
+            payload.chapter_number_raw.clone().unwrap_or_default(),
+        ),
         ("created_at", payload.created_at.to_rfc3339()),
         ("updated_at", payload.updated_at.to_rfc3339()),
     ];
@@ -150,7 +149,10 @@ async fn build_payload(
     task_id: Uuid,
 ) -> Result<Option<TaskWebhookPayload>, sqlx::Error> {
     let recent = db::task::get_recent(pool, None, 200).await?;
-    let Some(task) = recent.into_iter().find(|task| task.id == task_id.to_string()) else {
+    let Some(task) = recent
+        .into_iter()
+        .find(|task| task.id == task_id.to_string())
+    else {
         return Ok(None);
     };
 

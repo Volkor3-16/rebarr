@@ -116,6 +116,11 @@ I'll remove this when I've got the first public release out, this is just a quic
 - [ ] WebUI for viewing chapters - so we can have the user/automated flagging of pages:
     - FrontCover, InnerCover, Roundup, Story, Advertisment, Editorial, Letters, Preview, BackCover, Other, Deleted?
 - [ ] Tell komga to scan for new downloads every so often (`n` download completes?)
+- [ ] Torrent / Usenet support
+    - Most of these releases use Volumes ripped from the publisher, so we'd need to map them somehow.
+- [ ] Volume -> Chapter mapping
+    - bruh https://github.com/TheIceCreamTroll/VolumeToChapterConverter they have the chapter number in the filenames in the cbz. lmfao
+        - For anything that doesn't have this formatting, we force the user to match it and have it submitted to some online api thing or something so other people can use it too? we could always add this in later.
 
 ## Installation
 

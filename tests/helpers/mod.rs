@@ -14,7 +14,9 @@ use uuid::Uuid;
 
 /// Spin up an in-memory SQLite database and run all migrations.
 pub async fn test_db() -> SqlitePool {
-    db::init("sqlite::memory:").await.expect("test DB init failed")
+    db::init("sqlite::memory:")
+        .await
+        .expect("test DB init failed")
 }
 
 /// Build a ScraperCtx wired to the given ProviderRegistry (no real browser started).
@@ -31,7 +33,9 @@ pub async fn insert_library(pool: &SqlitePool) -> Library {
         r#type: rebarr::manga::core::MangaType::Manga,
         root_path: PathBuf::from("/tmp/rebarr-test"),
     };
-    db::library::insert(pool, &lib).await.expect("insert library");
+    db::library::insert(pool, &lib)
+        .await
+        .expect("insert library");
     lib
 }
 
@@ -71,6 +75,7 @@ pub async fn insert_manga(pool: &SqlitePool, library_id: Uuid, title: &str) -> M
         created_at: chrono::Utc::now().timestamp(),
         metadata_updated_at: chrono::Utc::now().timestamp(),
         last_checked_at: None,
+        last_chapter_at: None,
     };
     db::manga::insert(pool, &manga).await.expect("insert manga");
     manga

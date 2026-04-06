@@ -160,7 +160,11 @@ pub async fn create(
     let mut tx = pool.begin().await?;
     let body_template = input.body_template.as_deref().and_then(|t| {
         let t = t.trim();
-        if t.is_empty() { None } else { Some(t.to_owned()) }
+        if t.is_empty() {
+            None
+        } else {
+            Some(t.to_owned())
+        }
     });
 
     sqlx::query(
@@ -203,7 +207,11 @@ pub async fn update(
 
     let body_template = input.body_template.as_deref().and_then(|t| {
         let t = t.trim();
-        if t.is_empty() { None } else { Some(t.to_owned()) }
+        if t.is_empty() {
+            None
+        } else {
+            Some(t.to_owned())
+        }
     });
 
     let updated = sqlx::query(

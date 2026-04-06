@@ -13,8 +13,7 @@
 /// ```
 use async_trait::async_trait;
 use rebarr::scraper::{
-    PageUrl, Provider, ProviderChapterInfo, ProviderSearchResult, ScraperCtx,
-    error::ScraperError,
+    PageUrl, Provider, ProviderChapterInfo, ProviderSearchResult, ScraperCtx, error::ScraperError,
 };
 
 // ---------------------------------------------------------------------------
@@ -50,7 +49,9 @@ fn parse_chapter_number(raw: &str) -> (f32, f32, u8) {
 
 fn infer_is_extra(raw: &str) -> bool {
     let lower = raw.to_lowercase();
-    ["extra", "omake", "special", "bonus", "ex"].iter().any(|kw| lower.contains(kw))
+    ["extra", "omake", "special", "bonus", "ex"]
+        .iter()
+        .any(|kw| lower.contains(kw))
 }
 
 // ---------------------------------------------------------------------------
@@ -117,7 +118,10 @@ pub struct StaticProvider {
 
 impl StaticProvider {
     pub fn new(name: impl Into<String>) -> Self {
-        Self { name: name.into(), series: Vec::new() }
+        Self {
+            name: name.into(),
+            series: Vec::new(),
+        }
     }
 
     /// Add a series with its chapters.
@@ -167,7 +171,9 @@ impl Provider for StaticProvider {
         let results = self
             .series
             .iter()
-            .filter(|s| s.title.to_lowercase().contains(&lower) || lower.contains(&s.title.to_lowercase()))
+            .filter(|s| {
+                s.title.to_lowercase().contains(&lower) || lower.contains(&s.title.to_lowercase())
+            })
             .map(|s| ProviderSearchResult {
                 title: s.title.clone(),
                 url: s.url.clone(),
@@ -190,8 +196,7 @@ impl Provider for StaticProvider {
             .chapters
             .iter()
             .map(|ch| {
-                let (number, chapter_base, chapter_variant) =
-                    parse_chapter_number(&ch.raw_number);
+                let (number, chapter_base, chapter_variant) = parse_chapter_number(&ch.raw_number);
                 let is_extra = infer_is_extra(&ch.raw_number)
                     || ch.title.as_deref().map(infer_is_extra).unwrap_or(false);
                 ProviderChapterInfo {

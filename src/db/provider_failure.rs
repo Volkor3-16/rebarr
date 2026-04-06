@@ -99,13 +99,12 @@ pub async fn clear_for_manga(
     provider_name: &str,
     manga_id: Uuid,
 ) -> Result<u64, sqlx::Error> {
-    let result = sqlx::query(
-        "DELETE FROM ProviderFailure WHERE provider_name = ? AND manga_id = ?",
-    )
-    .bind(provider_name)
-    .bind(manga_id.to_string())
-    .execute(pool)
-    .await?;
+    let result =
+        sqlx::query("DELETE FROM ProviderFailure WHERE provider_name = ? AND manga_id = ?")
+            .bind(provider_name)
+            .bind(manga_id.to_string())
+            .execute(pool)
+            .await?;
     Ok(result.rows_affected())
 }
 

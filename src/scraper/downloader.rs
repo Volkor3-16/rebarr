@@ -6,16 +6,16 @@ use std::sync::Arc;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use chrono::Utc;
-use tracing::{debug, info, warn, instrument};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, info, instrument, warn};
 
 use crate::db::{
     chapter as db_chapter, provider as db_provider, settings as db_settings, task as db_task,
 };
-use crate::manga::{comicinfo, files};
 use crate::manga::core::{Chapter, DownloadStatus, Manga};
 use crate::manga::scoring::{ChapterFilter, compute_tier, rank_entries};
+use crate::manga::{comicinfo, files};
 use crate::scraper::{ProviderRegistry, ScraperCtx};
 
 // ---------------------------------------------------------------------------
@@ -145,14 +145,12 @@ pub async fn download_chapter(
             );
             for provider_name in &providers_to_scrape {
                 let provider = provider_map.get(provider_name).unwrap();
-                let Some(manga_provider) = crate::db::provider::get_for_manga_provider(
-                    pool,
-                    manga.id,
-                    provider_name,
-                )
-                .await
-                .ok()
-                .flatten() else {
+                let Some(manga_provider) =
+                    crate::db::provider::get_for_manga_provider(pool, manga.id, provider_name)
+                        .await
+                        .ok()
+                        .flatten()
+                else {
                     continue;
                 };
                 let Some(manga_url) = manga_provider.provider_url.as_deref() else {
@@ -165,8 +163,7 @@ pub async fn download_chapter(
                 );
                 if let Ok(infos) = ctx.executor.chapters(ctx, provider, manga_url).await {
                     let _ =
-                        db_chapter::upsert_from_scrape(pool, manga.id, provider_name, &infos)
-                            .await;
+                        db_chapter::upsert_from_scrape(pool, manga.id, provider_name, &infos).await;
                 }
             }
 
@@ -615,7 +612,11 @@ async fn cleanup_superseded_downloads(
         }
     };
 
-    let new_tier = compute_tier(chapter.scanlator_group.as_deref(), trusted_groups, chapter.provider_name.as_deref());
+    let new_tier = compute_tier(
+        chapter.scanlator_group.as_deref(),
+        trusted_groups,
+        chapter.provider_name.as_deref(),
+    );
     let series_dir = lib_root.join(&manga.relative_path);
     let number_prefix = format!("Chapter {}", chapter.number_sort());
 
@@ -626,7 +627,11 @@ async fn cleanup_superseded_downloads(
         if variant.download_status != DownloadStatus::Downloaded {
             continue;
         }
-        let old_tier = compute_tier(variant.scanlator_group.as_deref(), trusted_groups, variant.provider_name.as_deref());
+        let old_tier = compute_tier(
+            variant.scanlator_group.as_deref(),
+            trusted_groups,
+            variant.provider_name.as_deref(),
+        );
         if old_tier <= new_tier {
             continue; // Same or better tier — don't touch
         }
@@ -713,7 +718,7 @@ pub fn is_valid_image(data: &[u8]) -> bool {
     matches!(
         data,
         d if d.starts_with(b"\xFF\xD8\xFF") ||  // JPEG
-             d.starts_with(b"\x89PNG") ||        // PNG  
+             d.starts_with(b"\x89PNG") ||        // PNG
              d.starts_with(b"GIF8") ||           // GIF
              (d.starts_with(b"RIFF") && d.len() >= 12 && &d[8..12] == b"WEBP") // WebP
     )

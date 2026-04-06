@@ -8,7 +8,9 @@ use uuid::Uuid;
 use crate::scraper::ProviderRegistry;
 
 use super::errors::{ApiResult, bad_request, internal};
-use crate::db::{chapter as db_chapter, provider as db_provider, provider_scores, settings as db_settings};
+use crate::db::{
+    chapter as db_chapter, provider as db_provider, provider_scores, settings as db_settings,
+};
 
 // ---------------------------------------------------------------------------
 // Response / request types
@@ -74,7 +76,11 @@ pub async fn get_global_score(
         .find(|p| p.name() == name)
         .map(|p| p.default_score())
         .unwrap_or(0);
-    Ok(Json(GlobalScoreResponse { score, enabled, default_score }))
+    Ok(Json(GlobalScoreResponse {
+        score,
+        enabled,
+        default_score,
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -96,15 +102,29 @@ pub async fn set_global_score(
         .map_err(internal)?;
 
     // Regenerate canonical chapters for all manga that use this provider.
-    let affected_manga_ids = get_manga_ids_for_provider(pool.inner(), name).await.map_err(internal)?;
-    let trusted_groups = db_provider::get_trusted_groups(pool.inner()).await.map_err(internal)?;
-    let preferred_language = db_settings::get(pool.inner(), "preferred_language", "").await.map_err(internal)?;
+    let affected_manga_ids = get_manga_ids_for_provider(pool.inner(), name)
+        .await
+        .map_err(internal)?;
+    let trusted_groups = db_provider::get_trusted_groups(pool.inner())
+        .await
+        .map_err(internal)?;
+    let preferred_language = db_settings::get(pool.inner(), "preferred_language", "")
+        .await
+        .map_err(internal)?;
     let yaml_defaults = std::collections::HashMap::new();
     for manga_id in affected_manga_ids {
-        let scores = provider_scores::load_effective_scores(pool.inner(), manga_id, &yaml_defaults).await.map_err(internal)?;
-        db_chapter::update_canonical(pool.inner(), manga_id, &trusted_groups, &preferred_language, &scores)
+        let scores = provider_scores::load_effective_scores(pool.inner(), manga_id, &yaml_defaults)
             .await
             .map_err(internal)?;
+        db_chapter::update_canonical(
+            pool.inner(),
+            manga_id,
+            &trusted_groups,
+            &preferred_language,
+            &scores,
+        )
+        .await
+        .map_err(internal)?;
     }
 
     let default_score = registry
@@ -191,13 +211,25 @@ pub async fn set_series_score(
         .map_err(internal)?;
 
     // Regenerate canonical chapters for this manga.
-    let trusted_groups = db_provider::get_trusted_groups(pool.inner()).await.map_err(internal)?;
-    let preferred_language = db_settings::get(pool.inner(), "preferred_language", "").await.map_err(internal)?;
-    let yaml_defaults = std::collections::HashMap::new();
-    let scores = provider_scores::load_effective_scores(pool.inner(), manga_id, &yaml_defaults).await.map_err(internal)?;
-    db_chapter::update_canonical(pool.inner(), manga_id, &trusted_groups, &preferred_language, &scores)
+    let trusted_groups = db_provider::get_trusted_groups(pool.inner())
         .await
         .map_err(internal)?;
+    let preferred_language = db_settings::get(pool.inner(), "preferred_language", "")
+        .await
+        .map_err(internal)?;
+    let yaml_defaults = std::collections::HashMap::new();
+    let scores = provider_scores::load_effective_scores(pool.inner(), manga_id, &yaml_defaults)
+        .await
+        .map_err(internal)?;
+    db_chapter::update_canonical(
+        pool.inner(),
+        manga_id,
+        &trusted_groups,
+        &preferred_language,
+        &scores,
+    )
+    .await
+    .map_err(internal)?;
 
     let default_score = registry
         .all()
@@ -304,12 +336,11 @@ async fn get_manga_ids_for_provider(
     pool: &SqlitePool,
     provider_name: &str,
 ) -> Result<Vec<Uuid>, sqlx::Error> {
-    let rows: Vec<(String,)> = sqlx::query_as(
-        "SELECT DISTINCT manga_id FROM Chapters WHERE provider_name = ?",
-    )
-    .bind(provider_name)
-    .fetch_all(pool)
-    .await?;
+    let rows: Vec<(String,)> =
+        sqlx::query_as("SELECT DISTINCT manga_id FROM Chapters WHERE provider_name = ?")
+            .bind(provider_name)
+            .fetch_all(pool)
+            .await?;
     rows.into_iter()
         .filter_map(|(s,)| Uuid::parse_str(&s).ok())
         .collect::<Vec<_>>()

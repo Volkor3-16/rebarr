@@ -6,10 +6,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tracing::{debug, error, info, warn};
 use sqlx::SqlitePool;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::db::task::{Task, TaskType};
@@ -19,9 +19,9 @@ use crate::db::{
 };
 use crate::http::metadata::AniListMetadata;
 use crate::library::scanner::scan_existing_chapters;
-use crate::manga::{comicinfo, covers, files};
-use crate::manga::merge;
 use crate::manga::core::{DownloadStatus, Manga, PublishingStatus};
+use crate::manga::merge;
+use crate::manga::{comicinfo, covers, files};
 use crate::scheduler::optimiser;
 use crate::scraper::downloader;
 use crate::scraper::{ProviderRegistry, ScraperCtx};
@@ -91,7 +91,12 @@ pub fn start(
     let scheduler_registry = registry.clone();
     let scheduler_shutdown = shutdown_token.clone();
     handles.push(tokio::spawn(async move {
-        run_scheduler(scheduler_pool.clone(), scheduler_registry, scheduler_shutdown).await;
+        run_scheduler(
+            scheduler_pool.clone(),
+            scheduler_registry,
+            scheduler_shutdown,
+        )
+        .await;
     }));
 
     // Spawn system queue workers (1-2 workers for system tasks)
@@ -128,7 +133,16 @@ pub fn start(
             let worker_name = format!("{}-{i}", provider.name());
             let worker_shutdown = shutdown_token.clone();
             handles.push(tokio::spawn(async move {
-                queue_worker(&pool, &registry, &ctx, &cancel_map, &queue_name, worker_name, worker_shutdown).await;
+                queue_worker(
+                    &pool,
+                    &registry,
+                    &ctx,
+                    &cancel_map,
+                    &queue_name,
+                    worker_name,
+                    worker_shutdown,
+                )
+                .await;
             }));
         }
     }
@@ -242,7 +256,11 @@ async fn queue_worker(
 /// Reads scan_interval_hours from Settings at the start of each cycle and
 /// enqueues per-provider SyncProviderChapters tasks for all monitored manga that are due.
 /// Each provider gets its own task in its own queue (provider:{name}).
-async fn run_scheduler(pool: SqlitePool, _registry: Arc<ProviderRegistry>, shutdown_token: CancellationToken) {
+async fn run_scheduler(
+    pool: SqlitePool,
+    _registry: Arc<ProviderRegistry>,
+    shutdown_token: CancellationToken,
+) {
     loop {
         // Check for shutdown signal
         if shutdown_token.is_cancelled() {
@@ -271,7 +289,9 @@ async fn run_scheduler(pool: SqlitePool, _registry: Arc<ProviderRegistry>, shutd
 
                                 // Skip auto-disabled providers
                                 if crate::db::provider_failure::is_auto_disabled(
-                                    &pool, &p.provider_name, manga.id,
+                                    &pool,
+                                    &p.provider_name,
+                                    manga.id,
                                 )
                                 .await
                                 .unwrap_or(false)
@@ -286,9 +306,14 @@ async fn run_scheduler(pool: SqlitePool, _registry: Arc<ProviderRegistry>, shutd
                                 let queue = provider_queue_name(&p.provider_name);
 
                                 // Dedupe: skip if already pending/running for this queue+provider
-                                if db_task::is_pending_in_queue(&pool, &queue, manga.id, TaskType::SyncProviderChapters)
-                                    .await
-                                    .unwrap_or(false)
+                                if db_task::is_pending_in_queue(
+                                    &pool,
+                                    &queue,
+                                    manga.id,
+                                    TaskType::SyncProviderChapters,
+                                )
+                                .await
+                                .unwrap_or(false)
                                 {
                                     continue;
                                 }
@@ -394,9 +419,14 @@ async fn dispatch(
                 let queue = provider_queue_name(&entry.provider_name);
 
                 // Dedupe: skip if already pending/running for this queue+provider
-                if db_task::is_pending_in_queue(pool, &queue, manga.id, TaskType::SyncProviderChapters)
-                    .await
-                    .unwrap_or(false)
+                if db_task::is_pending_in_queue(
+                    pool,
+                    &queue,
+                    manga.id,
+                    TaskType::SyncProviderChapters,
+                )
+                .await
+                .unwrap_or(false)
                 {
                     continue;
                 }
@@ -449,13 +479,19 @@ async fn dispatch(
                     if let Some(provider_name) = info.get("provider").and_then(|v| v.as_str()) {
                         // Per-provider task: check only this provider
                         let result = merge::check_provider_chapters(
-                            pool, registry, ctx, &manga, task.id, provider_name,
+                            pool,
+                            registry,
+                            ctx,
+                            &manga,
+                            task.id,
+                            provider_name,
                         )
                         .await
                         .map_err(|e| e.to_string())?;
 
                         // Clear failure records on success
-                        let _ = db_provider_failure::clear_for_manga(pool, provider_name, manga_id).await;
+                        let _ = db_provider_failure::clear_for_manga(pool, provider_name, manga_id)
+                            .await;
 
                         // Update last_checked_at to spread out future checks
                         if let Err(e) = db_manga::update_last_checked(pool, manga_id).await {
@@ -562,7 +598,10 @@ async fn dispatch(
                         .await
                         .map(|v| v == "true")
                         .unwrap_or(false)
-                        && matches!(fresh.metadata.publishing_status, PublishingStatus::Completed)
+                        && matches!(
+                            fresh.metadata.publishing_status,
+                            PublishingStatus::Completed
+                        )
                     {
                         fresh.monitored = false;
                     }

@@ -2,7 +2,7 @@
 
 import { tasks, settings } from '../api.js';
 import { render } from '../router.js';
-import { escape, taskBadge, renderTaskProgress, showToast } from '../utils.js';
+import { escape, taskBadge, showToast } from '../utils.js';
 import * as sse from '../events.js';
 
 // Track which cancelled groups are expanded (by index)
@@ -12,6 +12,40 @@ const expandedGroups = new Set();
 const selectedTaskIds = new Set();
 
 let sseHandler = null;
+const QUEUE_FILTER_KEY = 'rebarr_queue_task_filters';
+const DEFAULT_VISIBLE_TASKS = ['DownloadChapter'];
+const KNOWN_TASK_TYPES = [
+  'ScanLibrary',
+  'BuildFullChapterList',
+  'RefreshMetadata',
+  'CheckNewChapter',
+  'DownloadChapter',
+  'ScanDisk',
+  'OptimiseChapter',
+  'Backup',
+  'SyncProviderChapters',
+];
+
+function loadTaskTypeFilters() {
+  try {
+    const raw = localStorage.getItem(QUEUE_FILTER_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return new Set(parsed.filter(Boolean));
+      }
+    }
+  } catch (_) {}
+  return new Set(DEFAULT_VISIBLE_TASKS);
+}
+
+function saveTaskTypeFilters() {
+  try {
+    localStorage.setItem(QUEUE_FILTER_KEY, JSON.stringify([...visibleTaskTypes]));
+  } catch (_) {}
+}
+
+let visibleTaskTypes = loadTaskTypeFilters();
 
 export async function viewQueue() {
   render(`
@@ -50,9 +84,13 @@ async function refreshQueue() {
     
     const paused = appSettings.queue_paused;
     const pauseLabel = paused ? '<span class="iconify" data-icon="mdi-play"></span> Resume Queue' : '<span class="iconify" data-icon="mdi-pause"></span> Pause Queue';
+    const availableTaskTypes = getAvailableTaskTypes(taskList);
+    visibleTaskTypes = normalizeVisibleTaskTypes(visibleTaskTypes, availableTaskTypes);
+    saveTaskTypeFilters();
+    const filteredTaskList = taskList.filter(t => visibleTaskTypes.has(t.task_type));
     
     // Check if there's a running task for the Jump button
-    const hasRunning = taskList.some(t => t.status === 'Running');
+    const hasRunning = filteredTaskList.some(t => t.status === 'Running');
     const jumpBtn = hasRunning
       ? `<button class="btn btn-sm btn-primary" onclick="jumpToActive()"><span class="iconify" data-icon="mdi-crosshairs-gps"></span> Jump to Active</button>`
       : '';
@@ -62,15 +100,21 @@ async function refreshQueue() {
       <button class="btn btn-sm btn-error btn-outline" onclick="cancelSelected()">Cancel Selected</button>
       ${jumpBtn}
       ${paused ? '<span class="badge badge-warning">Queue paused — no new tasks will run.</span>' : ''}
+      ${buildTaskTypeFilterBar(availableTaskTypes, taskList)}
     `;
     
     if (taskList.length === 0) {
       listEl.innerHTML = '<p>No tasks yet.</p>';
       return;
     }
+
+    if (filteredTaskList.length === 0) {
+      listEl.innerHTML = '<p>No tasks match the current filters.</p>';
+      return;
+    }
     
     // Build rows with cancelled task compaction
-    const rows = buildCompactedRows(taskList);
+    const rows = buildCompactedRows(filteredTaskList);
     
     listEl.innerHTML = `
       <table>
@@ -113,6 +157,46 @@ function updateSelectAllCheckbox() {
   
   selectAllCheckbox.checked = allChecked;
   selectAllCheckbox.indeterminate = someChecked && !allChecked;
+}
+
+function getAvailableTaskTypes(taskList) {
+  const taskTypes = new Set(KNOWN_TASK_TYPES);
+  taskList.forEach(t => {
+    if (t.task_type) taskTypes.add(t.task_type);
+  });
+  return [...taskTypes].sort();
+}
+
+function normalizeVisibleTaskTypes(current, availableTaskTypes) {
+  const available = new Set(availableTaskTypes);
+  const next = new Set([...current].filter(t => available.has(t)));
+  if (next.size === 0) {
+    if (available.has('DownloadChapter')) {
+      next.add('DownloadChapter');
+    } else if (availableTaskTypes.length > 0) {
+      next.add(availableTaskTypes[0]);
+    }
+  }
+  return next;
+}
+
+function buildTaskTypeFilterBar(taskTypes, taskList) {
+  const counts = new Map();
+  taskList.forEach(t => counts.set(t.task_type, (counts.get(t.task_type) || 0) + 1));
+  const selectedCount = visibleTaskTypes.size;
+  return `
+    <div class="table-filter-bar" style="margin-top:0.75rem">
+      <div class="filter-chips">
+        <span class="filter-chip ${selectedCount === taskTypes.length ? 'active' : ''}" onclick="showAllQueueTaskTypes()">All</span>
+        <span class="filter-chip ${selectedCount === 1 && visibleTaskTypes.has('DownloadChapter') ? 'active' : ''}" onclick="showOnlyDownloadTasks()">Downloads</span>
+        ${taskTypes.map(type => {
+          const active = visibleTaskTypes.has(type);
+          const count = counts.get(type) || 0;
+          return `<span class="filter-chip ${active ? 'active' : ''}" onclick="toggleQueueTaskType('${escape(type)}')">${escape(type)}${count > 0 ? ` (${count})` : ''}</span>`;
+        }).join('')}
+      </div>
+    </div>
+  `;
 }
 
 function buildCompactedRows(taskList) {
@@ -191,16 +275,8 @@ function buildCompactedRows(taskList) {
 
 function buildTaskRow(t) {
   const ts = new Date(t.created_at).toLocaleString();
-  
-  let taskDesc = escape(t.task_type);
-  if (t.manga_title) {
-    taskDesc += ` ${escape(t.manga_title)}`;
-  }
-  if (t.chapter_number_raw && (t.task_type === 'DownloadChapter' || t.task_type === 'CheckNewChapter')) {
-    taskDesc += ` <small style="color:#888">(Ch. ${escape(t.chapter_number_raw)})</small>`;
-  }
-  
-  const progress = renderTaskProgress(t.progress);
+  const taskDesc = buildCompactTaskLabel(t);
+  const progress = buildCompactTaskProgress(t.progress);
   const err = t.last_error ? `<br><small class="error">${escape(t.last_error)}</small>` : '';
   const canCancel = t.status === 'Pending' || t.status === 'Running';
   const cb = canCancel ? `<input type="checkbox" class="task-cb" data-id="${t.id}">` : '';
@@ -214,11 +290,61 @@ function buildTaskRow(t) {
     <tr${highlightClass} ${rowId}>
       <td>${cb}</td>
       <td><small>${escape(ts)}</small></td>
-      <td>${taskDesc}${progress}</td>
+      <td><div class="queue-task-main">${taskDesc}</div>${progress}</td>
       <td>${taskBadge(t.status)}${err}</td>
       <td>${cancelBtn}</td>
     </tr>
   `;
+}
+
+function buildCompactTaskLabel(t) {
+  const title = t.manga_title ? escape(t.manga_title) : '';
+  const chapter = t.chapter_number_raw ? `Ch. ${escape(t.chapter_number_raw)}` : '';
+  const page = compactPageSummary(t.progress);
+
+  const details = [chapter, page].filter(Boolean).join(' - ');
+  if (title && details) return `${escape(t.task_type)}: ${title} <small class="queue-task-subtle">(${details})</small>`;
+  if (title) return `${escape(t.task_type)}: ${title}`;
+  if (details) return `${escape(t.task_type)} <small class="queue-task-subtle">(${details})</small>`;
+  return escape(t.task_type);
+}
+
+function compactPageSummary(progress) {
+  const current = Number(progress?.current);
+  const total = Number(progress?.total);
+  const unit = String(progress?.unit || '').toLowerCase();
+  if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 0) return '';
+  if (unit && unit !== 'page') return `${current} / ${total} ${unit}${total === 1 ? '' : 's'}`;
+  return `p. ${current} / ${total}`;
+}
+
+function compactProgressPercent(progress) {
+  const current = Number(progress?.current);
+  const total = Number(progress?.total);
+  if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 0) return null;
+  return Math.max(0, Math.min(100, (current / total) * 100));
+}
+
+function buildCompactTaskProgress(progress) {
+  if (!progress) return '';
+
+  const lines = [];
+  if (progress.provider) {
+    lines.push(`<div class="queue-task-meta">Provider: ${escape(progress.provider)}</div>`);
+  }
+
+  const percent = compactProgressPercent(progress);
+  if (percent != null) {
+    lines.push(`
+      <div class="task-progress queue-task-progress" aria-label="Task progress">
+        <div class="task-progress-bar">
+          <div class="task-progress-fill" style="width:${percent.toFixed(1)}%"></div>
+        </div>
+      </div>
+    `);
+  }
+
+  return lines.join('');
 }
 
 window.toggleQueuePause = async function(currentlyPaused) {
@@ -229,6 +355,29 @@ window.toggleQueuePause = async function(currentlyPaused) {
   } catch(e) {
     showToast('Error: ' + e.message, 'error');
   }
+};
+
+window.toggleQueueTaskType = function(taskType) {
+  if (visibleTaskTypes.has(taskType)) {
+    if (visibleTaskTypes.size === 1) return;
+    visibleTaskTypes.delete(taskType);
+  } else {
+    visibleTaskTypes.add(taskType);
+  }
+  saveTaskTypeFilters();
+  refreshQueue();
+};
+
+window.showAllQueueTaskTypes = function() {
+  visibleTaskTypes = new Set(KNOWN_TASK_TYPES);
+  saveTaskTypeFilters();
+  refreshQueue();
+};
+
+window.showOnlyDownloadTasks = function() {
+  visibleTaskTypes = new Set(DEFAULT_VISIBLE_TASKS);
+  saveTaskTypeFilters();
+  refreshQueue();
 };
 
 window.toggleSelectAllTasks = function(checked) {

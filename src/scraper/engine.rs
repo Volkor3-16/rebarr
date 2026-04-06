@@ -6,13 +6,11 @@ use chrono::{Datelike, NaiveDate, NaiveDateTime, TimeZone, Utc};
 
 static DUMP_COUNTER: AtomicU32 = AtomicU32::new(0);
 
-use tracing::{debug, info, warn};
 use scraper::{ElementRef, Html, Selector};
+use tracing::{debug, info, warn};
 
 use crate::scraper::{
-    def::{
-        ActionDef, ContentKind, FieldDef, ForeachDef, InterceptDef, ProviderDef, StepDef,
-    },
+    def::{ActionDef, ContentKind, FieldDef, ForeachDef, InterceptDef, ProviderDef, StepDef},
     error::ScraperError,
     {PageUrl, Provider, ProviderChapterInfo, ProviderSearchResult, ScraperCtx},
 };
@@ -85,22 +83,22 @@ impl YamlProvider {
                 // Get base value
                 let base_val = vars.get(var_name).cloned().unwrap_or_default();
 
-                        // Apply modifiers in order
-                        let mut result = base_val;
-                        for mod_name in modifiers.split('|') {
-                            result = match mod_name {
-                                "strip_last_segment" => result
-                                    .rfind('/')
-                                    .filter(|&i| i > 0)
-                                    .map_or(result.clone(), |i| result[..i].to_string()),
-                                "basename" => result
-                                    .rfind('/')
-                                    .map(|i| result[i + 1..].to_string())
-                                    .unwrap_or(result),
-                                "js_escape" => js_escape(&result),
-                                _ => result,
-                            };
-                        }
+                // Apply modifiers in order
+                let mut result = base_val;
+                for mod_name in modifiers.split('|') {
+                    result = match mod_name {
+                        "strip_last_segment" => result
+                            .rfind('/')
+                            .filter(|&i| i > 0)
+                            .map_or(result.clone(), |i| result[..i].to_string()),
+                        "basename" => result
+                            .rfind('/')
+                            .map(|i| result[i + 1..].to_string())
+                            .unwrap_or(result),
+                        "js_escape" => js_escape(&result),
+                        _ => result,
+                    };
+                }
 
                 s = s.replace(full_match, &result);
                 changed = true;
@@ -313,46 +311,48 @@ impl YamlProvider {
                         match p.content().await {
                             Err(e) => warn!("[cf:poll] p.content() failed at {elapsed:.1?}: {e}"),
                             Ok(html) => {
-                            let is_challenge = is_cf_challenge(&html);
-                            debug!(
-                                "[cf:poll] t={elapsed:.1?} is_challenge={is_challenge} html_len={}",
-                                html.len()
-                            );
-                            if is_challenge {
-                                if !cloudflare_detected {
-                                    info!(
-                                        "Cloudflare challenge detected at {url}, waiting for auto-bypass..."
-                                    );
-                                    cloudflare_detected = true;
-                                    // Prime the cooldown so the first click happens ~1s after
-                                    // detection rather than immediately — the widget needs time
-                                    // to finish rendering before a click will register.
-                                    last_cf_click_attempt = Some(
-                                        std::time::Instant::now()
-                                            - Duration::from_millis(1_000),
-                                    );
-                                }
+                                let is_challenge = is_cf_challenge(&html);
+                                debug!(
+                                    "[cf:poll] t={elapsed:.1?} is_challenge={is_challenge} html_len={}",
+                                    html.len()
+                                );
+                                if is_challenge {
+                                    if !cloudflare_detected {
+                                        info!(
+                                            "Cloudflare challenge detected at {url}, waiting for auto-bypass..."
+                                        );
+                                        cloudflare_detected = true;
+                                        // Prime the cooldown so the first click happens ~1s after
+                                        // detection rather than immediately — the widget needs time
+                                        // to finish rendering before a click will register.
+                                        last_cf_click_attempt = Some(
+                                            std::time::Instant::now()
+                                                - Duration::from_millis(1_000),
+                                        );
+                                    }
 
-                                let should_try_click = last_cf_click_attempt
-                                    .map(|t| t.elapsed() >= Duration::from_secs(2))
-                                    .unwrap_or(true);
-                                if should_try_click {
-                                    debug!("[cf:click] attempting checkbox click at t={elapsed:.1?}");
-                                    try_cf_checkbox_click(p).await;
-                                    last_cf_click_attempt = Some(std::time::Instant::now());
+                                    let should_try_click = last_cf_click_attempt
+                                        .map(|t| t.elapsed() >= Duration::from_secs(2))
+                                        .unwrap_or(true);
+                                    if should_try_click {
+                                        debug!(
+                                            "[cf:click] attempting checkbox click at t={elapsed:.1?}"
+                                        );
+                                        try_cf_checkbox_click(p).await;
+                                        last_cf_click_attempt = Some(std::time::Instant::now());
+                                    }
+                                } else if cloudflare_detected {
+                                    // Challenge was present but page has loaded — bypassed!
+                                    debug!("Cloudflare challenge auto-bypassed at {url}");
+                                    break;
+                                } else if elapsed >= min_settle_time {
+                                    // No CF challenge and minimum settle time passed —
+                                    // wait for network to become idle to let JS API calls complete
+                                    let remaining_ms =
+                                        timeout.saturating_sub(elapsed).as_millis() as u64;
+                                    p.wait_for_network_idle(1000, remaining_ms).await.ok();
+                                    break;
                                 }
-                            } else if cloudflare_detected {
-                                // Challenge was present but page has loaded — bypassed!
-                                debug!("Cloudflare challenge auto-bypassed at {url}");
-                                break;
-                            } else if elapsed >= min_settle_time {
-                                // No CF challenge and minimum settle time passed —
-                                // wait for network to become idle to let JS API calls complete
-                                let remaining_ms =
-                                    timeout.saturating_sub(elapsed).as_millis() as u64;
-                                p.wait_for_network_idle(1000, remaining_ms).await.ok();
-                                break;
-                            }
                             } // Ok(html) arm
                         } // match p.content()
 
@@ -411,10 +411,7 @@ impl YamlProvider {
                                     "provider '{}': intercept for '{}' timed out",
                                     self.def.name, intercept.url_contains
                                 );
-                                debug!(
-                                    "[step] intercept TIMEOUT for '{}'",
-                                    intercept.url_contains
-                                );
+                                debug!("[step] intercept TIMEOUT for '{}'", intercept.url_contains);
                             }
                         }
                     }
@@ -676,30 +673,30 @@ impl YamlProvider {
                                     if let Ok(json) =
                                         serde_json::from_str::<serde_json::Value>(&response)
                                     {
-                                    // Extract pagination metadata if configured
-                                    if let Some(ref meta_path) = pagination.meta_path {
-                                        let meta = parse_json_value(&json, meta_path);
-                                        if pagination.calculate_last_page {
-                                            // Calculate last_page from total and limit
-                                            let total = meta
-                                                .get(&pagination.total_field)
-                                                .and_then(|v| v.as_u64())
-                                                .unwrap_or(0);
-                                            let limit = meta
-                                                .get(&pagination.per_page_field)
-                                                .and_then(|v| v.as_u64())
-                                                .unwrap_or(100);
-                                            if limit > 0 {
-                                                last_page = total.div_ceil(limit) as u32;
-                                            }
-                                        } else if let Some(last_page_val) =
-                                            meta.get(&pagination.last_page_field)
-                                        {
-                                            if let Some(lp) = last_page_val.as_u64() {
-                                                last_page = lp as u32;
+                                        // Extract pagination metadata if configured
+                                        if let Some(ref meta_path) = pagination.meta_path {
+                                            let meta = parse_json_value(&json, meta_path);
+                                            if pagination.calculate_last_page {
+                                                // Calculate last_page from total and limit
+                                                let total = meta
+                                                    .get(&pagination.total_field)
+                                                    .and_then(|v| v.as_u64())
+                                                    .unwrap_or(0);
+                                                let limit = meta
+                                                    .get(&pagination.per_page_field)
+                                                    .and_then(|v| v.as_u64())
+                                                    .unwrap_or(100);
+                                                if limit > 0 {
+                                                    last_page = total.div_ceil(limit) as u32;
+                                                }
+                                            } else if let Some(last_page_val) =
+                                                meta.get(&pagination.last_page_field)
+                                            {
+                                                if let Some(lp) = last_page_val.as_u64() {
+                                                    last_page = lp as u32;
+                                                }
                                             }
                                         }
-                                    }
 
                                         // Extract data items
                                         let data_path =
@@ -740,9 +737,7 @@ impl YamlProvider {
 
                             // Check if we've reached the last page
                             if current_page >= last_page {
-                                debug!(
-                                    "[step] fetch → reached last page ({last_page}), stopping"
-                                );
+                                debug!("[step] fetch → reached last page ({last_page}), stopping");
                                 break;
                             }
 
@@ -815,7 +810,10 @@ impl YamlProvider {
                                     } else {
                                         response
                                     };
-                                    let end = (0..=120_usize.min(value.len())).rev().find(|&i| value.is_char_boundary(i)).unwrap_or(0);
+                                    let end = (0..=120_usize.min(value.len()))
+                                        .rev()
+                                        .find(|&i| value.is_char_boundary(i))
+                                        .unwrap_or(0);
                                     let preview = &value[..end];
                                     debug!(
                                         "[step] fetch stored in '{}': {}",
@@ -901,7 +899,10 @@ impl YamlProvider {
                                 warn!("[step] graphql failed: {}", response);
                             } else {
                                 if ctx.verbose {
-                                    let end = (0..=500_usize.min(response.len())).rev().find(|&i| response.is_char_boundary(i)).unwrap_or(0);
+                                    let end = (0..=500_usize.min(response.len()))
+                                        .rev()
+                                        .find(|&i| response.is_char_boundary(i))
+                                        .unwrap_or(0);
                                     debug!(
                                         "[step] graphql raw response ({} bytes): {}",
                                         response.len(),
@@ -914,7 +915,10 @@ impl YamlProvider {
                                     response
                                 };
                                 if ctx.verbose {
-                                    let end = (0..=120_usize.min(value.len())).rev().find(|&i| value.is_char_boundary(i)).unwrap_or(0);
+                                    let end = (0..=120_usize.min(value.len()))
+                                        .rev()
+                                        .find(|&i| value.is_char_boundary(i))
+                                        .unwrap_or(0);
                                     let preview = &value[..end];
                                     debug!(
                                         "[step] graphql stored in '{}': {}",
@@ -991,9 +995,7 @@ impl YamlProvider {
                                         Some(ts) => ts.to_string(),
                                         None => val,
                                     }
-                                } else if let Some(prefix) =
-                                    from_json_def.prefix.get(output_key)
-                                {
+                                } else if let Some(prefix) = from_json_def.prefix.get(output_key) {
                                     // Apply prefix if not absolute URL
                                     let expanded_prefix = self.expand(prefix, &vars);
                                     if val.starts_with("http://") || val.starts_with("https://") {
@@ -1029,9 +1031,7 @@ impl YamlProvider {
 
                     let mut json_array: Vec<serde_json::Value> = serde_json::from_str(json_str)
                         .map_err(|e| {
-                            ScraperError::Parse(format!(
-                                "filter_json: failed to parse JSON: {e}"
-                            ))
+                            ScraperError::Parse(format!("filter_json: failed to parse JSON: {e}"))
                         })?;
 
                     let original_count = json_array.len();
@@ -1056,8 +1056,8 @@ impl YamlProvider {
                     );
 
                     // Store filtered array back
-                    let value = serde_json::to_string(&json_array)
-                        .unwrap_or_else(|_| "[]".to_string());
+                    let value =
+                        serde_json::to_string(&json_array).unwrap_or_else(|_| "[]".to_string());
                     vars.insert(filter_def.var.clone(), value);
                 }
             }

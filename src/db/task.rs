@@ -185,20 +185,20 @@ async fn task_event_details(
     status: &str,
     last_error: Option<String>,
 ) -> TaskUpdate {
-    let (manga_title, chapter_number_raw): (Option<String>, Option<String>) =
-        sqlx::query_as(
-            "SELECT m.title, c.chapter_base, c.chapter_variant
+    let (manga_title, chapter_number_raw): (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT m.title, c.chapter_base, c.chapter_variant
              FROM Task t
              LEFT JOIN Manga m ON t.manga_id = m.uuid
              LEFT JOIN Chapters c ON t.chapter_id = c.uuid
              WHERE t.uuid = ?",
-        )
-        .bind(task_id.to_string())
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten()
-        .map(|(title, base, variant): (Option<String>, Option<i64>, Option<i64>)| {
+    )
+    .bind(task_id.to_string())
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .map(
+        |(title, base, variant): (Option<String>, Option<i64>, Option<i64>)| {
             let chapter = base.map(|b| {
                 let v = variant.unwrap_or(0);
                 if v == 0 {
@@ -208,8 +208,9 @@ async fn task_event_details(
                 }
             });
             (title, chapter)
-        })
-        .unwrap_or((None, None));
+        },
+    )
+    .unwrap_or((None, None));
 
     TaskUpdate {
         id: task_id.to_string(),
@@ -301,13 +302,16 @@ pub async fn claim_next_for_queue(
 
     let task = task_from_row(row)?;
     webhook::dispatch_task_event(task.id, task_type_str(&task.task_type), "Running");
-    events::emit_task_update(&task_event_details(
-        pool,
-        task.id,
-        task_type_str(&task.task_type),
-        "Running",
-        None,
-    ).await);
+    events::emit_task_update(
+        &task_event_details(
+            pool,
+            task.id,
+            task_type_str(&task.task_type),
+            "Running",
+            None,
+        )
+        .await,
+    );
     Ok(Some(task))
 }
 
@@ -348,13 +352,16 @@ pub async fn claim_next(pool: &SqlitePool) -> Result<Option<Task>, sqlx::Error> 
 
     let task = task_from_row(row)?;
     webhook::dispatch_task_event(task.id, task_type_str(&task.task_type), "Running");
-    events::emit_task_update(&task_event_details(
-        pool,
-        task.id,
-        task_type_str(&task.task_type),
-        "Running",
-        None,
-    ).await);
+    events::emit_task_update(
+        &task_event_details(
+            pool,
+            task.id,
+            task_type_str(&task.task_type),
+            "Running",
+            None,
+        )
+        .await,
+    );
     Ok(Some(task))
 }
 
@@ -368,13 +375,16 @@ pub async fn complete(pool: &SqlitePool, task_id: Uuid) -> Result<(), sqlx::Erro
         .await?;
     if let Some(task) = task {
         webhook::dispatch_task_event(task.id, task_type_str(&task.task_type), "Completed");
-        events::emit_task_update(&task_event_details(
-            pool,
-            task.id,
-            task_type_str(&task.task_type),
-            "Completed",
-            None,
-        ).await);
+        events::emit_task_update(
+            &task_event_details(
+                pool,
+                task.id,
+                task_type_str(&task.task_type),
+                "Completed",
+                None,
+            )
+            .await,
+        );
     }
     Ok(())
 }
@@ -434,13 +444,16 @@ pub async fn fail(pool: &SqlitePool, task_id: Uuid, error: &str) -> Result<(), s
                 task_type_str(&task.task_type),
                 task_status_str(&TaskStatus::Pending),
             );
-            events::emit_task_update(&task_event_details(
-                pool,
-                task.id,
-                task_type_str(&task.task_type),
-                "Pending",
-                Some(error.to_string()),
-            ).await);
+            events::emit_task_update(
+                &task_event_details(
+                    pool,
+                    task.id,
+                    task_type_str(&task.task_type),
+                    "Pending",
+                    Some(error.to_string()),
+                )
+                .await,
+            );
         }
     } else {
         sqlx::query(
@@ -459,13 +472,16 @@ pub async fn fail(pool: &SqlitePool, task_id: Uuid, error: &str) -> Result<(), s
                 task_type_str(&task.task_type),
                 task_status_str(&TaskStatus::Failed),
             );
-            events::emit_task_update(&task_event_details(
-                pool,
-                task.id,
-                task_type_str(&task.task_type),
-                "Failed",
-                Some(error.to_string()),
-            ).await);
+            events::emit_task_update(
+                &task_event_details(
+                    pool,
+                    task.id,
+                    task_type_str(&task.task_type),
+                    "Failed",
+                    Some(error.to_string()),
+                )
+                .await,
+            );
         }
     }
     Ok(())
@@ -497,13 +513,16 @@ pub async fn cancel(pool: &SqlitePool, task_id: Uuid) -> Result<(), sqlx::Error>
     .await?;
     if let Some(task) = task {
         webhook::dispatch_task_event(task.id, task_type_str(&task.task_type), "Cancelled");
-        events::emit_task_update(&task_event_details(
-            pool,
-            task.id,
-            task_type_str(&task.task_type),
-            "Cancelled",
-            None,
-        ).await);
+        events::emit_task_update(
+            &task_event_details(
+                pool,
+                task.id,
+                task_type_str(&task.task_type),
+                "Cancelled",
+                None,
+            )
+            .await,
+        );
     }
     Ok(())
 }
@@ -683,13 +702,9 @@ pub async fn enqueue_with_payload(
     .execute(pool)
     .await?;
     webhook::dispatch_task_event(id, task_type_str(&task_type), "Pending");
-    events::emit_task_update(&task_event_details(
-        pool,
-        id,
-        task_type_str(&task_type),
-        "Pending",
-        None,
-    ).await);
+    events::emit_task_update(
+        &task_event_details(pool, id, task_type_str(&task_type), "Pending", None).await,
+    );
     Ok(id)
 }
 

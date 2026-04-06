@@ -3,11 +3,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use dotenvy::dotenv;
-use rocket::fs::FileServer;
-use rocket_okapi::rapidoc::{make_rapidoc, RapiDocConfig};
-use rocket_okapi::settings::UrlObject;
-use rocket_okapi::swagger_ui::{make_swagger_ui, SwaggerUIConfig};
-use tokio_util::sync::CancellationToken;
 use rebarr::api::{extra_routes, frontend_routes, openapi_routes};
 use rebarr::db;
 use rebarr::http::{ALClient, AniListMetadata, WebhookDispatcher};
@@ -17,6 +12,11 @@ use rebarr::scraper::{
     executor::ProviderExecutor,
     {ProviderRegistry, ScraperCtx},
 };
+use rocket::fs::FileServer;
+use rocket_okapi::rapidoc::{RapiDocConfig, make_rapidoc};
+use rocket_okapi::settings::UrlObject;
+use rocket_okapi::swagger_ui::{SwaggerUIConfig, make_swagger_ui};
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 #[rocket::main]

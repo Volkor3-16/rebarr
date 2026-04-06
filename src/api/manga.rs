@@ -1,21 +1,22 @@
 use std::path::PathBuf;
 
 use chrono::Utc;
-use tracing::{debug, trace, warn};
 use rocket::{State, delete, get, http::Status, patch, post, serde::json::Json};
 use rocket_okapi::openapi;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use strsim;
+use tracing::{debug, trace, warn};
 use uuid::Uuid;
 
 use crate::{
     db,
     http::metadata::AniListMetadata,
     manga::{
-        comicinfo, covers, files,
+        comicinfo,
         core::{Manga, MangaMetadata, MangaSource, PublishingStatus, Synonym, SynonymSource},
+        covers, files,
     },
     scraper::{ProviderRegistry, ScraperCtx},
 };
@@ -114,7 +115,12 @@ async fn auto_unmonitor_completed_if_enabled(
     manga: &mut Manga,
 ) -> Result<(), sqlx::Error> {
     let enabled = db::settings::get(pool, "auto_unmonitor_completed", "false").await? == "true";
-    if enabled && matches!(manga.metadata.publishing_status, PublishingStatus::Completed) {
+    if enabled
+        && matches!(
+            manga.metadata.publishing_status,
+            PublishingStatus::Completed
+        )
+    {
         manga.monitored = false;
     }
     Ok(())
@@ -132,10 +138,7 @@ pub async fn search_manga(al: &State<AniListMetadata>, q: &str) -> ApiResult<Vec
         return Ok(Json(vec![]));
     }
     debug!("Searching for manga: {q}");
-    al.search_manga(q.trim())
-        .await
-        .map(Json)
-        .map_err(internal)
+    al.search_manga(q.trim()).await.map(Json).map_err(internal)
 }
 
 // ---------------------------------------------------------------------------
@@ -321,6 +324,7 @@ pub async fn add_manga_manual(
         created_at: Utc::now().timestamp(),
         metadata_updated_at: Utc::now().timestamp(),
         last_checked_at: None,
+        last_chapter_at: None,
     };
     auto_unmonitor_completed_if_enabled(pool.inner(), &mut manga)
         .await
@@ -984,10 +988,15 @@ pub async fn upload_cover_file(
         "png"
     } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
         "jpg"
-    } else if bytes.starts_with(&[0x52, 0x49, 0x46, 0x46]) && bytes.len() > 12 && &bytes[8..12] == b"WEBP" {
+    } else if bytes.starts_with(&[0x52, 0x49, 0x46, 0x46])
+        && bytes.len() > 12
+        && &bytes[8..12] == b"WEBP"
+    {
         "webp"
     } else {
-        return Err(bad_request("unsupported image format (use jpg, png, or webp)"));
+        return Err(bad_request(
+            "unsupported image format (use jpg, png, or webp)",
+        ));
     };
 
     let series_dir = library.root_path.join(&manga.relative_path);

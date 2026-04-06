@@ -4,10 +4,10 @@ use std::time::Duration;
 
 use dashmap::DashMap;
 use governor::{
+    RateLimiter,
     clock::DefaultClock,
     middleware::NoOpMiddleware,
     state::{InMemoryState, NotKeyed},
-    RateLimiter,
 };
 use tokio::sync::{Mutex, Notify};
 
@@ -162,11 +162,15 @@ impl ProviderExecutor {
         // Governor doesn't expose "used" directly, so we report 0 for now.
         // The dashboard can show the RPM limit and burst.
         // We look up the provider's RPM from their rate_limits entry
-        let rpm = self.rate_limits.get(provider_name).map(|_e| {
-            // The governor's quota period gives us the rate: period = 60s / rpm
-            // So rpm = 60 / period_secs. But we don't have easy access here.
-            0u32
-        }).unwrap_or(0);
+        let rpm = self
+            .rate_limits
+            .get(provider_name)
+            .map(|_e| {
+                // The governor's quota period gives us the rate: period = 60s / rpm
+                // So rpm = 60 / period_secs. But we don't have easy access here.
+                0u32
+            })
+            .unwrap_or(0);
         Some(RateLimitInfo {
             rpm,
             burst: 1,
@@ -215,7 +219,9 @@ impl ProviderExecutor {
             .provider_gates
             .get(provider.name())
             .cloned()
-            .ok_or_else(|| ScraperError::Parse(format!("unknown provider '{}'", provider.name())))?;
+            .ok_or_else(|| {
+                ScraperError::Parse(format!("unknown provider '{}'", provider.name()))
+            })?;
         let provider_permit = provider_gate.acquire().await;
         let browser_permit = if provider.needs_browser() {
             Some(self.browser_gate.acquire().await)

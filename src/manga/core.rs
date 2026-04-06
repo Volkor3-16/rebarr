@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use anilist_moe::objects::media::Media;
 use chrono::{DateTime, Utc};
-use tracing::trace;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use tracing::trace;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -32,6 +32,8 @@ pub struct Manga {
     pub metadata_updated_at: i64,   // When the manga last metadata refresh
     /// Timestamp of when we last checked for new chapters (null = never)
     pub last_checked_at: Option<i64>,
+    /// Timestamp of when the most recent chapter was added/downloaded (null = none)
+    pub last_chapter_at: Option<i64>,
 }
 
 /// Source of a synonym title
@@ -462,7 +464,14 @@ impl From<Media> for Manga {
             .map(|tags| tags.iter().filter_map(|t| t.name.clone()).collect())
             .unwrap_or_default();
         trace!("Extracted Tags: {tags:?}");
-        let genre = Some(media.genres.unwrap_or_default().first().map_or("".to_string(), |v| v.to_string()).clone());
+        let genre = Some(
+            media
+                .genres
+                .unwrap_or_default()
+                .first()
+                .map_or("".to_string(), |v| v.to_string())
+                .clone(),
+        );
         trace!("Extracted Genre: {genre:?}");
 
         // Community rating %
@@ -516,6 +525,7 @@ impl From<Media> for Manga {
             created_at: Utc::now().timestamp(),
             metadata_updated_at: Utc::now().timestamp(),
             last_checked_at: None,
+            last_chapter_at: None,
         }
     }
 }

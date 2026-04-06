@@ -13,14 +13,17 @@ use strsim::jaro_winkler;
 use tracing::{error, info, warn};
 
 use rebarr::scraper::{
-    browser::BrowserPool, executor::ProviderExecutor, ProviderRegistry, ProviderSearchResult,
-    ScraperCtx,
+    ProviderRegistry, ProviderSearchResult, ScraperCtx, browser::BrowserPool,
+    executor::ProviderExecutor,
 };
 
 // ─── CLI definition ──────────────────────────────────────────────────────────
 
 #[derive(Parser)]
-#[command(name = "cli", about = "Rebarr CLI — scrape & download manga without the web UI")]
+#[command(
+    name = "cli",
+    about = "Rebarr CLI — scrape & download manga without the web UI"
+)]
 struct Cli {
     /// Run Chromium in non-headless (visible) mode
     #[arg(short = 'V', long, global = true)]
@@ -104,7 +107,6 @@ enum Cmd {
         #[arg(long, default_value = "./downloads")]
         out: String,
     },
-
 }
 
 // ─── Fixture format ──────────────────────────────────────────────────────────
@@ -273,18 +275,41 @@ async fn main() {
 
     match cli.command {
         Cmd::Providers => unreachable!(),
-        Cmd::Test { query, provider, download, chapter, fixtures, update, verbose } => {
+        Cmd::Test {
+            query,
+            provider,
+            download,
+            chapter,
+            fixtures,
+            update,
+            verbose,
+        } => {
             cmd_test(
-                &registry, &ctx,
-                query.as_deref(), provider.as_deref(),
-                download, chapter,
-                &fixtures, update, verbose,
-            ).await;
+                &registry,
+                &ctx,
+                query.as_deref(),
+                provider.as_deref(),
+                download,
+                chapter,
+                &fixtures,
+                update,
+                verbose,
+            )
+            .await;
         }
-        Cmd::Scan { query, provider, no_interactive } => {
+        Cmd::Scan {
+            query,
+            provider,
+            no_interactive,
+        } => {
             cmd_scan(&registry, &ctx, &query, provider.as_deref(), no_interactive).await;
         }
-        Cmd::Download { query, provider, chapter, out } => {
+        Cmd::Download {
+            query,
+            provider,
+            chapter,
+            out,
+        } => {
             cmd_download(&registry, &ctx, &query, provider.as_deref(), chapter, &out).await;
         }
     }
@@ -303,7 +328,10 @@ fn cmd_providers(registry: &ProviderRegistry) {
         println!("No providers loaded (check ./providers/ directory).");
         return;
     }
-    println!("{:<22} {:>5}  {:>6}  {:<8}  Tags", "Name", "RPM", "Score", "Version");
+    println!(
+        "{:<22} {:>5}  {:>6}  {:<8}  Tags",
+        "Name", "RPM", "Score", "Version"
+    );
     println!("{}", "-".repeat(72));
     for p in &all {
         let tags: Vec<String> = p.tags().iter().map(|t| format!("{t:?}")).collect();
@@ -377,10 +405,13 @@ async fn cmd_test(
     println!();
 
     info!("Fetching chapter list...");
-    let chapters = provider.chapters(ctx, &manga.url).await.unwrap_or_else(|e| {
-        error!("chapters() failed: {e}");
-        std::process::exit(1);
-    });
+    let chapters = provider
+        .chapters(ctx, &manga.url)
+        .await
+        .unwrap_or_else(|e| {
+            error!("chapters() failed: {e}");
+            std::process::exit(1);
+        });
     if chapters.is_empty() {
         error!("No chapters found. The provider may require a different manga URL.");
         std::process::exit(1);
@@ -691,10 +722,13 @@ async fn cmd_download(
     println!();
 
     info!("Fetching chapter list...");
-    let chapters = provider.chapters(ctx, &manga.url).await.unwrap_or_else(|e| {
-        error!("chapters() failed: {e}");
-        std::process::exit(1);
-    });
+    let chapters = provider
+        .chapters(ctx, &manga.url)
+        .await
+        .unwrap_or_else(|e| {
+            error!("chapters() failed: {e}");
+            std::process::exit(1);
+        });
     if chapters.is_empty() {
         error!("No chapters found.");
         std::process::exit(1);
@@ -859,7 +893,8 @@ async fn fixture_update(
         if verbose {
             println!("  search results ({}):", results.len());
             let q = query.to_lowercase();
-            let mut scored: Vec<_> = results.iter()
+            let mut scored: Vec<_> = results
+                .iter()
                 .map(|r| (jaro_winkler(&q, &r.title.to_lowercase()), r))
                 .collect();
             scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
@@ -885,11 +920,15 @@ async fn fixture_update(
         println!("  {} chapters", chapters.len());
         if verbose {
             for ch in chapters.iter().take(5) {
-                println!("    Ch.{:<8} lang={:<4} scanlator={} date={} url={}",
+                println!(
+                    "    Ch.{:<8} lang={:<4} scanlator={} date={} url={}",
                     ch.raw_number,
                     ch.language.as_deref().unwrap_or("?"),
                     ch.scanlator_group.as_deref().unwrap_or("—"),
-                    ch.date_released.map(|d| d.to_string()).as_deref().unwrap_or("—"),
+                    ch.date_released
+                        .map(|d| d.to_string())
+                        .as_deref()
+                        .unwrap_or("—"),
                     ch.url.as_deref().unwrap_or("(no url)"),
                 );
             }
@@ -920,7 +959,11 @@ async fn fixture_update(
                 continue;
             }
         };
-        println!("  {} pages for chapter {}", pages.len(), first_ch.raw_number);
+        println!(
+            "  {} pages for chapter {}",
+            pages.len(),
+            first_ch.raw_number
+        );
         if verbose {
             for p in pages.iter().take(5) {
                 println!("    page {:>3} — {}", p.index, p.url);
@@ -1016,7 +1059,9 @@ async fn fixture_run(
     let mut total_seed = 0usize; // fixtures with no seeded checks yet
 
     for fixture in &fixtures {
-        let provider = all.iter().find(|p| p.name().eq_ignore_ascii_case(&fixture.provider));
+        let provider = all
+            .iter()
+            .find(|p| p.name().eq_ignore_ascii_case(&fixture.provider));
         let provider = match provider {
             Some(p) => p,
             None => {
@@ -1079,7 +1124,8 @@ async fn fixture_run(
         // Pick best result for chapter check
         let query_lower = fixture.query.to_lowercase();
         if verbose {
-            let mut scored: Vec<_> = results.iter()
+            let mut scored: Vec<_> = results
+                .iter()
                 .map(|r| (jaro_winkler(&query_lower, &r.title.to_lowercase()), r))
                 .collect();
             scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
@@ -1113,11 +1159,15 @@ async fn fixture_run(
         if verbose {
             println!("  chapters ({}):", chapters.len());
             for ch in chapters.iter().take(5) {
-                println!("    Ch.{:<8} lang={:<4} scanlator={} date={} title={} url={}",
+                println!(
+                    "    Ch.{:<8} lang={:<4} scanlator={} date={} title={} url={}",
                     ch.raw_number,
                     ch.language.as_deref().unwrap_or("?"),
                     ch.scanlator_group.as_deref().unwrap_or("—"),
-                    ch.date_released.map(|d| d.to_string()).as_deref().unwrap_or("—"),
+                    ch.date_released
+                        .map(|d| d.to_string())
+                        .as_deref()
+                        .unwrap_or("—"),
                     ch.title.as_deref().unwrap_or("—"),
                     ch.url.as_deref().unwrap_or("(no url)"),
                 );
@@ -1156,18 +1206,23 @@ async fn fixture_run(
                 macro_rules! cmp_field {
                     ($label:expr, $exp:expr, $live:expr) => {
                         if $exp != $live {
-                            diffs.push(format!(
-                                "      {}: {:?} → {:?}",
-                                $label, $exp, $live
-                            ));
+                            diffs.push(format!("      {}: {:?} → {:?}", $label, $exp, $live));
                         }
                     };
                 }
                 cmp_field!("raw_number", &expected.raw_number, &live.raw_number);
                 cmp_field!("title", &expected.title, &live.title);
-                cmp_field!("scanlator_group", &expected.scanlator_group, &live.scanlator_group);
+                cmp_field!(
+                    "scanlator_group",
+                    &expected.scanlator_group,
+                    &live.scanlator_group
+                );
                 cmp_field!("language", &expected.language, &live.language);
-                cmp_field!("date_released", &expected.date_released, &live.date_released);
+                cmp_field!(
+                    "date_released",
+                    &expected.date_released,
+                    &live.date_released
+                );
                 cmp_field!("url", &expected.url, &live.url);
 
                 if diffs.is_empty() {
@@ -1207,7 +1262,11 @@ async fn fixture_run(
             };
 
             if verbose {
-                println!("  pages ({}) for {}:", pages.len(), fixture.test_chapter_url);
+                println!(
+                    "  pages ({}) for {}:",
+                    pages.len(),
+                    fixture.test_chapter_url
+                );
                 for p in pages.iter().take(5) {
                     println!("    page {:>3} — {}", p.index, p.url);
                 }
@@ -1246,7 +1305,9 @@ async fn fixture_run(
 
     let tested = total_pass + total_fail;
     let summary = if total_seed > 0 {
-        format!("{total_pass}/{tested} passed, {total_fail} failed, {total_seed} not seeded (run `test --update` to seed them)")
+        format!(
+            "{total_pass}/{tested} passed, {total_fail} failed, {total_seed} not seeded (run `test --update` to seed them)"
+        )
     } else {
         format!("{total_pass}/{tested} passed, {total_fail} failed")
     };
@@ -1258,7 +1319,11 @@ fn print_validate_result(pass: usize, fail: usize, skip: usize, details: &[Strin
     if fail == 0 && seeded == 0 {
         println!(" SEED ({skip} checks not seeded)");
     } else if fail == 0 {
-        let suffix = if skip > 0 { format!(", {skip} not seeded") } else { String::new() };
+        let suffix = if skip > 0 {
+            format!(", {skip} not seeded")
+        } else {
+            String::new()
+        };
         println!(" PASS ({pass}/{seeded} checks{suffix})");
     } else {
         println!(" FAIL ({pass}/{seeded} checks, {skip} not seeded)");

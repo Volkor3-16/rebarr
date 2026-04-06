@@ -212,13 +212,13 @@ pub enum StepDef {
     /// Sugar over fetch for GraphQL endpoints. Sends POST with JSON body.
     Graphql { graphql: GraphqlDef },
 
-/// `- from_json: {var: source_var, extract: {...}}` — Map a stored JSON array
-/// directly to result rows, replacing the extract_js → foreach pattern.
-FromJson { from_json: FromJsonDef },
+    /// `- from_json: {var: source_var, extract: {...}}` — Map a stored JSON array
+    /// directly to result rows, replacing the extract_js → foreach pattern.
+    FromJson { from_json: FromJsonDef },
 
-/// `- filter_json: {var: source_var, condition: {...}}` — Filter a JSON array in-place,
-/// removing items that match the condition. Used to exclude unwanted records.
-FilterJson { filter_json: FilterJsonDef },
+    /// `- filter_json: {var: source_var, condition: {...}}` — Filter a JSON array in-place,
+    /// removing items that match the condition. Used to exclude unwanted records.
+    FilterJson { filter_json: FilterJsonDef },
 }
 
 // ---------------------------------------------------------------------------

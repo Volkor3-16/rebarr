@@ -1,8 +1,8 @@
 use chrono::Utc;
-use tracing::{debug, info, info_span, warn, Instrument};
 use sqlx::SqlitePool;
 use thiserror::Error;
 use tokio::task::JoinSet;
+use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::db::provider::MangaProvider;
 use crate::db::task::TaskType;
@@ -157,8 +157,9 @@ pub async fn search_providers(
 
         let mut completed = 0i64;
         while let Some(joined) = join_set.join_next().await {
-            let (provider, results, last_error, search_titles) =
-                joined.map_err(|e| ScanError::Scraper(crate::scraper::error::ScraperError::Browser(e.to_string())))?;
+            let (provider, results, last_error, search_titles) = joined.map_err(|e| {
+                ScanError::Scraper(crate::scraper::error::ScraperError::Browser(e.to_string()))
+            })?;
             completed += 1;
 
             let _ = db_task::set_progress(
@@ -295,22 +296,33 @@ async fn scrape_single_provider(
 
     let entry = all_entries
         .iter()
-        .find(|e| e.provider_name == provider_name && e.found() && !globally_disabled.contains(&e.provider_name))
-        .ok_or_else(|| ScanError::Scraper(crate::scraper::error::ScraperError::Parse(
-            format!("provider '{}' not found or disabled for '{}'", provider_name, manga.metadata.title)
-        )))?;
+        .find(|e| {
+            e.provider_name == provider_name
+                && e.found()
+                && !globally_disabled.contains(&e.provider_name)
+        })
+        .ok_or_else(|| {
+            ScanError::Scraper(crate::scraper::error::ScraperError::Parse(format!(
+                "provider '{}' not found or disabled for '{}'",
+                provider_name, manga.metadata.title
+            )))
+        })?;
 
-    let provider_map: std::collections::HashMap<String, std::sync::Arc<dyn crate::scraper::Provider>> =
-        registry
-            .all()
-            .into_iter()
-            .map(|p| (p.name().to_owned(), (*p).clone()))
-            .collect();
+    let provider_map: std::collections::HashMap<
+        String,
+        std::sync::Arc<dyn crate::scraper::Provider>,
+    > = registry
+        .all()
+        .into_iter()
+        .map(|p| (p.name().to_owned(), (*p).clone()))
+        .collect();
 
     let Some(provider) = provider_map.get(provider_name).cloned() else {
-        return Err(ScanError::Scraper(crate::scraper::error::ScraperError::Parse(
-            format!("provider '{provider_name}' is in DB but not loaded")
-        )));
+        return Err(ScanError::Scraper(
+            crate::scraper::error::ScraperError::Parse(format!(
+                "provider '{provider_name}' is in DB but not loaded"
+            )),
+        ));
     };
 
     let provider_url = entry.provider_url.clone().unwrap_or_default();
@@ -320,8 +332,7 @@ async fn scrape_single_provider(
     let (total_new, new_ids_for_download) = match result {
         Ok(infos) => {
             let inserted_ids =
-                db_chapter::upsert_from_scrape(pool, manga.id, provider_name, &infos)
-                    .await?;
+                db_chapter::upsert_from_scrape(pool, manga.id, provider_name, &infos).await?;
             let inserted = inserted_ids.len();
             info!(
                 "[scan] {} returned {} chapters ({inserted} new).",
@@ -396,12 +407,14 @@ async fn scrape_chapters(
     provider_entries: &[crate::db::provider::MangaProvider],
     task_id: uuid::Uuid,
 ) -> Result<(usize, std::collections::HashSet<uuid::Uuid>), ScanError> {
-    let provider_map: std::collections::HashMap<String, std::sync::Arc<dyn crate::scraper::Provider>> =
-        registry
-            .all()
-            .into_iter()
-            .map(|p| (p.name().to_owned(), (*p).clone()))
-            .collect();
+    let provider_map: std::collections::HashMap<
+        String,
+        std::sync::Arc<dyn crate::scraper::Provider>,
+    > = registry
+        .all()
+        .into_iter()
+        .map(|p| (p.name().to_owned(), (*p).clone()))
+        .collect();
 
     let mut total_new = 0usize;
     let mut new_ids: std::collections::HashSet<uuid::Uuid> = std::collections::HashSet::new();
@@ -432,8 +445,9 @@ async fn scrape_chapters(
 
     let mut completed = 0i64;
     while let Some(joined) = join_set.join_next().await {
-        let (entry, result) =
-            joined.map_err(|e| ScanError::Scraper(crate::scraper::error::ScraperError::Browser(e.to_string())))?;
+        let (entry, result) = joined.map_err(|e| {
+            ScanError::Scraper(crate::scraper::error::ScraperError::Browser(e.to_string()))
+        })?;
         completed += 1;
 
         let _ = db_task::set_progress(
@@ -484,7 +498,10 @@ async fn scrape_chapters(
                 .await?;
             }
             Err(e) => {
-                warn!("[scan] Chapter fetch failed on {}: {e}", entry.provider_name);
+                warn!(
+                    "[scan] Chapter fetch failed on {}: {e}",
+                    entry.provider_name
+                );
             }
         }
     }
@@ -659,8 +676,7 @@ mod tests {
     fn best_match_uses_best_synonym() {
         // "Vinland Saga" is a synonym; provider title matches it better than "Vinland"
         let r = results(&["Vinland Saga"]);
-        let (score, _) =
-            best_match(&titles(&["Vinland", "Vinland Saga"]), &r).unwrap();
+        let (score, _) = best_match(&titles(&["Vinland", "Vinland Saga"]), &r).unwrap();
         assert!(score > 0.95);
     }
 

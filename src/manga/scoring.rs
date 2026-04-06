@@ -35,7 +35,13 @@ pub fn rank_entries(
         }
     }
 
-    entries.sort_by_key(|e| compute_tier(e.scanlator_group.as_deref(), trusted_groups, e.provider_name.as_deref()));
+    entries.sort_by_key(|e| {
+        compute_tier(
+            e.scanlator_group.as_deref(),
+            trusted_groups,
+            e.provider_name.as_deref(),
+        )
+    });
     entries
 }
 
@@ -157,7 +163,9 @@ mod tests {
             make_chapter("FR", Some("GroupB")),
             make_chapter("EN", Some("official")),
         ];
-        let filter = ChapterFilter { language: Some("EN".to_owned()) };
+        let filter = ChapterFilter {
+            language: Some("EN".to_owned()),
+        };
         let ranked = rank_entries(chapters, &filter, &[]);
         assert!(ranked.iter().all(|c| c.language == "EN"));
         assert_eq!(ranked.len(), 2);
@@ -169,7 +177,9 @@ mod tests {
             make_chapter("FR", Some("GroupA")),
             make_chapter("DE", Some("GroupB")),
         ];
-        let filter = ChapterFilter { language: Some("EN".to_owned()) };
+        let filter = ChapterFilter {
+            language: Some("EN".to_owned()),
+        };
         let ranked = rank_entries(chapters, &filter, &[]);
         // Fallback: all languages returned
         assert_eq!(ranked.len(), 2);
@@ -190,17 +200,23 @@ mod tests {
     fn rank_sorts_by_tier_ascending() {
         let trusted = trusted(&["TrustedGroup"]);
         let chapters = vec![
-            make_chapter("EN", None),                        // tier 4
-            make_chapter("EN", Some("UnknownGroup")),        // tier 3
-            make_chapter("EN", Some("TrustedGroup")),        // tier 2
-            make_chapter("EN", Some("official")),            // tier 1
+            make_chapter("EN", None),                 // tier 4
+            make_chapter("EN", Some("UnknownGroup")), // tier 3
+            make_chapter("EN", Some("TrustedGroup")), // tier 2
+            make_chapter("EN", Some("official")),     // tier 1
         ];
         let filter = ChapterFilter { language: None };
         let ranked = rank_entries(chapters, &filter, &trusted);
 
         let tiers: Vec<u8> = ranked
             .iter()
-            .map(|c| compute_tier(c.scanlator_group.as_deref(), &trusted, c.provider_name.as_deref()))
+            .map(|c| {
+                compute_tier(
+                    c.scanlator_group.as_deref(),
+                    &trusted,
+                    c.provider_name.as_deref(),
+                )
+            })
             .collect();
         assert_eq!(tiers, vec![1, 2, 3, 4]);
     }
@@ -208,11 +224,13 @@ mod tests {
     #[test]
     fn rank_language_filter_case_insensitive() {
         let chapters = vec![
-            make_chapter("en", Some("GroupA")),   // lowercase
-            make_chapter("EN", Some("GroupB")),   // uppercase
+            make_chapter("en", Some("GroupA")), // lowercase
+            make_chapter("EN", Some("GroupB")), // uppercase
             make_chapter("FR", Some("GroupC")),
         ];
-        let filter = ChapterFilter { language: Some("EN".to_owned()) };
+        let filter = ChapterFilter {
+            language: Some("EN".to_owned()),
+        };
         let ranked = rank_entries(chapters, &filter, &[]);
         assert_eq!(ranked.len(), 2);
     }

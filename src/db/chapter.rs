@@ -1,9 +1,9 @@
 use chrono::{DateTime, TimeZone, Utc};
-use tracing::debug;
 use sqlx::SqlitePool;
+use tracing::debug;
 use uuid::Uuid;
 
-use crate::db::provider_scores;
+use crate::db::{manga as db_manga, provider_scores};
 use crate::manga::core::{Chapter, DownloadStatus};
 use crate::manga::scoring::compute_tier;
 use crate::scraper::ProviderChapterInfo;
@@ -423,7 +423,7 @@ pub async fn update_canonical(
                 None => return true, // keep chapters without provider (e.g. disk-scanned)
             };
             // Per-series override takes priority over global setting.
-            
+
             series_overrides
                 .get(name)
                 .map(|(_, enabled)| *enabled)
@@ -487,8 +487,16 @@ pub async fn update_canonical(
         // Secondary within same tier: provider score descending (higher = better).
         // Score NEVER promotes a lower tier above a higher one.
         entries.sort_by(|a, b| {
-            let tier_a = compute_tier(a.scanlator_group.as_deref(), trusted_groups, a.provider_name.as_deref());
-            let tier_b = compute_tier(b.scanlator_group.as_deref(), trusted_groups, b.provider_name.as_deref());
+            let tier_a = compute_tier(
+                a.scanlator_group.as_deref(),
+                trusted_groups,
+                a.provider_name.as_deref(),
+            );
+            let tier_b = compute_tier(
+                b.scanlator_group.as_deref(),
+                trusted_groups,
+                b.provider_name.as_deref(),
+            );
             if tier_a != tier_b {
                 return tier_a.cmp(&tier_b);
             }
@@ -581,6 +589,8 @@ pub async fn update_manga_counts(pool: &SqlitePool, manga_id: Uuid) -> Result<()
         .bind(manga_id.to_string())
         .execute(pool)
         .await?;
+
+    db_manga::update_last_chapter(pool, manga_id).await?;
 
     Ok(())
 }
@@ -785,7 +795,11 @@ pub async fn find_upgrade_candidates(
             None => continue,
         };
 
-        let canon_tier = compute_tier(canonical.scanlator_group.as_deref(), trusted_groups, canonical.provider_name.as_deref());
+        let canon_tier = compute_tier(
+            canonical.scanlator_group.as_deref(),
+            trusted_groups,
+            canonical.provider_name.as_deref(),
+        );
 
         // Find Downloaded entries that are worse tier than the canonical.
         for entry in &entries {
@@ -795,7 +809,11 @@ pub async fn find_upgrade_candidates(
             if entry.download_status != DownloadStatus::Downloaded {
                 continue;
             }
-            let entry_tier = compute_tier(entry.scanlator_group.as_deref(), trusted_groups, entry.provider_name.as_deref());
+            let entry_tier = compute_tier(
+                entry.scanlator_group.as_deref(),
+                trusted_groups,
+                entry.provider_name.as_deref(),
+            );
             if canon_tier < entry_tier {
                 candidates.push(UpgradeCandidate {
                     chapter_base: base,

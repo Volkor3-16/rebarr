@@ -1,15 +1,15 @@
 use chrono::Utc;
-use tracing::{info, warn};
 use rocket::{State, delete, get, http::Status, post, serde::json::Json};
 use rocket_okapi::openapi;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::{
     db,
-    manga::{files, core::DownloadStatus, scoring},
+    manga::{core::DownloadStatus, files, scoring},
     scheduler::worker::CancelMap,
 };
 
@@ -108,7 +108,11 @@ async fn build_chapter_list(pool: &SqlitePool, manga_id: Uuid) -> ApiResult<Vec<
         .into_iter()
         .map(|ch| {
             let is_canonical = canonical_uuids.contains(&ch.id.to_string());
-            let tier = scoring::compute_tier(ch.scanlator_group.as_deref(), &trusted, ch.provider_name.as_deref());
+            let tier = scoring::compute_tier(
+                ch.scanlator_group.as_deref(),
+                &trusted,
+                ch.provider_name.as_deref(),
+            );
             ChapterListItem {
                 id: ch.id.to_string(),
                 manga_id: ch.manga_id.to_string(),

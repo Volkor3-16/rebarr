@@ -1,6 +1,6 @@
-use tracing::{info, warn};
 use sqlx::SqlitePool;
 use std::collections::HashSet;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::db::task::{self as db_task, TaskProgress};

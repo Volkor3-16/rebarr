@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use helpers::{test_db, test_ctx};
+use helpers::{test_ctx, test_db};
 use rebarr::{
     db::provider_failure as db_provider_failure,
     scraper::{
@@ -180,20 +180,18 @@ async fn provider_auto_disabled_after_threshold() {
     // Default threshold is 5 failures
     // Record 4 failures - should NOT be disabled
     for i in 0..4 {
-        db_provider_failure::record(
-            &pool,
-            provider_name,
-            manga_id,
-            Some(&format!("error {i}")),
-        )
-        .await
-        .unwrap();
+        db_provider_failure::record(&pool, provider_name, manga_id, Some(&format!("error {i}")))
+            .await
+            .unwrap();
     }
 
     let disabled = db_provider_failure::is_auto_disabled(&pool, provider_name, manga_id)
         .await
         .unwrap();
-    assert!(!disabled, "Provider should not be disabled after 4 failures");
+    assert!(
+        !disabled,
+        "Provider should not be disabled after 4 failures"
+    );
 
     // Record 5th failure - should now be disabled
     db_provider_failure::record(&pool, provider_name, manga_id, Some("error 5"))
@@ -219,14 +217,9 @@ async fn provider_reenabled_after_clear() {
 
     // Record enough failures to trigger auto-disable
     for i in 0..5 {
-        db_provider_failure::record(
-            &pool,
-            provider_name,
-            manga_id,
-            Some(&format!("error {i}")),
-        )
-        .await
-        .unwrap();
+        db_provider_failure::record(&pool, provider_name, manga_id, Some(&format!("error {i}")))
+            .await
+            .unwrap();
     }
 
     // Verify disabled
@@ -244,7 +237,10 @@ async fn provider_reenabled_after_clear() {
     let disabled = db_provider_failure::is_auto_disabled(&pool, provider_name, manga_id)
         .await
         .unwrap();
-    assert!(!disabled, "Provider should be re-enabled after clearing failures");
+    assert!(
+        !disabled,
+        "Provider should be re-enabled after clearing failures"
+    );
 }
 
 /// Test that failures outside the backoff window don't count toward auto-disable.
@@ -307,14 +303,9 @@ async fn consecutive_failures_count() {
 
     // Record 3 failures
     for i in 0..3 {
-        db_provider_failure::record(
-            &pool,
-            provider_name,
-            manga_id,
-            Some(&format!("error {i}")),
-        )
-        .await
-        .unwrap();
+        db_provider_failure::record(&pool, provider_name, manga_id, Some(&format!("error {i}")))
+            .await
+            .unwrap();
     }
 
     let count = db_provider_failure::consecutive_failures(
@@ -341,14 +332,9 @@ async fn failures_are_per_provider() {
 
     // Record failures for provider A
     for i in 0..5 {
-        db_provider_failure::record(
-            &pool,
-            "provider_a",
-            manga_id,
-            Some(&format!("error {i}")),
-        )
-        .await
-        .unwrap();
+        db_provider_failure::record(&pool, "provider_a", manga_id, Some(&format!("error {i}")))
+            .await
+            .unwrap();
     }
 
     // Provider A should be disabled
@@ -399,8 +385,5 @@ async fn failures_are_per_manga() {
     let disabled_b = db_provider_failure::is_auto_disabled(&pool, provider_name, manga_b_id)
         .await
         .unwrap();
-    assert!(
-        !disabled_b,
-        "Provider should not be disabled for manga B"
-    );
+    assert!(!disabled_b, "Provider should not be disabled for manga B");
 }

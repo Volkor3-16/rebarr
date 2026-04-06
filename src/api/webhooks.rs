@@ -50,7 +50,9 @@ fn validate_request(
         return Err(bad_request("target_url must not be empty"));
     }
     if !(target_url.starts_with("http://") || target_url.starts_with("https://")) {
-        return Err(bad_request("target_url must start with http:// or https://"));
+        return Err(bad_request(
+            "target_url must start with http:// or https://",
+        ));
     }
     if body.task_types.is_empty() {
         return Err(bad_request("at least one task_type is required"));
@@ -152,5 +154,10 @@ pub async fn delete_webhook(
 }
 
 pub fn routes() -> Vec<rocket::Route> {
-    rocket::routes![list_webhooks, create_webhook, update_webhook, delete_webhook,]
+    rocket::routes![
+        list_webhooks,
+        create_webhook,
+        update_webhook,
+        delete_webhook,
+    ]
 }

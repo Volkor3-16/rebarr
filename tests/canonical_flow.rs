@@ -23,8 +23,8 @@ mod helpers;
 use std::sync::Arc;
 
 use helpers::{
-    test_db, test_ctx,
     static_provider::{StaticProvider, ch_group},
+    test_ctx, test_db,
 };
 use rebarr::{
     db::{chapter as db_chapter, provider as db_provider},
@@ -43,21 +43,24 @@ fn make_registry(
     a_chapters: Vec<helpers::static_provider::StaticChapter>,
     b_chapters: Vec<helpers::static_provider::StaticChapter>,
 ) -> ProviderRegistry {
-    let provider_a = StaticProvider::new("ProviderA")
-        .with_series("TestManga", "static://testmanga-a", a_chapters);
-    let provider_b = StaticProvider::new("ProviderB")
-        .with_series("TestManga", "static://testmanga-b", b_chapters);
+    let provider_a = StaticProvider::new("ProviderA").with_series(
+        "TestManga",
+        "static://testmanga-a",
+        a_chapters,
+    );
+    let provider_b = StaticProvider::new("ProviderB").with_series(
+        "TestManga",
+        "static://testmanga-b",
+        b_chapters,
+    );
 
-    ProviderRegistry::from_providers_for_tests(vec![
-        Arc::new(provider_a),
-        Arc::new(provider_b),
-    ])
+    ProviderRegistry::from_providers_for_tests(vec![Arc::new(provider_a), Arc::new(provider_b)])
 }
 
 /// Insert a monitored manga into the test DB and return it.
 async fn setup_manga(pool: &SqlitePool) -> rebarr::manga::core::Manga {
-    use std::path::PathBuf;
     use rebarr::manga::core::{Manga, MangaMetadata, MangaSource, PublishingStatus};
+    use std::path::PathBuf;
 
     let lib = rebarr::manga::core::Library {
         uuid: Uuid::new_v4(),
@@ -96,10 +99,11 @@ async fn setup_manga(pool: &SqlitePool) -> rebarr::manga::core::Manga {
         chapter_count: None,
         metadata_source: MangaSource::Local,
         thumbnail_url: None,
-        monitored: true,      // ← MUST be true for auto-download to fire
+        monitored: true, // ← MUST be true for auto-download to fire
         created_at: chrono::Utc::now().timestamp(),
         metadata_updated_at: chrono::Utc::now().timestamp(),
         last_checked_at: None,
+        last_chapter_at: None,
     };
     rebarr::db::manga::insert(pool, &manga).await.unwrap();
     manga
@@ -178,10 +182,15 @@ async fn canonical_chapter_download_queueing_three_scans() {
         .await
         .expect("scan 1 failed");
 
-    assert_eq!(result.providers_found, 2, "scan 1: both providers should be found");
+    assert_eq!(
+        result.providers_found, 2,
+        "scan 1: both providers should be found"
+    );
 
     // ch1, ch2, ch3 from both providers = 6 rows; ch4, ch5 from A only = 2 more = 8 total
-    let all_chapters = db_chapter::get_all_for_manga(&pool, manga.id).await.unwrap();
+    let all_chapters = db_chapter::get_all_for_manga(&pool, manga.id)
+        .await
+        .unwrap();
     assert_eq!(all_chapters.len(), 8, "scan 1: 8 chapter rows expected");
 
     let tasks_after_scan1 = count_pending_downloads(&pool, manga.id).await;
@@ -191,10 +200,14 @@ async fn canonical_chapter_download_queueing_three_scans() {
     );
 
     // Canonical should be all 5 chapter numbers, each won by ProviderA (TrustedGroup tier 2)
-    let canonical = db_chapter::get_canonical_for_manga(&pool, manga.id).await.unwrap();
+    let canonical = db_chapter::get_canonical_for_manga(&pool, manga.id)
+        .await
+        .unwrap();
     assert_eq!(canonical.len(), 5, "scan 1: 5 canonical chapters");
     assert!(
-        canonical.iter().all(|c| c.scanlator_group.as_deref() == Some("TrustedGroup")),
+        canonical
+            .iter()
+            .all(|c| c.scanlator_group.as_deref() == Some("TrustedGroup")),
         "scan 1: TrustedGroup should win canonical for all chapters"
     );
 
@@ -212,14 +225,14 @@ async fn canonical_chapter_download_queueing_three_scans() {
         ch_group("3", "TrustedGroup"),
         ch_group("4", "TrustedGroup"),
         ch_group("5", "TrustedGroup"),
-        ch_group("6", "TrustedGroup"),  // ← NEW
+        ch_group("6", "TrustedGroup"), // ← NEW
     ];
     let b_scan2 = vec![
         ch_group("1", "RandomGroup"),
         ch_group("2", "RandomGroup"),
         ch_group("3", "RandomGroup"),
-        ch_group("4", "RandomGroup"),   // ← new to B, but A already owns canonical ch4
-        ch_group("5", "RandomGroup"),   // ← new to B, but A already owns canonical ch5
+        ch_group("4", "RandomGroup"), // ← new to B, but A already owns canonical ch4
+        ch_group("5", "RandomGroup"), // ← new to B, but A already owns canonical ch5
     ];
 
     let registry2 = make_registry(a_scan2.clone(), b_scan2);
@@ -235,10 +248,16 @@ async fn canonical_chapter_download_queueing_three_scans() {
     );
 
     let queued_bases = pending_download_chapter_bases(&pool, manga.id).await;
-    assert_eq!(queued_bases, vec![6], "scan 2: the queued chapter should be ch6");
+    assert_eq!(
+        queued_bases,
+        vec![6],
+        "scan 2: the queued chapter should be ch6"
+    );
 
     // Verify the queued task points at ProviderA's ch6, not ProviderB's
-    let canonical2 = db_chapter::get_canonical_for_manga(&pool, manga.id).await.unwrap();
+    let canonical2 = db_chapter::get_canonical_for_manga(&pool, manga.id)
+        .await
+        .unwrap();
     let canonical_ch6 = canonical2.iter().find(|c| c.chapter_base == 6).unwrap();
     assert_eq!(
         canonical_ch6.scanlator_group.as_deref(),
@@ -247,8 +266,14 @@ async fn canonical_chapter_download_queueing_three_scans() {
     );
 
     // ProviderB's ch4 and ch5 should exist in DB but NOT be canonical
-    let all_ch4 = db_chapter::get_all_for_chapter(&pool, manga.id, 4, 0).await.unwrap();
-    assert_eq!(all_ch4.len(), 2, "scan 2: ch4 should have 2 rows (both providers)");
+    let all_ch4 = db_chapter::get_all_for_chapter(&pool, manga.id, 4, 0)
+        .await
+        .unwrap();
+    assert_eq!(
+        all_ch4.len(),
+        2,
+        "scan 2: ch4 should have 2 rows (both providers)"
+    );
     let canonical_ch4 = canonical2.iter().find(|c| c.chapter_base == 4).unwrap();
     assert_eq!(
         canonical_ch4.scanlator_group.as_deref(),
@@ -271,7 +296,7 @@ async fn canonical_chapter_download_queueing_three_scans() {
         ch_group("3", "RandomGroup"),
         ch_group("4", "RandomGroup"),
         ch_group("5", "RandomGroup"),
-        ch_group("6", "RandomGroup"),  // ← new to B, but NOT canonical (A's ch6 is)
+        ch_group("6", "RandomGroup"), // ← new to B, but NOT canonical (A's ch6 is)
     ];
 
     let registry3 = make_registry(a_scan3, b_scan3);
@@ -287,10 +312,14 @@ async fn canonical_chapter_download_queueing_three_scans() {
     );
 
     // ProviderB's ch6 should exist in DB but still NOT be canonical
-    let all_ch6 = db_chapter::get_all_for_chapter(&pool, manga.id, 6, 0).await.unwrap();
+    let all_ch6 = db_chapter::get_all_for_chapter(&pool, manga.id, 6, 0)
+        .await
+        .unwrap();
     assert_eq!(all_ch6.len(), 2, "scan 3: ch6 now has 2 rows (A + B)");
 
-    let canonical3 = db_chapter::get_canonical_for_manga(&pool, manga.id).await.unwrap();
+    let canonical3 = db_chapter::get_canonical_for_manga(&pool, manga.id)
+        .await
+        .unwrap();
     let canonical_ch6_final = canonical3.iter().find(|c| c.chapter_base == 6).unwrap();
     assert_eq!(
         canonical_ch6_final.scanlator_group.as_deref(),
@@ -336,10 +365,14 @@ async fn local_provider_wins_canonical_over_all_others() {
         .expect("scan 1 failed");
 
     // Canonical should be ProviderA's chapters (tier 2)
-    let canonical = db_chapter::get_canonical_for_manga(&pool, manga.id).await.unwrap();
+    let canonical = db_chapter::get_canonical_for_manga(&pool, manga.id)
+        .await
+        .unwrap();
     assert_eq!(canonical.len(), 3, "scan 1: 3 canonical chapters");
     assert!(
-        canonical.iter().all(|c| c.scanlator_group.as_deref() == Some("TrustedGroup")),
+        canonical
+            .iter()
+            .all(|c| c.scanlator_group.as_deref() == Some("TrustedGroup")),
         "scan 1: TrustedGroup should win canonical for all chapters"
     );
 
@@ -367,9 +400,10 @@ async fn local_provider_wins_canonical_over_all_others() {
 
     // Recompute canonical
     let yaml_defaults = std::collections::HashMap::new();
-    let provider_scores = rebarr::db::provider_scores::load_effective_scores(&pool, manga.id, &yaml_defaults)
-        .await
-        .unwrap();
+    let provider_scores =
+        rebarr::db::provider_scores::load_effective_scores(&pool, manga.id, &yaml_defaults)
+            .await
+            .unwrap();
     db_chapter::update_canonical(
         &pool,
         manga.id,
@@ -381,14 +415,24 @@ async fn local_provider_wins_canonical_over_all_others() {
     .unwrap();
 
     // Canonical should now be Local provider chapters (tier 0 beats tier 2)
-    let canonical_after = db_chapter::get_canonical_for_manga(&pool, manga.id).await.unwrap();
-    assert_eq!(canonical_after.len(), 3, "after import: 3 canonical chapters");
+    let canonical_after = db_chapter::get_canonical_for_manga(&pool, manga.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        canonical_after.len(),
+        3,
+        "after import: 3 canonical chapters"
+    );
     assert!(
-        canonical_after.iter().all(|c| c.provider_name.as_deref() == Some("Local")),
+        canonical_after
+            .iter()
+            .all(|c| c.provider_name.as_deref() == Some("Local")),
         "after import: Local provider must win canonical for all chapters"
     );
     assert!(
-        canonical_after.iter().all(|c| c.download_status == rebarr::manga::core::DownloadStatus::Downloaded),
+        canonical_after
+            .iter()
+            .all(|c| c.download_status == rebarr::manga::core::DownloadStatus::Downloaded),
         "after import: canonical chapters should be the Downloaded Local ones"
     );
 }

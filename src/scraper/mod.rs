@@ -6,8 +6,8 @@ pub mod error;
 pub mod executor;
 
 use async_trait::async_trait;
-use tracing::{info, warn};
 use std::{path::PathBuf, sync::Arc};
+use tracing::{info, warn};
 
 use browser::BrowserPool;
 use def::{ProviderDef, ProviderTag};

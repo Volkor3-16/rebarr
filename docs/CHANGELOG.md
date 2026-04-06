@@ -2,6 +2,11 @@
 
 This a informal changelog so i can keep track of what im doing.
 
+## 2026-04-06
+
+- Added ability to sort by latest chapter
+- Added filtering on the queue (defaults to downloaded chapters only)
+
 ## 2026-04-03
 
 - Added `rocket_okapi` for swagger-ui and rapidoc endpoints

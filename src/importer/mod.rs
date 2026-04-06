@@ -2,18 +2,18 @@ use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
-use tracing::warn;
 use regex::Regex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
+use tracing::warn;
 use uuid::Uuid;
 
 use crate::db::task::TaskType;
 use crate::db::{chapter as db_chapter, library as db_library, manga as db_manga, task as db_task};
 use crate::http::metadata::AniListMetadata;
-use crate::manga::{comicinfo, covers, files};
 use crate::manga::core::{Chapter, DownloadStatus, Manga};
+use crate::manga::{comicinfo, covers, files};
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -289,9 +289,14 @@ pub async fn execute_series_imports(
 
         // Optionally enqueue full chapter list build
         if queue_chapter_scan {
-            let _ =
-                db_task::enqueue(pool, TaskType::BuildFullChapterList, Some(manga.id), None, 5)
-                    .await;
+            let _ = db_task::enqueue(
+                pool,
+                TaskType::BuildFullChapterList,
+                Some(manga.id),
+                None,
+                5,
+            )
+            .await;
         }
 
         manga_ids.push(manga.id.to_string());
@@ -305,7 +310,6 @@ pub async fn execute_series_imports(
         manga_ids,
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // Chapter-level scan
@@ -387,16 +391,19 @@ fn extract_title_from_filename(filename: &str) -> Option<String> {
 
     // Try to extract title after chapter number patterns
     // Examples: "Chapter 43 - The Great Battle", "Ch.73 The Battle Begins", "Vol.4 Chapter 28 Title Here"
-    let re = Regex::new(r"(?i)(?:vol\.?\s*\d+\s+)?ch(?:apter)?[._\s]*\d+(?:[._]\d+)?\s*[-–—:]?\s*(.+)").ok()?;
-    
+    let re =
+        Regex::new(r"(?i)(?:vol\.?\s*\d+\s+)?ch(?:apter)?[._\s]*\d+(?:[._]\d+)?\s*[-–—:]?\s*(.+)")
+            .ok()?;
+
     if let Some(caps) = re.captures(stem) {
         if let Some(title_match) = caps.get(1) {
             let title = title_match.as_str().trim();
             // Remove trailing scanlator group info in brackets if present
             let title = Regex::new(r"\s*\[.*?\]\s*$")
-                .ok().map(|r| r.replace(title, "").to_string())
+                .ok()
+                .map(|r| r.replace(title, "").to_string())
                 .unwrap_or_else(|| title.to_string());
-            
+
             let title = title.trim();
             if !title.is_empty() {
                 return Some(title.to_string());
@@ -437,7 +444,10 @@ fn classify_cbz(path: &Path, all_titles: &[db_manga::MangaSummary]) -> ImportCan
             detected_title = info.title.clone();
             chapter_number = info.chapter_number;
             // Filter out generic chapter titles (e.g. "Chapter 43")
-            chapter_title = info.chapter_title.clone().filter(|t| !is_generic_chapter_title(t));
+            chapter_title = info
+                .chapter_title
+                .clone()
+                .filter(|t| !is_generic_chapter_title(t));
             scanlator_group = info.scanlator.clone();
             language = info.language.clone();
             provider_name = info.provider_name.clone();
@@ -454,7 +464,10 @@ fn classify_cbz(path: &Path, all_titles: &[db_manga::MangaSummary]) -> ImportCan
             detected_title = info.title.clone();
             chapter_number = info.chapter_number;
             // Filter out generic chapter titles (e.g. "Chapter 43")
-            chapter_title = info.chapter_title.clone().filter(|t| !is_generic_chapter_title(t));
+            chapter_title = info
+                .chapter_title
+                .clone()
+                .filter(|t| !is_generic_chapter_title(t));
             scanlator_group = info.scanlator.clone();
             language = info.language.clone();
             provider_name = info.provider_name.clone();
@@ -683,7 +696,15 @@ async fn process_single_import(imp: ConfirmedImport, pool: &SqlitePool) -> Resul
 
     // Insert chapter DB record immediately (non-fatal: ScanDisk is a safety net)
     if let Err(e) = db_chapter::insert(pool, &chapter_record).await {
-        warn!("[import] Failed to insert chapter record for {}: {e}", target_path.display());
+        warn!(
+            "[import] Failed to insert chapter record for {}: {e}",
+            target_path.display()
+        );
+    } else if let Err(e) = db_manga::update_last_chapter(pool, manga_id).await {
+        warn!(
+            "[import] Failed to refresh last_chapter_at for '{}': {e}",
+            manga.metadata.title
+        );
     }
 
     Ok(manga_id)
