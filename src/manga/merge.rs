@@ -1,7 +1,7 @@
 use chrono::Utc;
 use sqlx::SqlitePool;
-use tokio::task::JoinSet;
 use thiserror::Error;
+use tokio::task::JoinSet;
 use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::db::provider::MangaProvider;

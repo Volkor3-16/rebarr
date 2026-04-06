@@ -58,8 +58,7 @@ fn parse_provider_data(raw: Option<String>) -> Result<HashMap<String, String>, s
         return Ok(HashMap::new());
     }
 
-    let parsed: Value =
-        serde_json::from_str(&raw).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
+    let parsed: Value = serde_json::from_str(&raw).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
     let obj = parsed.as_object().ok_or_else(|| {
         sqlx::Error::Decode(Box::new(std::io::Error::new(
             std::io::ErrorKind::InvalidData,

@@ -326,7 +326,10 @@ async fn check_new_chapters_uses_persisted_provider_variables() {
         .await
         .expect("get chapters")
         .len();
-    assert_eq!(second_count, 3, "background sync should reuse persisted variable");
+    assert_eq!(
+        second_count, 3,
+        "background sync should reuse persisted variable"
+    );
 }
 
 /// A no-browser provider with no matching series stores a not-found marker.

@@ -17,8 +17,8 @@ use helpers::{test_ctx, test_db};
 use rebarr::{
     db::provider_failure as db_provider_failure,
     scraper::{
-        PageUrl, Provider, ProviderChapterInfo, ProviderRegistry, ProviderSearchResult, ScraperCtx,
-        ProviderVariables, error::ScraperError,
+        PageUrl, Provider, ProviderChapterInfo, ProviderRegistry, ProviderSearchResult,
+        ProviderVariables, ScraperCtx, error::ScraperError,
     },
 };
 

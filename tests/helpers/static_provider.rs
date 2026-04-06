@@ -12,11 +12,11 @@
 ///     .build();
 /// ```
 use async_trait::async_trait;
-use std::collections::HashMap;
 use rebarr::scraper::{
     PageUrl, Provider, ProviderChapterInfo, ProviderSearchResult, ProviderVariables, ScraperCtx,
     error::ScraperError,
 };
+use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
 // Chapter number parser (mirrors engine.rs private function)

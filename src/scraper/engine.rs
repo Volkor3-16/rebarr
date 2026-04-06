@@ -1214,10 +1214,8 @@ impl YamlProvider {
                     expanded_headers
                         .insert("Content-Type".to_owned(), "application/json".to_owned());
 
-                    let request_body = format!(
-                        r#"{{"query":"{}","variables":{}}}"#,
-                        query_escaped, vars_json
-                    );
+                    let request_body =
+                        format!(r#"{{"query":"{query_escaped}","variables":{vars_json}}}"#);
                     ctx.note_request(format!("POST {url}"));
                     self.trace_step_detail(ctx, format!("request: POST {url}"));
                     self.trace_step_detail(
