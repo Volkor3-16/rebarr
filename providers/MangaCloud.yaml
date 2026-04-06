@@ -1,0 +1,62 @@
+name: MangaCloud
+base_url: https://mangacloud.org
+version: "1"
+default_score: 30 # Decent library, average quality, well organised.
+tags:
+  - aggregator
+rate_limit:
+  requests_per_minute: 30
+
+search:
+  steps:
+    - open: "{base_url}"
+    - fetch:
+        url: "https://api.mangacloud.org/search"
+        method: POST
+        headers:
+          content-type: application/json
+          Referer: "{base_url}/"
+          Origin: "{base_url}"
+        body: '{"terms":"{query_raw}"}'
+        var: results
+        json_path: data
+    - from_json:
+        var: results
+        extract:
+          title: title
+          url: id
+
+chapters:
+  steps:
+    - open: "{base_url}"
+    - fetch:
+        url: "https://api.mangacloud.org/comic/{manga_url}"
+        var: comic_data
+        json_path: data.chapters
+    - from_json:
+        var: comic_data
+        extract:
+          number_raw: number
+          url: id
+          date: created_date
+        date_format:
+          date: "%+"
+
+pages:
+  steps:
+    - open: "{base_url}"
+    - fetch:
+        url: "https://api.mangacloud.org/chapter/{chapter_url}"
+        var: chapter_raw
+    - extract_js:
+        var: page_urls
+        script: |
+          (() => {
+            const d = {chapter_raw};
+            return JSON.stringify(
+              d.data.images.map(img =>
+                `https://pika.mangacloud.org/${d.data.comic_id}/${d.data.id}/${img.id}.${img.f}`
+              )
+            );
+          })()
+    - return: "{page_urls}"

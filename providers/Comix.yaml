@@ -31,14 +31,129 @@ search:
         prefix:
           url: "{base_url}/title/"
 
+# curl 'https://comix.to/api/v2/manga/rg9gm/chapters?limit=20&page=1&order[number]=desc&time=1&_=xQm9tJfLwGhz_0Eq8S_YAHYkwp-q1PLfm50W5QJnyd1NnNYpAjXjyCoAzoOLxIDsOa0xWS0NeDGz_rNrbqBjLLP1H9qi' \
+#   --globoff \
+#   --compressed \
+#   -H 'User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0' \
+#   -H 'Accept: */*' \
+#   -H 'Accept-Language: en-US,en;q=0.9' \
+#   -H 'Accept-Encoding: gzip, deflate, br, zstd' \
+#   -H 'Referer: https://comix.to/title/rg9gm-princess-ai-rumors-from-the-other-side' \
+#   -H 'Content-Type: application/json' \
+#   -H 'Sec-Fetch-Dest: empty' \
+#   -H 'Sec-Fetch-Mode: cors' \
+#   -H 'Sec-Fetch-Site: same-origin' \
+#   -H 'Connection: keep-alive' \
+#   -H 'Cookie: cf_clearance=FjBKFFPa15XjsaPaTTh0O96j.nK2IsksKqAIa2RLtew-1775480910-1.2.1.1-xErPuXWyCNVsTumuTMg_Ee4gEWjLSsDXfH55hQnxS8SwCZF2_3vdHW9MHi_1ZMaSvi4j5eEA7kVxLzkECp0qJ9MlGDcDrkHW9hWQd5Yq3YGhhvxV.Hmk.V2JwSU153jFxUeKhfYFwwEXF8yi3xn1gT_0zvslW5BEIhPnUbTQhJLQaHQ1bCsjuW0jRvCx5Iw8BmGccXBkoCEOfTh2H2SHG2fwSg6O.sGYKnDU3HlupfQUfwBVibB0xNdUslEF_n5Ypk.wLZspG_QvVSnoM3vqDw8SlZ.E4sD0CIeuZTB8qW6YNIBuVGbs1HMK91XD..0hgkjwsE4N4z6hNdjvt5JQKw'
+
+# {"status":200,"result":{"items":[{"chapter_id":8690976,"manga_id":111364,"scanlation_group_id":10702,"is_official":false,"number":12,"name":"An Ai-Witness Account","language":"en","volume":0,"votes":0,"created_at":1772570091,"updated_at":1772570091,"scanlation_group":{"scanlation_group_id":10702,"name":"Official?","slug":"official3rd"}},{"chapter_id":8690952,"manga_id":111364,"scanlation_group_id":10702,"is_official":false,"number":11,"name":"The Ai Of The Beholder","language":"en","volume":0,"votes":0,"created_at":1772570058,"updated_at":1772570058,"scanlation_group":{"scanlation_group_id":10702,"name":"Official?","slug":"official3rd"}},{"chapter_id":8690921,"manga_id":111364,"scanlation_group_id":10702,"is_official":false,"number":10,"name":"The Legend Of The Hawk-AI","language":"en","volume":0,"votes":0,"created_at":1772570011,"updated_at":1772570011,"scanlation_group":{"scanlation_group_id":10702,"name":"Official?","slug":"official3rd"}},{"chapter_id":8690906,"manga_id":111364,"scanlation_group_id":10702,"is_official":false,"number":9,"name":"Zoroa The Martyr","language":"en","volume":0,"votes":0,"created_at":1772569979,"updated_at":1772569979,"scanlation_group":{"scanlation_group_id":10702,"name":"Official?","slug":"official3rd"}},{"chapter_id":8690880,"manga_id":111364,"scanlation_group_id":10702,"is_official":false,"number":8,"name":"A Star Is Made","language":"en","volume":0,"votes":0,"created_at":1772569948,"updated_at":1772569948,"scanlation_group":{"scanlation_group_id":10702,"name":"Official?","slug":"official3rd"}},{"chapter_id":8690861,"manga_id":111364,"scanlation_group_id":10702,"is_official":false,"number":7,"name":"Run, Hikaru, Run!","language":"en","volume":0,"votes":0,"created_at":1772569915,"updated_at":1772569915,"scanlation_group":{"scanlation_group_id":10702,"name":"Official?","slug":"official3rd"}},{"chapter_id":8690843,"manga_id":111364,"scanlation_group_id":10702,"is_official":false,"number":6,"name":"Little House OF The Furies","language":"en","volume":0,"votes":0,"created_at":1772569891,"updated_at":1772569891,"scanlation_group":{"scanlation_group_id":10702,"name":"Official?","slug":"official3rd"}},{"chapter_id":8690820,"manga_id":111364,"scanlation_group_id":10702,"is_official":false,"number":5,"name":"Takeshi Rising","language":"en","volume":0,"votes":0,"created_at":1772569858,"updated_at":1772569858,"scanlation_group":{"scanlation_group_id":10702,"name":"Official?","slug":"official3rd"}},{"chapter_id":8690803,"manga_id":111364,"scanlation_group_id":10702,"is_official":false,"number":4,"name":"All About AI","language":"en","volume":0,"votes":0,"created_at":1772569828,"updated_at":1772569828,"scanlation_group":{"scanlation_group_id":10702,"name":"Official?","slug":"official3rd"}},{"chapter_id":8690782,"manga_id":111364,"scanlation_group_id":10702,"is_official":false,"number":3,"name":"Weekly Weird News","language":"en","volume":0,"votes":0,"created_at":1772569792,"updated_at":1772569792,"scanlation_group":{"scanlation_group_id":10702,"name":"Official?","slug":"official3rd"}},{"chapter_id":8690753,"manga_id":111364,"scanlation_group_id":10702,"is_official":false,"number":2,"name":"A Little L-Ai","language":"en","volume":0,"votes":0,"created_at":1772569754,"updated_at":1772569754,"scanlation_group":{"scanlation_group_id":10702,"name":"Official?","slug":"official3rd"}},{"chapter_id":8690725,"manga_id":111364,"scanlation_group_id":10702,"is_official":false,"number":1,"name":"The Last Song Of Paradise","language":"en","volume":0,"votes":0,"created_at":1772569718,"updated_at":1772569718,"scanlation_group":{"scanlation_group_id":10702,"name":"Official?","slug":"official3rd"}}],"pagination":{"count":12,"total":12,"per_page":20,"current_page":1,"last_page":1,"from":1,"to":12}}}
+
 chapters:
   steps:
     - open: "{manga_url}"
     - extract_js:
         var: manga_hash
         script: "(window.location.href.match(/\\/title\\/([^/-]+)/) || [])[1]"
+    - extract_js:
+        var: request_hash
+        script: |
+          (function() {
+            var KEYS = [
+              "13YDu67uDgFczo3DnuTIURqas4lfMEPADY6Jaeqky+w=",
+              "yEy7wBfBc+gsYPiQL/4Dfd0pIBZFzMwrtlRQGwMXy3Q=",
+              "yrP+EVA1Dw==",
+              "vZ23RT7pbSlxwiygkHd1dhToIku8SNHPC6V36L4cnwM=",
+              "QX0sLahOByWLcWGnv6l98vQudWqdRI3DOXBdit9bxCE=",
+              "WJwgqCmf",
+              "BkWI8feqSlDZKMq6awfzWlUypl88nz65KVRmpH0RWIc=",
+              "v7EIpiQQjd2BGuJzMbBA0qPWDSS+wTJRQ7uGzZ6rJKs=",
+              "1SUReYlCRA==",
+              "RougjiFHkSKs20DZ6BWXiWwQUGZXtseZIyQWKz5eG34=",
+              "LL97cwoDoG5cw8QmhI+KSWzfW+8VehIh+inTxnVJ2ps=",
+              "52iDqjzlqe8=",
+              "U9LRYFL2zXU4TtALIYDj+lCATRk/EJtH7/y7qYYNlh8=",
+              "e/GtffFDTvnw7LBRixAD+iGixjqTq9kIZ1m0Hj+s6fY=",
+              "xb2XwHNB"
+            ];
+            function kb(i) {
+              var b=atob(KEYS[i]),out=new Uint8Array(b.length);
+              for(var j=0;j<b.length;j++) out[j]=b.charCodeAt(j);
+              return out;
+            }
+            function rc4(key,data) {
+              var s=new Uint8Array(256),j=0,t;
+              for(var i=0;i<256;i++) s[i]=i;
+              for(var i=0;i<256;i++){j=(j+s[i]+key[i%key.length])&0xff;t=s[i];s[i]=s[j];s[j]=t;}
+              var i=0,j=0,out=new Uint8Array(data.length);
+              for(var k=0;k<data.length;k++){i=(i+1)&0xff;j=(j+s[i])&0xff;t=s[i];s[i]=s[j];s[j]=t;out[k]=data[k]^s[(s[i]+s[j])&0xff];}
+              return out;
+            }
+            function gmk(mk,idx){return mk.length>0&&idx%32<mk.length?mk[idx%32]:0;}
+            function mutS(e){return(e+143)&0xff;} function mutL(e){return((e>>>1)|(e<<7))&0xff;}
+            function mutC(e){return(e+115)&0xff;} function mutM(e){return(e^177)&0xff;}
+            function mutF(e){return(e-188)&0xff;} function mutG(e){return((e<<2)|(e>>>6))&0xff;}
+            function mutH(e){return(e-42)&0xff;}  function mutDollar(e){return((e<<4)|(e>>>4))&0xff;}
+            function mutB(e){return(e-12)&0xff;}  function mutUnderscore(e){return(e-20)&0xff;}
+            function mutY(e){return((e>>>1)|(e<<7))&0xff;} function mutK(e){return(e-241)&0xff;}
+            function r1(data){
+              var enc=rc4(kb(0),data),mk=kb(1),pk=kb(2),out=[];
+              for(var i=0;i<enc.length;i++){
+                if(i<7&&i<pk.length)out.push(pk[i]);
+                var v=enc[i]^gmk(mk,i);
+                switch(i%10){case 0:case 9:v=mutC(v);break;case 1:v=mutB(v);break;case 2:v=mutY(v);break;case 3:v=mutDollar(v);break;case 4:case 6:v=mutH(v);break;case 5:v=mutS(v);break;case 7:v=mutK(v);break;case 8:v=mutL(v);break;}
+                out.push(v&255);
+              }
+              return new Uint8Array(out);
+            }
+            function r2(data){
+              var enc=rc4(kb(3),data),mk=kb(4),pk=kb(5),out=[];
+              for(var i=0;i<enc.length;i++){
+                if(i<6&&i<pk.length)out.push(pk[i]);
+                var v=enc[i]^gmk(mk,i);
+                switch(i%10){case 0:case 8:v=mutC(v);break;case 1:v=mutB(v);break;case 2:case 6:v=mutDollar(v);break;case 3:v=mutH(v);break;case 4:case 9:v=mutS(v);break;case 5:v=mutK(v);break;case 7:v=mutUnderscore(v);break;}
+                out.push(v&255);
+              }
+              return new Uint8Array(out);
+            }
+            function r3(data){
+              var enc=rc4(kb(6),data),mk=kb(7),pk=kb(8),out=[];
+              for(var i=0;i<enc.length;i++){
+                if(i<7&&i<pk.length)out.push(pk[i]);
+                var v=enc[i]^gmk(mk,i);
+                switch(i%10){case 0:v=mutC(v);break;case 1:v=mutF(v);break;case 2:case 8:v=mutS(v);break;case 3:v=mutG(v);break;case 4:v=mutY(v);break;case 5:v=mutM(v);break;case 6:v=mutDollar(v);break;case 7:v=mutK(v);break;case 9:v=mutB(v);break;}
+                out.push(v&255);
+              }
+              return new Uint8Array(out);
+            }
+            function r4(data){
+              var enc=rc4(kb(9),data),mk=kb(10),pk=kb(11),out=[];
+              for(var i=0;i<enc.length;i++){
+                if(i<8&&i<pk.length)out.push(pk[i]);
+                var v=enc[i]^gmk(mk,i);
+                switch(i%10){case 0:v=mutB(v);break;case 1:case 9:v=mutM(v);break;case 2:case 7:v=mutL(v);break;case 3:case 5:v=mutS(v);break;case 4:case 6:v=mutUnderscore(v);break;case 8:v=mutY(v);break;}
+                out.push(v&255);
+              }
+              return new Uint8Array(out);
+            }
+            function r5(data){
+              var enc=rc4(kb(12),data),mk=kb(13),pk=kb(14),out=[];
+              for(var i=0;i<enc.length;i++){
+                if(i<6&&i<pk.length)out.push(pk[i]);
+                var v=enc[i]^gmk(mk,i);
+                switch(i%10){case 0:v=mutUnderscore(v);break;case 1:case 7:v=mutS(v);break;case 2:v=mutC(v);break;case 3:case 5:v=mutM(v);break;case 4:v=mutB(v);break;case 6:v=mutF(v);break;case 8:v=mutDollar(v);break;case 9:v=mutG(v);break;}
+                out.push(v&255);
+              }
+              return new Uint8Array(out);
+            }
+            var path = '/manga/{manga_hash}/chapters';
+            var base = encodeURIComponent(path + ':0:1');
+            var bytes = new TextEncoder().encode(base);
+            var result = r5(r4(r3(r2(r1(bytes)))));
+            var bin = String.fromCharCode.apply(null, result);
+            return btoa(bin).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
+          })();
     - fetch:
-        url: "{base_url}/api/v2/manga/{manga_hash}/chapters"
+        url: "{base_url}/api/v2/manga/{manga_hash}/chapters?limit=100&order[number]=desc&time=1&_={request_hash}"
         method: GET
         headers:
           Referer: "{manga_url}"
@@ -51,12 +166,22 @@ chapters:
           page_param: "page"
           start_page: 1
           max_pages: 10
+    - extract_js:
+        var: chapters_response
+        script: |
+          (function() {
+            var items = {chapters_response};
+            items.forEach(function(ch) {
+              ch.url_slug = ch.chapter_id + '-chapter-' + ch.number;
+            });
+            return JSON.stringify(items);
+          })();
     - from_json:
         var: chapters_response
         extract:
           number_raw: number
           title: name
-          url: chapter_id
+          url: url_slug
           language: language
           date: created_at
           scanlator_group: scanlation_group.name

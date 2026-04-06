@@ -3,8 +3,11 @@
 /// Uses StaticProvider so no network or browser is involved.
 mod helpers;
 
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
+use async_trait::async_trait;
 use helpers::{
     insert_library, insert_manga,
     static_provider::{StaticProvider, ch, ch_group},
@@ -13,7 +16,10 @@ use helpers::{
 use rebarr::{
     db::{chapter as db_chapter, provider as db_provider},
     manga::merge,
-    scraper::ProviderRegistry,
+    scraper::{
+        PageUrl, Provider, ProviderChapterInfo, ProviderRegistry, ProviderSearchResult,
+        ProviderVariables, ScraperCtx, error::ScraperError,
+    },
 };
 use uuid::Uuid;
 
@@ -23,6 +29,80 @@ use uuid::Uuid;
 
 fn provider_registry(p: StaticProvider) -> ProviderRegistry {
     ProviderRegistry::from_providers_for_tests(vec![Arc::new(p)])
+}
+
+struct VariableBackedProvider {
+    chapter_calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl Provider for VariableBackedProvider {
+    fn name(&self) -> &str {
+        "vars"
+    }
+
+    fn needs_browser(&self) -> bool {
+        false
+    }
+
+    async fn search(
+        &self,
+        _ctx: &ScraperCtx,
+        title: &str,
+    ) -> Result<Vec<ProviderSearchResult>, ScraperError> {
+        Ok(vec![ProviderSearchResult {
+            title: title.to_owned(),
+            url: "static://shared-series-url".to_owned(),
+            cover_url: None,
+            variables: HashMap::from([("manga_id".to_owned(), "series-123".to_owned())]),
+        }])
+    }
+
+    async fn chapters(
+        &self,
+        _ctx: &ScraperCtx,
+        _manga_url: &str,
+        variables: &ProviderVariables,
+    ) -> Result<Vec<ProviderChapterInfo>, ScraperError> {
+        if variables.get("manga_id").map(String::as_str) != Some("series-123") {
+            return Ok(vec![]);
+        }
+
+        let call = self.chapter_calls.fetch_add(1, Ordering::SeqCst);
+        let raws: &[&str] = if call == 0 {
+            &["1", "2"]
+        } else {
+            &["1", "2", "3"]
+        };
+
+        Ok(raws
+            .iter()
+            .map(|raw| {
+                let number = raw.parse::<f32>().unwrap();
+                ProviderChapterInfo {
+                    raw_number: (*raw).to_owned(),
+                    number,
+                    chapter_base: number.floor(),
+                    chapter_variant: 0,
+                    is_extra: false,
+                    title: None,
+                    url: Some(format!("static://shared-series-url/{raw}")),
+                    volume: None,
+                    scanlator_group: None,
+                    language: Some("en".to_owned()),
+                    date_released: None,
+                }
+            })
+            .collect())
+    }
+
+    async fn pages(
+        &self,
+        _ctx: &ScraperCtx,
+        _chapter_url: &str,
+    ) -> Result<Vec<PageUrl>, ScraperError> {
+        Ok(vec![])
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -203,6 +283,50 @@ async fn scan_is_idempotent() {
         first_count, second_count,
         "second scan should not add duplicates"
     );
+}
+
+/// Search-time provider variables are persisted and available during later chapter sync jobs.
+#[tokio::test]
+async fn check_new_chapters_uses_persisted_provider_variables() {
+    let pool = test_db().await;
+    let lib = insert_library(&pool).await;
+    let manga = insert_manga(&pool, lib.uuid, "VariableSeries").await;
+
+    let provider: Arc<dyn Provider> = Arc::new(VariableBackedProvider {
+        chapter_calls: Arc::new(AtomicUsize::new(0)),
+    });
+    let registry = ProviderRegistry::from_providers_for_tests(vec![provider]);
+    let ctx = test_ctx(&registry);
+    let task_id = Uuid::new_v4();
+
+    merge::scan_manga(&pool, &registry, &ctx, &manga, task_id)
+        .await
+        .expect("first scan failed");
+
+    let entries = db_provider::get_all_for_manga(&pool, manga.id)
+        .await
+        .expect("get providers");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(
+        entries[0].provider_data.get("manga_id").map(String::as_str),
+        Some("series-123")
+    );
+
+    let first_count = db_chapter::get_all_for_manga(&pool, manga.id)
+        .await
+        .expect("get chapters")
+        .len();
+    assert_eq!(first_count, 2, "first sync should use persisted variable");
+
+    merge::check_new_chapters(&pool, &registry, &ctx, &manga, task_id)
+        .await
+        .expect("second scan failed");
+
+    let second_count = db_chapter::get_all_for_manga(&pool, manga.id)
+        .await
+        .expect("get chapters")
+        .len();
+    assert_eq!(second_count, 3, "background sync should reuse persisted variable");
 }
 
 /// A no-browser provider with no matching series stores a not-found marker.

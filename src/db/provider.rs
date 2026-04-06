@@ -1,5 +1,7 @@
 use chrono::Utc;
+use serde_json::Value;
 use sqlx::SqlitePool;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Cache & Mapping of providers/urls to series. Allows for easier checking for updates
@@ -10,6 +12,7 @@ pub struct MangaProvider {
     pub enabled: bool,
     pub provider_name: String,
     pub provider_url: Option<String>,
+    pub provider_data: HashMap<String, String>,
     pub last_synced_at: Option<i64>,
     pub search_attempted_at: Option<i64>,
 }
@@ -27,6 +30,7 @@ struct MangaProviderRow {
     enabled: bool,
     provider_name: String,
     provider_url: Option<String>,
+    provider_data: Option<String>,
     last_synced_at: Option<i64>,
     search_attempted_at: Option<i64>,
 }
@@ -34,14 +38,53 @@ struct MangaProviderRow {
 /// Convert from the internal row-type to the public struct.. thanks claude!
 fn from_row(row: MangaProviderRow) -> Result<MangaProvider, sqlx::Error> {
     let manga_id = Uuid::parse_str(&row.manga_id).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
+    let provider_data = parse_provider_data(row.provider_data)?;
     Ok(MangaProvider {
         manga_id,
         enabled: row.enabled,
         provider_name: row.provider_name,
         provider_url: row.provider_url,
+        provider_data,
         last_synced_at: row.last_synced_at,
         search_attempted_at: row.search_attempted_at,
     })
+}
+
+fn parse_provider_data(raw: Option<String>) -> Result<HashMap<String, String>, sqlx::Error> {
+    let Some(raw) = raw else {
+        return Ok(HashMap::new());
+    };
+    if raw.trim().is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let parsed: Value =
+        serde_json::from_str(&raw).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
+    let obj = parsed.as_object().ok_or_else(|| {
+        sqlx::Error::Decode(Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "provider_data must be a JSON object",
+        )))
+    })?;
+
+    let mut out = HashMap::with_capacity(obj.len());
+    for (key, value) in obj {
+        if let Some(value) = value.as_str() {
+            out.insert(key.clone(), value.to_owned());
+        } else {
+            out.insert(key.clone(), value.to_string());
+        }
+    }
+    Ok(out)
+}
+
+fn serialize_provider_data(data: &HashMap<String, String>) -> Result<Option<String>, sqlx::Error> {
+    if data.is_empty() {
+        return Ok(None);
+    }
+    serde_json::to_string(data)
+        .map(Some)
+        .map_err(sqlx::Error::decode)
 }
 
 // ---------------------------------------------------------------------------
@@ -52,13 +95,15 @@ fn from_row(row: MangaProviderRow) -> Result<MangaProvider, sqlx::Error> {
 /// On conflict (manga_id, provider_name) only `provider_url`, `last_synced_at`,
 /// and `search_attempted_at` are updated
 pub async fn upsert(pool: &SqlitePool, entry: &MangaProvider) -> Result<(), sqlx::Error> {
+    let provider_data = serialize_provider_data(&entry.provider_data)?;
     sqlx::query(
         "INSERT INTO MangaProvider
-             (manga_id, enabled, provider_name, provider_url, last_synced_at, search_attempted_at)
-         VALUES (?, ?, ?, ?, ?, ?)
+             (manga_id, enabled, provider_name, provider_url, provider_data, last_synced_at, search_attempted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(manga_id, provider_name) DO UPDATE SET
              enabled              = excluded.enabled,
              provider_url         = excluded.provider_url,
+             provider_data        = excluded.provider_data,
              last_synced_at       = excluded.last_synced_at,
              search_attempted_at  = excluded.search_attempted_at",
     )
@@ -66,6 +111,7 @@ pub async fn upsert(pool: &SqlitePool, entry: &MangaProvider) -> Result<(), sqlx
     .bind(entry.enabled)
     .bind(&entry.provider_name)
     .bind(&entry.provider_url)
+    .bind(provider_data)
     .bind(entry.last_synced_at)
     .bind(entry.search_attempted_at)
     .execute(pool)
@@ -83,8 +129,8 @@ pub async fn upsert_not_found(
     let now = Utc::now();
     sqlx::query(
         "INSERT INTO MangaProvider
-             (manga_id, enabled, provider_name, provider_url, last_synced_at, search_attempted_at)
-         VALUES (?, 1, ?, NULL, NULL, ?)
+             (manga_id, enabled, provider_name, provider_url, provider_data, last_synced_at, search_attempted_at)
+         VALUES (?, 1, ?, NULL, NULL, NULL, ?)
          ON CONFLICT(manga_id, provider_name) DO UPDATE SET
              search_attempted_at = excluded.search_attempted_at
          WHERE provider_url IS NULL",
@@ -104,7 +150,7 @@ pub async fn get_all_for_manga(
     manga_id: Uuid,
 ) -> Result<Vec<MangaProvider>, sqlx::Error> {
     let rows = sqlx::query_as::<_, MangaProviderRow>(
-        "SELECT manga_id, enabled, provider_name, provider_url, last_synced_at, search_attempted_at
+        "SELECT manga_id, enabled, provider_name, provider_url, provider_data, last_synced_at, search_attempted_at
          FROM MangaProvider WHERE manga_id = ?
          ORDER BY
              CASE WHEN provider_url IS NOT NULL THEN 0 ELSE 1 END,
@@ -124,7 +170,7 @@ pub async fn get_for_manga_provider(
     provider_name: &str,
 ) -> Result<Option<MangaProvider>, sqlx::Error> {
     let row = sqlx::query_as::<_, MangaProviderRow>(
-        "SELECT manga_id, enabled, provider_name, provider_url, last_synced_at, search_attempted_at
+        "SELECT manga_id, enabled, provider_name, provider_url, provider_data, last_synced_at, search_attempted_at
          FROM MangaProvider WHERE manga_id = ? AND provider_name = ?",
     )
     .bind(manga_id.to_string())

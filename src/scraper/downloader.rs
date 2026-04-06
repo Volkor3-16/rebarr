@@ -161,7 +161,11 @@ pub async fn download_chapter(
                     "[dl] Batch re-scraping chapter list from {provider_name} for '{}'",
                     manga.metadata.title
                 );
-                if let Ok(infos) = ctx.executor.chapters(ctx, provider, manga_url).await {
+                if let Ok(infos) = ctx
+                    .executor
+                    .chapters(ctx, provider, manga_url, &manga_provider.provider_data)
+                    .await
+                {
                     let _ =
                         db_chapter::upsert_from_scrape(pool, manga.id, provider_name, &infos).await;
                 }
@@ -427,7 +431,11 @@ async fn ensure_chapter_url(
         provider.name()
     );
 
-    let infos = ctx.executor.chapters(ctx, provider, manga_url).await.ok()?;
+    let infos = ctx
+        .executor
+        .chapters(ctx, provider, manga_url, &manga_provider.provider_data)
+        .await
+        .ok()?;
 
     // Write the re-scraped data back to Chapters
     let _ = db_chapter::upsert_from_scrape(pool, manga_id, provider.name(), &infos).await;

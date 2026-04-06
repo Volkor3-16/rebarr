@@ -12,8 +12,10 @@
 ///     .build();
 /// ```
 use async_trait::async_trait;
+use std::collections::HashMap;
 use rebarr::scraper::{
-    PageUrl, Provider, ProviderChapterInfo, ProviderSearchResult, ScraperCtx, error::ScraperError,
+    PageUrl, Provider, ProviderChapterInfo, ProviderSearchResult, ProviderVariables, ScraperCtx,
+    error::ScraperError,
 };
 
 // ---------------------------------------------------------------------------
@@ -178,6 +180,7 @@ impl Provider for StaticProvider {
                 title: s.title.clone(),
                 url: s.url.clone(),
                 cover_url: None,
+                variables: HashMap::new(),
             })
             .collect();
         Ok(results)
@@ -187,6 +190,7 @@ impl Provider for StaticProvider {
         &self,
         _ctx: &ScraperCtx,
         manga_url: &str,
+        _variables: &ProviderVariables,
     ) -> Result<Vec<ProviderChapterInfo>, ScraperError> {
         let Some(series) = self.find_series_by_url(manga_url) else {
             return Ok(vec![]);

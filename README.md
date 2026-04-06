@@ -30,6 +30,7 @@ I'll remove this when I've got the first public release out, this is just a quic
     - Let users re-order the queue
 - [ ] Setup Wizard: Adding 49 series to library… should have some logging or progress.
 - [ ] Local chapters (ones where we've downloaded a split chapter (7.1, 7.2, 7.3) are all grouped under a full chapter (7) despite being the local chapter)
+- [ ] Solo Leveling breaks chapter list (I can see Chapter 200 & Chapter 200 - Side Story 20) (they're the same one). Strangely, clicking either only makes one drop down, it's like its half-broken...
 
 ### Assend (GraphQL frontend for Moku-like frontend?)
 

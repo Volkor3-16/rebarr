@@ -894,6 +894,11 @@ pub async fn set_provider_url(
             enabled: true,
             provider_name: name.to_owned(),
             provider_url: body.url.clone(),
+            provider_data: db::provider::get_for_manga_provider(pool.inner(), manga_id, name)
+                .await
+                .map_err(internal)?
+                .map(|entry| entry.provider_data)
+                .unwrap_or_default(),
             last_synced_at: None,
             search_attempted_at: Some(Utc::now().timestamp()),
         },

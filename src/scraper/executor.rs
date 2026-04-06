@@ -13,7 +13,8 @@ use tokio::sync::{Mutex, Notify};
 
 use crate::scraper::error::ScraperError;
 use crate::scraper::{
-    PageUrl, Provider, ProviderChapterInfo, ProviderRegistry, ProviderSearchResult, ScraperCtx,
+    PageUrl, Provider, ProviderChapterInfo, ProviderRegistry, ProviderSearchResult,
+    ProviderVariables, ScraperCtx,
 };
 
 #[derive(Debug)]
@@ -194,10 +195,11 @@ impl ProviderExecutor {
         ctx: &ScraperCtx,
         provider: &Arc<dyn Provider>,
         manga_url: &str,
+        variables: &ProviderVariables,
     ) -> Result<Vec<ProviderChapterInfo>, ScraperError> {
         let (_provider_permit, _browser_permit) = self.acquire_provider_slots(provider).await?;
         self.await_rate_limit(provider.name()).await;
-        provider.chapters(ctx, manga_url).await
+        provider.chapters(ctx, manga_url, variables).await
     }
 
     pub async fn pages(
@@ -238,6 +240,7 @@ pub struct BrowserSlotPermit {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
@@ -335,6 +338,7 @@ mod tests {
                 title: self.name.clone(),
                 url: format!("https://example.com/{}", self.name),
                 cover_url: None,
+                variables: HashMap::new(),
             }])
         }
 
@@ -342,6 +346,7 @@ mod tests {
             &self,
             _ctx: &ScraperCtx,
             _manga_url: &str,
+            _variables: &crate::scraper::ProviderVariables,
         ) -> Result<Vec<ProviderChapterInfo>, crate::scraper::error::ScraperError> {
             Ok(vec![])
         }

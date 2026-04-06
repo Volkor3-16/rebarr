@@ -1,7 +1,7 @@
 use chrono::Utc;
 use sqlx::SqlitePool;
-use thiserror::Error;
 use tokio::task::JoinSet;
+use thiserror::Error;
 use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::db::provider::MangaProvider;
@@ -205,6 +205,7 @@ pub async fn search_providers(
                         enabled: true,
                         provider_name: provider.name().to_owned(),
                         provider_url: Some(result.url.clone()),
+                        provider_data: result.variables.clone(),
                         last_synced_at: None,
                         search_attempted_at: Some(Utc::now().timestamp()),
                     },
@@ -326,7 +327,10 @@ async fn scrape_single_provider(
     };
 
     let provider_url = entry.provider_url.clone().unwrap_or_default();
-    let result = ctx.executor.chapters(ctx, &provider, &provider_url).await;
+    let result = ctx
+        .executor
+        .chapters(ctx, &provider, &provider_url, &entry.provider_data)
+        .await;
 
     let was_previously_synced = entry.last_synced_at.is_some();
     let (total_new, new_ids_for_download) = match result {
@@ -352,6 +356,7 @@ async fn scrape_single_provider(
                     enabled: true,
                     provider_name: provider_name.to_owned(),
                     provider_url: entry.provider_url.clone(),
+                    provider_data: entry.provider_data.clone(),
                     last_synced_at: Some(Utc::now().timestamp()),
                     search_attempted_at: entry.search_attempted_at,
                 },
@@ -436,7 +441,10 @@ async fn scrape_chapters(
         join_set.spawn(
             async move {
                 let provider_url = entry.provider_url.clone().unwrap_or_default();
-                let result = ctx.executor.chapters(&ctx, &provider, &provider_url).await;
+                let result = ctx
+                    .executor
+                    .chapters(&ctx, &provider, &provider_url, &entry.provider_data)
+                    .await;
                 (entry, result)
             }
             .instrument(span),
@@ -491,6 +499,7 @@ async fn scrape_chapters(
                         enabled: true,
                         provider_name: entry.provider_name.clone(),
                         provider_url: entry.provider_url.clone(),
+                        provider_data: entry.provider_data.clone(),
                         last_synced_at: Some(Utc::now().timestamp()),
                         search_attempted_at: entry.search_attempted_at,
                     },
@@ -649,6 +658,7 @@ mod tests {
                 title: t.to_string(),
                 url: format!("https://example.com/{}", t.to_lowercase().replace(' ', "-")),
                 cover_url: None,
+                variables: std::collections::HashMap::new(),
             })
             .collect()
     }

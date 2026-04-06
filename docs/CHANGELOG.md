@@ -8,8 +8,11 @@ This a informal changelog so i can keep track of what im doing.
 - Added filtering on the queue (defaults to downloaded chapters only)
 - WeebDex Removed (they shutdown 😭😭😭)
 - MangaHub working (literally createdAt -> date thats the whole change that stopped it from working)
+- Added MangaCloud provider
+- Added MangaTaro provider
 - I (codex) had to rework verbose mode for cli, so we can actually see what requests and responses.
     - This should make adding new providers a LOT more easy... maybe.
+- Fixed Comix provider (they changed their API)
 
 ## 2026-04-03
 

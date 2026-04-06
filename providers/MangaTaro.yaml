@@ -1,0 +1,118 @@
+name: MangaTaro
+base_url: https://mangataro.org
+version: "1"
+default_score: 30 # Decent library, average quality, well organised.
+tags:
+  - aggregator
+rate_limit:
+  requests_per_minute: 30
+
+search:
+  steps:
+    - open: "{base_url}"
+    - fetch:
+        url: "{base_url}/auth/search"
+        method: POST
+        headers:
+          Content-Type: application/json
+          Referer: "{base_url}/"
+          Origin: "{base_url}"
+        body: '{"query":"{query}","limit":20}'
+        var: search_results
+        json_path: results
+    - from_json:
+        var: search_results
+        extract:
+          title: title
+          url: slug
+          cover: thumbnail
+          # Saved as provider_data so later chapter sync jobs can reuse it.
+          manga_id: id
+
+chapters:
+  steps:
+    # `manga_url` is the persisted slug; `manga_id` comes from persisted provider_data.
+    - open: "{base_url}/manga/{manga_url}"
+    - extract_js:
+        var: auth_token
+        script: |
+          (() => {
+            const { token } = generateToken();
+            return token;
+          })()
+    - extract_js:
+        var: auth_timestamp
+        script: |
+          (() => {
+            const { timestamp } = generateToken();
+            return timestamp;
+          })()
+    - fetch:
+        url: "{base_url}/auth/manga-chapters?manga_id={manga_id}&offset=0&limit=500&order=DESC&_t={auth_token}&_ts={auth_timestamp}"
+        method: GET
+        headers:
+          Referer: "{base_url}/manga/{manga_url}"
+        var: chapters_data
+        json_path: chapters
+    - extract_js:
+        var: _inject
+        script: |
+          (() => {
+            window.__cdata = {chapters_data};
+            return true;
+          })()
+    - extract_js:
+        var: chapters_with_urls
+        script: |
+          (() => {
+            const now = Date.now();
+          
+            function parseRelative(text) {
+              text = text.trim().toLowerCase();
+              const num = parseInt(text, 10) || 0;
+              if (text.includes("minute")) return Math.floor((now - num * 60 * 1000) / 1000);
+              if (text.includes("hour"))   return Math.floor((now - num * 60 * 60 * 1000) / 1000);
+              if (text.includes("day"))    return Math.floor((now - num * 24 * 60 * 60 * 1000) / 1000);
+              if (text.includes("week"))   return Math.floor((now - num * 7 * 24 * 60 * 60 * 1000) / 1000);
+              if (text.includes("month"))  return Math.floor((now - num * 30 * 24 * 60 * 60 * 1000) / 1000);
+              if (text.includes("year"))   return Math.floor((now - num * 365 * 24 * 60 * 60 * 1000) / 1000);
+              if (text.includes("just now")) return Math.floor(now / 1000);
+              return text;
+            }
+          
+            const slug = location.pathname.split('/')[2];
+          
+            return JSON.stringify(window.__cdata
+              .map(c => ({
+                chapter: c.chapter,
+          
+                ...(c.title && c.title.trim().toUpperCase() !== "N/A" && {
+                  title: c.title.trim()
+                }),
+          
+                date: parseRelative(c.date),
+                url: '/read/' + slug + '/ch' + c.chapter + '-' + c.id
+              }))
+            );
+          })();
+    - from_json:
+        var: chapters_with_urls
+        extract:
+          number_raw: chapter
+          title: title
+          url: url
+          date: date
+        date_format:
+          date: "%s"
+        prefix:
+          url: "{base_url}"
+
+pages:
+  steps:
+    - open: "{chapter_url}"
+    - foreach:
+        selector: "img.comic-image"
+        extract:
+          url:
+            content: attr
+            attr_name: "data-src"

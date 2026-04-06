@@ -13,7 +13,10 @@ use tracing::{debug, info, warn};
 use crate::scraper::{
     def::{ActionDef, ContentKind, FieldDef, ForeachDef, InterceptDef, ProviderDef, StepDef},
     error::ScraperError,
-    {PageUrl, Provider, ProviderChapterInfo, ProviderSearchResult, ScraperCtx, ScraperDebugLevel},
+    {
+        PageUrl, Provider, ProviderChapterInfo, ProviderSearchResult, ProviderVariables,
+        ScraperCtx, ScraperDebugLevel,
+    },
 };
 
 /// Diagnostic data collected during a `foreach` step.
@@ -1625,6 +1628,7 @@ impl Provider for YamlProvider {
         &self,
         ctx: &ScraperCtx,
         manga_url: &str,
+        variables: &ProviderVariables,
     ) -> Result<Vec<ProviderChapterInfo>, ScraperError> {
         let def = self
             .def
@@ -1633,6 +1637,7 @@ impl Provider for YamlProvider {
             .ok_or(ScraperError::Unsupported)?;
         let mut input = HashMap::new();
         input.insert("manga_url".to_owned(), manga_url.to_owned());
+        input.extend(variables.clone());
 
         let result = self.execute_action(ctx, def, input).await?;
         Ok(records_to_chapters(result.into_records()))
@@ -1683,6 +1688,7 @@ fn records_to_search_results(records: Vec<HashMap<String, String>>) -> Vec<Provi
                 title: r.remove("title")?,
                 url: r.remove("url")?,
                 cover_url: r.remove("cover"),
+                variables: r,
             })
         })
         .collect()

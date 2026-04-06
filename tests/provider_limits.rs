@@ -7,6 +7,7 @@
 /// 4. Backoff window expiration works correctly
 mod helpers;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -17,7 +18,7 @@ use rebarr::{
     db::provider_failure as db_provider_failure,
     scraper::{
         PageUrl, Provider, ProviderChapterInfo, ProviderRegistry, ProviderSearchResult, ScraperCtx,
-        error::ScraperError,
+        ProviderVariables, error::ScraperError,
     },
 };
 
@@ -85,6 +86,7 @@ impl Provider for FailingProvider {
             title: "Test".to_owned(),
             url: "https://example.com/test".to_owned(),
             cover_url: None,
+            variables: HashMap::new(),
         }])
     }
 
@@ -92,6 +94,7 @@ impl Provider for FailingProvider {
         &self,
         _ctx: &ScraperCtx,
         _manga_url: &str,
+        _variables: &ProviderVariables,
     ) -> Result<Vec<ProviderChapterInfo>, ScraperError> {
         Ok(vec![])
     }

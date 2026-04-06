@@ -440,7 +440,7 @@ async fn cmd_test(
     print_phase_header("Chapters", verbose);
     info!("Fetching chapter list...");
     let chapters = provider
-        .chapters(&debug_ctx, &manga.url)
+        .chapters(&debug_ctx, &manga.url, &manga.variables)
         .await
         .unwrap_or_else(|e| exit_with_trace(&debug_ctx, &format!("chapters() failed: {e}")));
     if chapters.is_empty() {
@@ -643,7 +643,7 @@ async fn cmd_scan(
         let manga = &results[best_idx];
 
         // Chapters
-        let chapters = match provider.chapters(ctx, &manga.url).await {
+        let chapters = match provider.chapters(ctx, &manga.url, &manga.variables).await {
             Ok(c) => c,
             Err(e) => {
                 let s = e.to_string();
@@ -759,7 +759,7 @@ async fn cmd_download(
 
     info!("Fetching chapter list...");
     let chapters = provider
-        .chapters(ctx, &manga.url)
+        .chapters(ctx, &manga.url, &manga.variables)
         .await
         .unwrap_or_else(|e| {
             error!("chapters() failed: {e}");
@@ -946,7 +946,7 @@ async fn fixture_update(
         println!("  Match: {} — {}", manga.title, manga.url);
 
         // Chapters
-        let chapters = match provider.chapters(ctx, &manga.url).await {
+        let chapters = match provider.chapters(ctx, &manga.url, &manga.variables).await {
             Ok(c) => c,
             Err(e) => {
                 error!("  chapters() failed: {e}");
@@ -1180,7 +1180,7 @@ async fn fixture_run(
         }
 
         // ── Check 2: chapters ──
-        let chapters = match provider.chapters(ctx, &manga.url).await {
+        let chapters = match provider.chapters(ctx, &manga.url, &manga.variables).await {
             Ok(c) => c,
             Err(e) => {
                 fail += 1;

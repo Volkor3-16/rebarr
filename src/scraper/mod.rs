@@ -7,6 +7,7 @@ pub mod executor;
 
 use async_trait::async_trait;
 use std::{
+    collections::HashMap,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -24,12 +25,15 @@ use executor::ProviderExecutor;
 // Output types (runtime only — never persisted to DB)
 // ---------------------------------------------------------------------------
 
+pub type ProviderVariables = HashMap<String, String>;
+
 /// A manga entry returned by a provider's search.
 #[derive(Debug, Clone)]
 pub struct ProviderSearchResult {
     pub title: String,
     pub url: String,
     pub cover_url: Option<String>,
+    pub variables: ProviderVariables,
 }
 
 /// Info about a single chapter as returned by a provider's chapter list.
@@ -258,6 +262,7 @@ pub trait Provider: Send + Sync {
         &self,
         ctx: &ScraperCtx,
         manga_url: &str,
+        variables: &ProviderVariables,
     ) -> Result<Vec<ProviderChapterInfo>, ScraperError>;
 
     /// Fetch ordered page image URLs for a single chapter.
