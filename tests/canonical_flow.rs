@@ -449,10 +449,7 @@ async fn upgrades_disabled_keeps_downloaded_chapter_canonical() {
         .await
         .unwrap();
 
-    let registry1 = make_registry(
-        vec![],
-        vec![ch_group("1", "RandomGroup")],
-    );
+    let registry1 = make_registry(vec![], vec![ch_group("1", "RandomGroup")]);
     let ctx1 = test_ctx(&registry1);
     merge::scan_manga(&pool, &registry1, &ctx1, &manga, Uuid::new_v4())
         .await
@@ -515,10 +512,7 @@ async fn upgrades_enabled_promotes_better_source_and_queues_upgrade() {
         .await
         .unwrap();
 
-    let registry1 = make_registry(
-        vec![],
-        vec![ch_group("1", "RandomGroup")],
-    );
+    let registry1 = make_registry(vec![], vec![ch_group("1", "RandomGroup")]);
     let ctx1 = test_ctx(&registry1);
     merge::scan_manga(&pool, &registry1, &ctx1, &manga, Uuid::new_v4())
         .await
@@ -581,10 +575,7 @@ async fn upgrades_disabled_still_auto_downloads_new_unseen_chapters() {
         .await
         .unwrap();
 
-    let registry1 = make_registry(
-        vec![],
-        vec![ch_group("1", "RandomGroup")],
-    );
+    let registry1 = make_registry(vec![], vec![ch_group("1", "RandomGroup")]);
     let ctx1 = test_ctx(&registry1);
     merge::scan_manga(&pool, &registry1, &ctx1, &manga, Uuid::new_v4())
         .await

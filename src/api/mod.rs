@@ -10,6 +10,8 @@ pub(crate) mod import;
 pub(crate) mod libraries;
 pub(crate) mod manga;
 pub(crate) mod provider_scores;
+pub(crate) mod metadata_rules;
+pub(crate) mod quality_rules;
 pub(crate) mod settings;
 pub(crate) mod system;
 pub(crate) mod tasks;
@@ -27,6 +29,8 @@ pub use import::routes as import_routes;
 pub use libraries::routes as library_routes;
 pub use manga::routes as manga_routes;
 pub use provider_scores::routes as provider_score_routes;
+pub use metadata_rules::routes as metadata_rule_routes;
+pub use quality_rules::routes as quality_rule_routes;
 pub use settings::routes as settings_routes;
 pub use system::routes as system_routes;
 pub use tasks::routes as task_routes;
@@ -35,7 +39,7 @@ pub use webhooks::routes as webhook_routes;
 
 /// Routes that can't be included in the OpenAPI spec (e.g. raw file responses)
 pub fn extra_routes() -> Vec<rocket::Route> {
-    rocket::routes![manga::serve_cover]
+    rocket::routes![manga::serve_cover, events::events]
 }
 
 /// All API routes combined
@@ -49,6 +53,8 @@ pub fn api_routes() -> Vec<rocket::Route> {
     routes.extend(settings_routes());
     routes.extend(trusted_group_routes());
     routes.extend(provider_score_routes());
+    routes.extend(metadata_rule_routes());
+    routes.extend(quality_rule_routes());
     routes.extend(system_routes());
     routes.extend(webhook_routes());
     routes.extend(event_routes());
@@ -71,6 +77,7 @@ pub fn openapi_routes() -> Vec<rocket::Route> {
             chapters::toggle_extra_api,
             chapters::optimise_chapter_api,
             chapters::set_canonical_api,
+            chapters::clear_canonical_override_api,
             // Import
             import::scan_api,
             import::execute_api,
@@ -120,6 +127,18 @@ pub fn openapi_routes() -> Vec<rocket::Route> {
             tasks::list_tasks,
             tasks::list_tasks_grouped,
             tasks::cancel_task,
+            // Metadata Rules
+            metadata_rules::list_rules,
+            metadata_rules::create_rule,
+            metadata_rules::update_rule,
+            metadata_rules::delete_rule,
+            // Quality Rules
+            quality_rules::list_rules,
+            quality_rules::list_fields,
+            quality_rules::create_rule,
+            quality_rules::update_rule,
+            quality_rules::delete_rule,
+            quality_rules::reorder_rules,
             // Trusted Groups
             trusted_groups::list_trusted_groups,
             trusted_groups::add_trusted_group,

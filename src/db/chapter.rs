@@ -3,9 +3,9 @@ use sqlx::SqlitePool;
 use tracing::debug;
 use uuid::Uuid;
 
-use crate::db::{manga as db_manga, provider_scores};
+use crate::db::{manga as db_manga, provider_scores, quality_rules};
 use crate::manga::core::{Chapter, DownloadStatus};
-use crate::manga::scoring::compute_tier;
+use crate::manga::scoring::compute_score;
 use crate::scraper::ProviderChapterInfo;
 
 // ---------------------------------------------------------------------------
@@ -383,6 +383,13 @@ pub async fn get_downloaded(
 
 /// Load the user's manual canonical overrides map from the DB.
 /// Returns a HashMap of "base:variant" -> uuid strings.
+pub async fn get_canonical_overrides_map(
+    pool: &SqlitePool,
+    manga_id: Uuid,
+) -> Result<std::collections::HashMap<String, String>, sqlx::Error> {
+    load_canonical_overrides(pool, manga_id).await
+}
+
 async fn load_canonical_overrides(
     pool: &SqlitePool,
     manga_id: Uuid,
@@ -406,7 +413,7 @@ async fn load_canonical_overrides(
 pub async fn update_canonical(
     pool: &SqlitePool,
     manga_id: Uuid,
-    trusted_groups: &[String],
+    _trusted_groups: &[String],
     preferred_language: &str,
     provider_scores: &std::collections::HashMap<String, i32>,
 ) -> Result<(), sqlx::Error> {
@@ -431,20 +438,31 @@ pub async fn update_canonical(
         })
         .collect();
 
-    // Auto-classify: if a base has variant>=5 chapters but no variant 1–4, mark them as extras.
-    // e.g. a lone Ch.1.5 with no Ch.1.1–1.4 siblings → extra/bonus, not a split part.
+    // Auto-classify extras per (provider_name, chapter_base):
+    // If a provider releases Ch.1.1–1.7 those are all split parts, even the .5+.
+    // Only flag variant>=5 as extra when a provider has NO low-numbered split parts (1–4).
+    // The SQL guard in set_is_extra ensures manual user overrides (is_extra_manual IS NOT NULL)
+    // are never clobbered by this auto-classification.
     {
-        let mut by_base: std::collections::HashMap<i32, Vec<&Chapter>> =
+        // Group by (provider_name, chapter_base) — None provider grouped separately per base.
+        let mut by_provider_base: std::collections::HashMap<(Option<String>, i32), Vec<&Chapter>> =
             std::collections::HashMap::new();
         for ch in &all {
-            by_base.entry(ch.chapter_base).or_default().push(ch);
+            by_provider_base
+                .entry((ch.provider_name.clone(), ch.chapter_base))
+                .or_default()
+                .push(ch);
         }
-        for chs in by_base.values() {
+        for chs in by_provider_base.values() {
             let has_low = chs
                 .iter()
                 .any(|c| c.chapter_variant >= 1 && c.chapter_variant <= 4);
-            if !has_low {
-                for ch in chs.iter().filter(|c| c.chapter_variant >= 5 && !c.is_extra) {
+            for ch in chs.iter().filter(|c| c.chapter_variant >= 5) {
+                if has_low {
+                    // Part of a split sequence — not an extra.
+                    set_is_extra(pool, ch.id, false).await?;
+                } else {
+                    // Standalone .5+ with no split siblings — extra/bonus.
                     set_is_extra(pool, ch.id, true).await?;
                 }
             }
@@ -454,6 +472,9 @@ pub async fn update_canonical(
     // Build a set of all valid chapter UUIDs for this manga (for override validation).
     let valid_uuids: std::collections::HashSet<String> =
         all.iter().map(|ch| ch.id.to_string()).collect();
+
+    // Load quality rules for scoring.
+    let quality_rules = quality_rules::get_all(pool).await?;
 
     // Load user-set overrides before re-scoring.
     let overrides = load_canonical_overrides(pool, manga_id).await?;
@@ -504,36 +525,14 @@ pub async fn update_canonical(
             }
         }
 
-        // Primary: tier ascending (1=Official best, 4=No group worst).
-        // Secondary within same tier: provider score descending (higher = better).
-        // Score NEVER promotes a lower tier above a higher one.
+        // Sort by quality score descending: highest-scored source wins.
+        // Quality rules replace the old fixed-tier + provider-score system.
         entries.sort_by(|a, b| {
-            let tier_a = compute_tier(
-                a.scanlator_group.as_deref(),
-                trusted_groups,
-                a.provider_name.as_deref(),
-            );
-            let tier_b = compute_tier(
-                b.scanlator_group.as_deref(),
-                trusted_groups,
-                b.provider_name.as_deref(),
-            );
-            if tier_a != tier_b {
-                return tier_a.cmp(&tier_b);
-            }
-            let score_a = a
-                .provider_name
-                .as_deref()
-                .and_then(|n| provider_scores.get(n))
-                .copied()
-                .unwrap_or(0);
-            let score_b = b
-                .provider_name
-                .as_deref()
-                .and_then(|n| provider_scores.get(n))
-                .copied()
-                .unwrap_or(0);
-            score_b.cmp(&score_a)
+            compute_score(b, &quality_rules, provider_scores).cmp(&compute_score(
+                a,
+                &quality_rules,
+                provider_scores,
+            ))
         });
 
         if let Some(winner) = entries.into_iter().next() {
@@ -605,13 +604,30 @@ pub async fn update_manga_counts(pool: &SqlitePool, manga_id: Uuid) -> Result<()
     Ok(())
 }
 
-/// Toggle the is_extra flag for a specific chapter row.
+/// Set the is_extra flag for a chapter (auto-classifier only).
+/// Does NOT touch rows where `is_extra_manual` is set — user overrides are preserved.
 pub async fn set_is_extra(
     pool: &SqlitePool,
     chapter_id: Uuid,
     is_extra: bool,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE Chapters SET is_extra = ? WHERE uuid = ?")
+    sqlx::query("UPDATE Chapters SET is_extra = ? WHERE uuid = ? AND is_extra_manual IS NULL")
+        .bind(is_extra as i64)
+        .bind(chapter_id.to_string())
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Set is_extra for a chapter AND record it as a manual user override.
+/// This value survives future auto-classification scans.
+pub async fn set_is_extra_manual(
+    pool: &SqlitePool,
+    chapter_id: Uuid,
+    is_extra: bool,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE Chapters SET is_extra = ?, is_extra_manual = ? WHERE uuid = ?")
+        .bind(is_extra as i64)
         .bind(is_extra as i64)
         .bind(chapter_id.to_string())
         .execute(pool)
@@ -663,6 +679,28 @@ pub async fn set_canonical_override(
     .await?;
 
     update_manga_counts(pool, manga_id).await
+}
+
+/// Remove a user-set canonical override for a specific (chapter_base, chapter_variant) slot.
+/// The caller is responsible for calling `update_canonical` afterward so scoring re-picks the winner.
+pub async fn remove_canonical_override(
+    pool: &SqlitePool,
+    manga_id: Uuid,
+    chapter_base: i32,
+    chapter_variant: i32,
+) -> Result<(), sqlx::Error> {
+    debug!("[db] remove_canonical_override: manga={manga_id}, ch={chapter_base}.{chapter_variant}");
+    let mut overrides = load_canonical_overrides(pool, manga_id).await?;
+    overrides.remove(&format!("{chapter_base}:{chapter_variant}"));
+    let overrides_json =
+        serde_json::to_string(&overrides).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
+
+    sqlx::query("UPDATE CanonicalChapters SET canonical_overrides = ? WHERE manga_id = ?")
+        .bind(&overrides_json)
+        .bind(manga_id.to_string())
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 /// Insert a new chapter row directly (used by disk scanner for manually-found CBZ files).
@@ -754,13 +792,17 @@ pub async fn delete_all_for_manga(pool: &SqlitePool, manga_id: Uuid) -> Result<(
 
 /// Delete all MISSING chapters from a specific provider for a manga.
 /// Leaves downloaded chapters intact.
-pub async fn delete_missing_for_provider(pool: &SqlitePool, manga_id: Uuid, provider_name: &str) -> Result<(), sqlx::Error> {
+pub async fn delete_missing_for_provider(
+    pool: &SqlitePool,
+    manga_id: Uuid,
+    provider_name: &str,
+) -> Result<(), sqlx::Error> {
     sqlx::query("DELETE FROM Chapters WHERE manga_id = ? AND provider_name = ? AND download_status = 'Missing'")
         .bind(manga_id.to_string())
         .bind(provider_name)
         .execute(pool)
         .await?;
-    
+
     Ok(())
 }
 
@@ -768,32 +810,35 @@ pub async fn delete_missing_for_provider(pool: &SqlitePool, manga_id: Uuid, prov
 // Upgrade candidate detection
 // ---------------------------------------------------------------------------
 
-/// A chapter slot where the current canonical has a better tier than what is
+/// A chapter slot where the current canonical has a better score than what is
 /// already Downloaded.
 pub struct UpgradeCandidate {
     pub chapter_base: i32,
     pub chapter_variant: i32,
-    /// New canonical UUID (better tier, currently Missing/Failed).
+    /// New canonical UUID (higher score, currently Missing/Failed).
     pub new_canonical_id: Uuid,
-    /// Currently-downloaded UUID (worse tier).
+    /// Currently-downloaded UUID (lower score).
     pub old_downloaded_id: Uuid,
 }
 
-/// Find chapters where a better-ranked source is now canonical but an
+/// Find chapters where a better-scored source is now canonical but an
 /// inferior source is already Downloaded.
 ///
-/// Only fires when `tier(canonical) < tier(downloaded)` (strictly better).
-/// Same-tier differences do not trigger upgrades to avoid churn.
+/// Only fires when `score(canonical) > score(downloaded)` (strictly better).
 pub async fn find_upgrade_candidates(
     pool: &SqlitePool,
     manga_id: Uuid,
-    trusted_groups: &[String],
+    _trusted_groups: &[String],
 ) -> Result<Vec<UpgradeCandidate>, sqlx::Error> {
     let all = get_all_for_manga(pool, manga_id).await?;
     let canonical_set: std::collections::HashSet<String> = get_canonical_uuids(pool, manga_id)
         .await?
         .into_iter()
         .collect();
+
+    let rules = quality_rules::get_all(pool).await?;
+    // Use empty provider scores as baseline (per-manga scores from Providers table loaded separately if needed)
+    let empty_scores = std::collections::HashMap::new();
 
     // Group by (chapter_base, chapter_variant)
     let mut groups: std::collections::HashMap<(i32, i32), Vec<Chapter>> =
@@ -817,13 +862,9 @@ pub async fn find_upgrade_candidates(
             None => continue,
         };
 
-        let canon_tier = compute_tier(
-            canonical.scanlator_group.as_deref(),
-            trusted_groups,
-            canonical.provider_name.as_deref(),
-        );
+        let canon_score = compute_score(canonical, &rules, &empty_scores);
 
-        // Find Downloaded entries that are worse tier than the canonical.
+        // Find Downloaded entries that have a lower score than the canonical.
         for entry in &entries {
             if entry.id == canonical.id {
                 continue;
@@ -831,19 +872,15 @@ pub async fn find_upgrade_candidates(
             if entry.download_status != DownloadStatus::Downloaded {
                 continue;
             }
-            let entry_tier = compute_tier(
-                entry.scanlator_group.as_deref(),
-                trusted_groups,
-                entry.provider_name.as_deref(),
-            );
-            if canon_tier < entry_tier {
+            let entry_score = compute_score(entry, &rules, &empty_scores);
+            if canon_score > entry_score {
                 candidates.push(UpgradeCandidate {
                     chapter_base: base,
                     chapter_variant: variant,
                     new_canonical_id: canonical.id,
                     old_downloaded_id: entry.id,
                 });
-                // One candidate per slot is enough (take the first worse-tier Downloaded).
+                // One candidate per slot is enough (take the first lower-scored Downloaded).
                 break;
             }
         }

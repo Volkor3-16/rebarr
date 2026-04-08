@@ -2,6 +2,20 @@
 
 This a informal changelog so i can keep track of what im doing.
 
+## 2026-04-07
+
+Now that I'm actually /using/ rebarr properly...
+
+- Upped the best_match threshold to help avoid bad matches (you can always manually match with 'Pick' button)
+- Removed Trusted Scanlator Ranking
+- Removed provider scoring ranking
+- Added a Quality Rules system
+    - Like the other *arrs, the user enters their own preferences and scores, and all of them are added up to figure out what is the best chapter.
+    - We automatically convert trusted scanlators
+- `n.5` release chapters aren't always made extras, but only if there's no `n.1, n.2, n.3, n.4`
+- Manually set extras is saved properly, not reset on next scan.
+- 
+
 ## 2026-04-06
 
 - Added ability to sort by latest chapter

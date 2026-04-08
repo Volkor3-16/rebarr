@@ -27,6 +27,7 @@ If you're here because you're hoping for your favourite site to be added, make a
 | MangaHub       | mangahub.io             | **WORKING** | Large library, uses names of taken down sites. |
 | ReadComicOnline| ?                       | N/A         | Good site for Western Comics |
 | MangaPlus      | https://mangaplus.shueisha.co.jp | N/A | Official? |
+| UTOON          | ?                       | N/A         | They do a LOT of scans |
 
 requests_per_minute - How many requests you can make to this provider (for any action)
 
@@ -95,3 +96,26 @@ RIP WeebDex. I removed them from the provider list. Most of their content was co
 
 These guys are fucky, they have a server-side token and timestamp, and if they don't match, it fails.
 Thankfully, they've really nicely given us a `generateToken()` function! Which gives us exactly the two things we need to get into their API!
+
+
+# Shit providers list
+
+You shouldn't be charging for chapters you stole. Groups like these are fucking things over for everyone, free scanlations are already legally gray, charging for them is definitely illegal.
+
+Kakao, if you're reading this, go after these cunts first ;)
+
+- Art Lapsa: Deleting their previously uploaded chapters, charging for them. Oh yeah, and it's mostly MTL slop.
+- Asmodeus Scans: Charging for their chapters.
+- Athrea Scans: Charging for their MTL chapters.
+- Diva Scans
+- Luna Toons
+- GalaxyDegenScans: Their patreon vote-paywall where they sit on translated chapters for months is cringe.
+    - Einherjar Scan: They disbanded and went on to form GDS
+- UTOON
+- Reaper Scans: bahahahahaha imagine selling chapters and then getting a cease and desist.
+- Asura Scans: please daddy keep charging me for chapters you censor and snipe from other groups
+- Philia Scans: "I didn't know it was a crime to paywall - continues to paywall"
+- Diva Scans
+- Luna Toon
+- RESET Scans
+- Siren Scans

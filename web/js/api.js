@@ -67,6 +67,7 @@ export const manga = {
   deleteChapter: (id, base, variant) => del(`/api/manga/${id}/chapters/${base}/${variant}`),
   toggleExtra: (id, base, variant) => post(`/api/manga/${id}/chapters/${base}/${variant}/toggle-extra`, null),
   setCanonical: (id, base, variant, chapterId) => post(`/api/manga/${id}/chapters/${base}/${variant}/set-canonical`, { chapter_id: chapterId }),
+  clearCanonicalOverride: (id, base, variant) => del(`/api/manga/${id}/chapters/${base}/${variant}/canonical-override`),
   markDownloaded: (id, base, variant) => post(`/api/manga/${id}/chapters/${base}/${variant}/mark-downloaded`, null),
   optimise: (id, base, variant) => post(`/api/manga/${id}/chapters/${base}/${variant}/optimise`, null),
   updateSynonyms: (id, data) => patch(`/api/manga/${id}/synonyms`, data),
@@ -142,6 +143,24 @@ export const coverApi = {
     }
     return r.json();
   },
+};
+
+// Metadata Rules API
+export const metadataRules = {
+  list: () => get('/api/metadata-rules'),
+  create: (data) => post('/api/metadata-rules', data),
+  update: (id, data) => put(`/api/metadata-rules/${id}`, data),
+  delete: (id) => del(`/api/metadata-rules/${id}`),
+};
+
+// Quality Rules API
+export const qualityRules = {
+  list: () => get('/api/quality-rules'),
+  fields: () => get('/api/quality-rules/fields'),
+  create: (data) => post('/api/quality-rules', data),
+  update: (id, data) => put(`/api/quality-rules/${id}`, data),
+  delete: (id) => del(`/api/quality-rules/${id}`),
+  reorder: (ordering) => post('/api/quality-rules/reorder', { ordering }),
 };
 
 // Provider scores API

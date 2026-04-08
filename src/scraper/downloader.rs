@@ -16,7 +16,7 @@ use crate::db::{
 use crate::manga::core::{Chapter, DownloadStatus, Manga};
 use crate::manga::scoring::{ChapterFilter, compute_tier, rank_entries};
 use crate::manga::{comicinfo, files};
-use crate::scraper::{ProviderRegistry, ScraperCtx};
+use crate::scraper::{ProviderRegistry, ScraperCtx, browser::close_page_tab};
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -464,7 +464,6 @@ pub async fn download_pages_via_browser(
     chapter_url: &str,
     cancel_token: CancellationToken,
 ) -> Result<Vec<(u32, Vec<u8>)>, DownloadError> {
-    let mut results = Vec::with_capacity(pages.len());
     let _browser_slot = ctx.executor.acquire_browser_slot().await;
 
     let browser = ctx
@@ -478,119 +477,127 @@ pub async fn download_pages_via_browser(
         .await
         .map_err(|e| std::io::Error::other(e.to_string()))?;
 
-    // Enable Network domain (required before setExtraHTTPHeaders) and inject
-    // Referer at the CDP layer so it applies to every JS fetch() call below.
-    page.enable_request_capture()
-        .await
-        .map_err(|e| std::io::Error::other(e.to_string()))?;
-    let mut extra_headers = HashMap::new();
-    extra_headers.insert("Referer".to_string(), chapter_url.to_string());
-    debug!("Referer: {chapter_url}");
-    page.set_extra_headers(extra_headers)
-        .await
-        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let result = async {
+        let mut results = Vec::with_capacity(pages.len());
 
-    // Navigate to the chapter page once to establish a trusted origin with
-    // valid session cookies. JS fetch() calls from this context won't be
-    // blocked by Chrome's ERR_BLOCKED_BY_CLIENT (unlike direct image URL navigation).
-    if let Err(e) = page.goto(chapter_url).await {
-        warn!("[dl] could not navigate to chapter URL {chapter_url}: {e}");
-    } else {
-        page.wait_for_network_idle(500, 10_000).await.ok();
-    }
+        // Enable Network domain (required before setExtraHTTPHeaders) and inject
+        // Referer at the CDP layer so it applies to every JS fetch() call below.
+        page.enable_request_capture()
+            .await
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        let mut extra_headers = HashMap::new();
+        extra_headers.insert("Referer".to_string(), chapter_url.to_string());
+        debug!("Referer: {chapter_url}");
+        page.set_extra_headers(extra_headers)
+            .await
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
 
-    let total_pages = pages.len() as i64;
-
-    for (idx, page_url) in pages.iter().enumerate() {
-        if cancel_token.is_cancelled() {
-            return Err(DownloadError::Cancelled);
+        // Navigate to the chapter page once to establish a trusted origin with
+        // valid session cookies. JS fetch() calls from this context won't be
+        // blocked by Chrome's ERR_BLOCKED_BY_CLIENT (unlike direct image URL navigation).
+        if let Err(e) = page.goto(chapter_url).await {
+            warn!("[dl] could not navigate to chapter URL {chapter_url}: {e}");
+        } else {
+            page.wait_for_network_idle(500, 10_000).await.ok();
         }
-        let url = &page_url.url;
-        tracing::trace!(page = idx + 1, total = pages.len(), %url, "downloading page");
 
-        if let (Some(pool), Some(task_id)) = (pool, task_id) {
-            let _ = db_task::set_progress(
-                pool,
-                task_id,
-                &db_task::TaskProgress {
-                    step: Some("download-pages".to_owned()),
-                    label: Some(format!("Downloading page {} of {}", idx + 1, pages.len())),
-                    detail: Some(format!("Fetching page {}", page_url.index)),
-                    provider: provider_name.map(|name| name.to_owned()),
-                    target: Some(url.clone()),
-                    current: Some((idx + 1) as i64),
-                    total: Some(total_pages),
-                    unit: Some("page".to_owned()),
+        let total_pages = pages.len() as i64;
+
+        for (idx, page_url) in pages.iter().enumerate() {
+            if cancel_token.is_cancelled() {
+                return Err(DownloadError::Cancelled);
+            }
+            let url = &page_url.url;
+            tracing::trace!(page = idx + 1, total = pages.len(), %url, "downloading page");
+
+            if let (Some(pool), Some(task_id)) = (pool, task_id) {
+                let _ = db_task::set_progress(
+                    pool,
+                    task_id,
+                    &db_task::TaskProgress {
+                        step: Some("download-pages".to_owned()),
+                        label: Some(format!("Downloading page {} of {}", idx + 1, pages.len())),
+                        detail: Some(format!("Fetching page {}", page_url.index)),
+                        provider: provider_name.map(|name| name.to_owned()),
+                        target: Some(url.clone()),
+                        current: Some((idx + 1) as i64),
+                        total: Some(total_pages),
+                        unit: Some("page".to_owned()),
+                    },
+                )
+                .await;
+            }
+
+            // JS fetch() from the chapter page context.
+            // Subrequests are not subject to ERR_BLOCKED_BY_CLIENT. CDP extra headers
+            // inject the Referer automatically. Works for CDNs with CORS headers.
+            let escaped_url = url.replace('\\', "\\\\").replace('"', "\\\"");
+            let js = format!(
+                r#"(async () => {{
+                    const r = await fetch("{escaped_url}", {{ cache: 'reload' }});
+                    if (!r.ok) return null;
+                    const buf = await r.arrayBuffer();
+                    const bytes = new Uint8Array(buf);
+                    let binary = "";
+                    for (let i = 0; i < bytes.length; i += 8192) {{
+                        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+                    }}
+                    return btoa(binary);
+                }})()"#
+            );
+
+            let image_data = match page.evaluate::<Option<String>>(&js).await {
+                Ok(Some(b64)) => match BASE64.decode(b64.trim()) {
+                    Ok(data) if !data.is_empty() => data,
+                    Ok(_) => {
+                        warn!("[dl] empty bytes for {url}");
+                        continue;
+                    }
+                    Err(e) => {
+                        warn!("[dl] base64 decode failed for {url}: {e}");
+                        continue;
+                    }
                 },
-            )
-            .await;
-        }
-
-        // JS fetch() from the chapter page context.
-        // Subrequests are not subject to ERR_BLOCKED_BY_CLIENT. CDP extra headers
-        // inject the Referer automatically. Works for CDNs with CORS headers.
-        let escaped_url = url.replace('\\', "\\\\").replace('"', "\\\"");
-        let js = format!(
-            r#"(async () => {{
-                const r = await fetch("{escaped_url}", {{ cache: 'reload' }});
-                if (!r.ok) return null;
-                const buf = await r.arrayBuffer();
-                const bytes = new Uint8Array(buf);
-                let binary = "";
-                for (let i = 0; i < bytes.length; i += 8192) {{
-                    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
-                }}
-                return btoa(binary);
-            }})()"#
-        );
-
-        let image_data = match page.evaluate::<Option<String>>(&js).await {
-            Ok(Some(b64)) => match BASE64.decode(b64.trim()) {
-                Ok(data) if !data.is_empty() => data,
-                Ok(_) => {
-                    warn!("[dl] empty bytes for {url}");
+                Ok(None) => {
+                    warn!("[dl] fetch returned null for {url}");
                     continue;
                 }
                 Err(e) => {
-                    warn!("[dl] base64 decode failed for {url}: {e}");
+                    warn!("[dl] fetch eval error for {url}: {e}");
                     continue;
                 }
-            },
-            Ok(None) => {
-                warn!("[dl] fetch returned null for {url}");
-                continue;
-            }
-            Err(e) => {
-                warn!("[dl] fetch eval error for {url}: {e}");
-                continue;
-            }
-        };
+            };
 
-        // Validate that the downloaded data is actually an image
-        if !is_valid_image(&image_data) {
-            warn!(
-                "[dl] Page {} from {} is not a valid image (got {} bytes, magic: {:?})",
-                page_url.index,
-                provider_name.unwrap_or("unknown"),
-                image_data.len(),
-                &image_data[..image_data.len().min(16)]
-            );
-            // Fail the entire chapter from this provider - don't create incomplete CBZ
-            return Err(DownloadError::InvalidImage);
+            // Validate that the downloaded data is actually an image
+            if !is_valid_image(&image_data) {
+                warn!(
+                    "[dl] Page {} from {} is not a valid image (got {} bytes, magic: {:?})",
+                    page_url.index,
+                    provider_name.unwrap_or("unknown"),
+                    image_data.len(),
+                    &image_data[..image_data.len().min(16)]
+                );
+                // Fail the entire chapter from this provider - don't create incomplete CBZ
+                return Err(DownloadError::InvalidImage);
+            }
+
+            results.push((page_url.index, image_data));
         }
 
-        results.push((page_url.index, image_data));
+        page.clear_extra_headers()
+            .await
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+
+        results.sort_by_key(|(idx, _)| *idx);
+        Ok(results)
     }
+    .await;
 
-    page.clear_extra_headers()
-        .await
-        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    // Always close the Chrome tab, including cancellation and provider errors.
+    close_page_tab(browser.as_ref(), &page).await;
+    drop(page);
 
-    // Close the Chrome tab explicitly — otherwise it stays open and leaks memory.
-    let _ = browser.close_tab(page.target_id()).await;
-
-    results.sort_by_key(|(idx, _)| *idx);
-    Ok(results)
+    result
 }
 
 /// After a successful download, remove any previously-downloaded lower-tier variants

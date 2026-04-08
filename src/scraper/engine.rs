@@ -11,6 +11,7 @@ use scraper::{ElementRef, Html, Selector};
 use tracing::{debug, info, warn};
 
 use crate::scraper::{
+    browser::close_page_tab,
     def::{ActionDef, ContentKind, FieldDef, ForeachDef, InterceptDef, ProviderDef, StepDef},
     error::ScraperError,
     {
@@ -308,10 +309,11 @@ impl YamlProvider {
         let mut pending_intercepts: Vec<InterceptDef> = Vec::new();
         let mut early_return: Option<String> = None;
 
-        for (step_index, step) in action.steps.iter().enumerate() {
-            let step_index = step_index + 1;
-            tracing::trace!(step = ?std::mem::discriminant(step), "executing step");
-            match step {
+        let result = async {
+            for (step_index, step) in action.steps.iter().enumerate() {
+                let step_index = step_index + 1;
+                tracing::trace!(step = ?std::mem::discriminant(step), "executing step");
+                match step {
                 StepDef::Open { open: url_tmpl } => {
                     let url = self.expand(url_tmpl, &vars);
                     self.trace_step_start(ctx, step_index, "open", format!("url={url}"));
@@ -427,9 +429,6 @@ impl YamlProvider {
                     // Final check: if Cloudflare challenge still present, fail
                     if let Ok(html) = p.content().await {
                         if is_cf_challenge(&html) {
-                            if let Some(ref p) = page {
-                                let _ = browser.close_tab(p.target_id()).await;
-                            }
                             return Err(ScraperError::Browser(format!(
                                 "Cloudflare challenge persisted at {url} — provider is blocked"
                             )));
@@ -505,10 +504,6 @@ impl YamlProvider {
                         }
                         Err(e) => {
                             debug!("[step] wait_for '{sel}' → TIMEOUT");
-                            // Close the tab before returning — otherwise it stays open in Chrome.
-                            if let Some(ref p) = page {
-                                let _ = browser.close_tab(p.target_id()).await;
-                            }
                             return Err(ScraperError::Timeout(format!("wait_for '{sel}': {e}")));
                         }
                     }
@@ -1498,22 +1493,24 @@ impl YamlProvider {
                         serde_json::to_string(&json_array).unwrap_or_else(|_| "[]".to_string());
                     vars.insert(filter_def.var.clone(), value);
                 }
+                }
+            }
+
+            if let Some(val) = early_return {
+                Ok(ActionResult::Value(val))
+            } else {
+                Ok(ActionResult::Records(results))
             }
         }
+        .await;
 
-        // Close the Chrome tab explicitly before dropping the Rust Page handle.
-        // Dropping Page only decrements Arc<Transport>; without this, the tab
-        // stays open in Chrome and accumulates over thousands of scrape calls.
+        // Always close the Chrome tab before dropping the Rust Page handle.
         if let Some(ref p) = page {
-            let _ = browser.close_tab(p.target_id()).await;
+            close_page_tab(browser.as_ref(), p).await;
         }
         drop(page);
 
-        if let Some(val) = early_return {
-            Ok(ActionResult::Value(val))
-        } else {
-            Ok(ActionResult::Records(results))
-        }
+        result
     }
 
     fn collect_foreach_results(
@@ -2378,7 +2375,10 @@ mod tests {
             "Omake",
             "Special edition",
         ] {
-            assert!(infer_is_extra(Some(title)), "expected '{title}' to be extra");
+            assert!(
+                infer_is_extra(Some(title)),
+                "expected '{title}' to be extra"
+            );
         }
     }
 }

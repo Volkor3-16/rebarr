@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use eoka::{Browser, StealthConfig};
+use eoka::{Browser, Page, StealthConfig};
 use tokio::sync::Mutex;
 
 use crate::scraper::error::ScraperError;
@@ -88,6 +88,10 @@ impl BrowserPool {
             }
         }
     }
+}
+
+pub async fn close_page_tab(browser: &Browser, page: &Page) {
+    let _ = browser.close_tab(page.target_id()).await;
 }
 
 impl Default for BrowserPool {

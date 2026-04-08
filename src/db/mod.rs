@@ -7,6 +7,7 @@ pub mod manga;
 pub mod provider;
 pub mod provider_failure;
 pub mod provider_scores;
+pub mod quality_rules;
 pub mod settings;
 pub mod task;
 pub mod webhook;

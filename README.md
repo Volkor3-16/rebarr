@@ -19,6 +19,13 @@ I'll remove this when I've got the first public release out, this is just a quic
     - Never (Downloaded chapters will never be replaced)
     - Always (New & better chapters will replace older ones) - default, and what we have now
 - [ ] Importing is flakey
+- [ ] The setup wizard sets the scores for all providers to 0, it should instead be left null and used the defaults from the provider yaml.
+- [ ] Make sure Search all providers is prioritised above DownloadChapter
+    - And manual downloads have higher priority than automatic ones
+- [ ] Chapter counts should be the highest `chapter_base` instead of the total number.
+- [ ] DownloadChapter: Doctor Elise: The Royal Lady with the Lamp (Ch. 118 - p. 32 / 58) Provider: Comix
+    - It's getting confused or failing strangely. The Task is WeebCentral, it opens it, fails? (also related to the weebcentral tab not closing) and then tries Comix, without spawning a new task. The downloaded chapter is the comix pages, with weebcentral metadata.
+    - We should be marking them as failed downloads (or fix the bug that causes this if it's not a failed download?) and either re-queue or leave alone depending on settings.
 
 ### Frontend
 
@@ -28,8 +35,12 @@ I'll remove this when I've got the first public release out, this is just a quic
 - [ ] Have a 'Downloads' Page, where it shows pretty much a condensed version of the queue, where stuff is grouped by series (sequential chapters?)
     - Let users re-order the queue
 - [ ] Setup Wizard: Adding 49 series to library… should have some logging or progress.
-- [ ] Local chapters (ones where we've downloaded a split chapter (7.1, 7.2, 7.3) are all grouped under a full chapter (7) despite being the local chapter)
+- [ ] Higher tier chapters (but split) aren't set as the canonical chapter, they show all variants under the base chapter
 - [ ] Does the worker page show rate limited / disabled providers?
+- [ ] The 3 dot 'action menu' doesn't render above the table, when you click it on the first few chapters, you can't click any of them because it's behind the rest of the window.
+- [ ] The worker page doesn't live-update anymore... wtf happened?
+- [ ] Only one chapter should be able to be expanded at a time.
+- [ ] selecting chapters/expanding/whatever makes the thing 
 
 ### Assend (GraphQL frontend for Moku-like frontend?)
 

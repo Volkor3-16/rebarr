@@ -18,7 +18,8 @@ pub struct VersionInfo {
 
 #[derive(Serialize, JsonSchema)]
 pub struct SystemInfo {
-    /// RSS memory used by this process and all its descendants (MB).
+    /// Actual un-freeable working set memory used by this process and all its descendants (MB).
+    /// Does not include page cache, file mappings or shared libraries. Matches what docker reports.
     pub process_mem_mb: u64,
     /// Number of manga in the library.
     pub db_manga_count: i64,
@@ -86,13 +87,15 @@ fn collect_process_tree(root_pid: u32) -> Vec<u32> {
     result
 }
 
-/// Read VmRSS (kB) for a single PID from /proc/<pid>/status.
+/// Read RssAnon (kB) for a single PID from /proc/<pid>/status.
+/// This is actual unswappable anonymous memory that cannot be freed,
+/// not including file cache, shared libraries or page cache pages.
 fn read_vmrss_kb(pid: u32) -> u64 {
     let Ok(content) = std::fs::read_to_string(format!("/proc/{pid}/status")) else {
         return 0;
     };
     for line in content.lines() {
-        if line.starts_with("VmRSS:") {
+        if line.starts_with("RssAnon:") {
             return line
                 .split_whitespace()
                 .nth(1)

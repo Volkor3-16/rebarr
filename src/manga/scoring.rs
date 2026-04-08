@@ -4,8 +4,11 @@
 // 3 = Scanlator groups not on the list
 // 4 = No scanlator group listed
 
+use std::collections::HashMap;
+
 use tracing::warn;
 
+use crate::db::quality_rules::{QualityRule, RuleCondition};
 use crate::manga::core::Chapter;
 
 /// Criteria applied when selecting which provider entries to try for a download.
@@ -60,7 +63,10 @@ pub fn compute_tier(group: Option<&str>, trusted: &[String], provider_name: Opti
     match group {
         None | Some("") => 4,
         Some(g) => {
-            if g.trim().trim_end_matches(|c: char| c == '?' || c == '!' || c == '.').eq_ignore_ascii_case("official") {
+            if g.trim()
+                .trim_end_matches(|c: char| c == '?' || c == '!' || c == '.')
+                .eq_ignore_ascii_case("official")
+            {
                 1
             } else if trusted.iter().any(|t| t.eq_ignore_ascii_case(g)) {
                 2
@@ -70,6 +76,166 @@ pub fn compute_tier(group: Option<&str>, trusted: &[String], provider_name: Opti
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Quality-rules scoring engine
+// ---------------------------------------------------------------------------
+
+/// Evaluate a single condition against a chapter.
+fn evaluate_condition(cond: &RuleCondition, chapter: &Chapter) -> bool {
+    let matched = match cond.field.as_str() {
+        "scanlator_group" => {
+            let val = chapter.scanlator_group.as_deref().unwrap_or("");
+            match_string_op(cond, val)
+        }
+        "provider_name" => {
+            let val = chapter.provider_name.as_deref().unwrap_or("");
+            match_string_op(cond, val)
+        }
+        "language" => {
+            let val = &chapter.language;
+            match_string_op(cond, val)
+        }
+        "title" => {
+            let present = chapter
+                .title
+                .as_deref()
+                .map(|t| !t.is_empty())
+                .unwrap_or(false);
+            match_presence_op(cond, present)
+        }
+        "released_at" => {
+            let present = chapter.released_at.is_some();
+            match_presence_op(cond, present)
+        }
+        _ => {
+            // Unknown field: condition does not match (forward-compat: new fields added later).
+            false
+        }
+    };
+    if cond.negate { !matched } else { matched }
+}
+
+fn match_string_op(cond: &RuleCondition, val: &str) -> bool {
+    match cond.op.as_str() {
+        "eq" => val.eq_ignore_ascii_case(cond.value.as_deref().unwrap_or("")),
+        "contains" => val
+            .to_lowercase()
+            .contains(&cond.value.as_deref().unwrap_or("").to_lowercase()),
+        "regex" => {
+            if let Some(pattern) = &cond.value {
+                regex::Regex::new(pattern)
+                    .map(|re| re.is_match(val))
+                    .unwrap_or(false)
+            } else {
+                false
+            }
+        }
+        "present" => !val.is_empty(),
+        "not_present" => val.is_empty(),
+        _ => false,
+    }
+}
+
+fn match_presence_op(cond: &RuleCondition, is_present: bool) -> bool {
+    match cond.op.as_str() {
+        "present" => is_present,
+        "not_present" | "eq" => !is_present,
+        _ => false,
+    }
+}
+
+/// Compute a total quality score for a chapter by evaluating all rules.
+/// Rules whose conditions ALL match contribute their score.
+/// The per-provider score (from `provider_scores`) is added as a tiebreaker.
+pub fn compute_score(
+    chapter: &Chapter,
+    rules: &[QualityRule],
+    provider_scores: &HashMap<String, i32>,
+) -> i32 {
+    let rule_total: i32 = rules
+        .iter()
+        .filter(|rule| {
+            rule.conditions
+                .iter()
+                .all(|cond| evaluate_condition(cond, chapter))
+        })
+        .map(|rule| rule.score)
+        .sum();
+
+    let provider_bonus = chapter
+        .provider_name
+        .as_deref()
+        .and_then(|n| provider_scores.get(n))
+        .copied()
+        .unwrap_or(0);
+
+    rule_total + provider_bonus
+}
+
+/// Returns entries sorted best-first using quality rules scoring.
+/// Language filter applied first (falls back to all if no match).
+pub fn rank_entries_scored(
+    mut entries: Vec<Chapter>,
+    language: Option<&str>,
+    rules: &[QualityRule],
+    provider_scores: &HashMap<String, i32>,
+) -> Vec<Chapter> {
+    if let Some(lang) = language {
+        let filtered: Vec<_> = entries
+            .iter()
+            .filter(|e| e.language.eq_ignore_ascii_case(lang))
+            .cloned()
+            .collect();
+        if !filtered.is_empty() {
+            entries = filtered;
+        } else {
+            warn!("[scoring] No entries match language '{lang}'; falling back to all languages.");
+        }
+    }
+    entries.sort_by(|a, b| {
+        compute_score(b, rules, provider_scores).cmp(&compute_score(a, rules, provider_scores))
+    });
+    entries
+}
+
+// ---------------------------------------------------------------------------
+// Known condition fields (for the API / frontend rule builder)
+// ---------------------------------------------------------------------------
+
+pub struct FieldDef {
+    pub field: &'static str,
+    pub label: &'static str,
+    pub ops: &'static [&'static str],
+}
+
+pub const KNOWN_FIELDS: &[FieldDef] = &[
+    FieldDef {
+        field: "scanlator_group",
+        label: "Scanlator group",
+        ops: &["eq", "contains", "regex", "present", "not_present"],
+    },
+    FieldDef {
+        field: "provider_name",
+        label: "Provider",
+        ops: &["eq", "present", "not_present"],
+    },
+    FieldDef {
+        field: "language",
+        label: "Language",
+        ops: &["eq", "present", "not_present"],
+    },
+    FieldDef {
+        field: "title",
+        label: "Has title",
+        ops: &["present", "not_present"],
+    },
+    FieldDef {
+        field: "released_at",
+        label: "Has release date",
+        ops: &["present", "not_present"],
+    },
+];
 
 #[cfg(test)]
 mod tests {

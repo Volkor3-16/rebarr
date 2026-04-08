@@ -5,12 +5,14 @@ use tokio::task::JoinSet;
 use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::db::provider::MangaProvider;
+use crate::db::quality_rules::QualityRule;
 use crate::db::task::TaskType;
 use crate::db::{
     chapter as db_chapter, provider as db_provider, provider_scores as db_scores,
-    settings as db_settings, task as db_task,
+    quality_rules as db_quality_rules, settings as db_settings, task as db_task,
 };
 use crate::manga::core::{DownloadStatus, Manga};
+use crate::manga::scoring::compute_score;
 use crate::scraper::{ProviderRegistry, ProviderSearchResult, ScraperCtx};
 
 /// Error for scary times
@@ -129,7 +131,7 @@ pub async fn search_providers(
                             Ok(r) if !r.is_empty() => {
                                 let best = best_match(&search_titles, &r);
                                 if let Some((score, _)) = best {
-                                    if score >= 0.85 {
+                                    if score >= 0.90 {
                                         results = r;
                                         break;
                                     }
@@ -262,6 +264,7 @@ async fn scrape_known_providers(
         db_settings::get(pool, "disable_chapter_upgrades", "false").await? == "true";
     let yaml_defaults = registry.yaml_default_scores();
     let provider_scores = db_scores::load_effective_scores(pool, manga.id, &yaml_defaults).await?;
+    let quality_rules = db_quality_rules::get_all(pool).await?;
     db_chapter::update_canonical(
         pool,
         manga.id,
@@ -272,7 +275,14 @@ async fn scrape_known_providers(
     .await?;
 
     if manga.monitored {
-        enqueue_auto_downloads(pool, manga, &new_ids_for_download).await;
+        enqueue_auto_downloads(
+            pool,
+            manga,
+            &new_ids_for_download,
+            &quality_rules,
+            &provider_scores,
+        )
+        .await;
         if !disable_chapter_upgrades {
             enqueue_upgrades(pool, manga, &trusted_groups).await;
         }
@@ -382,6 +392,7 @@ async fn scrape_single_provider(
         db_settings::get(pool, "disable_chapter_upgrades", "false").await? == "true";
     let yaml_defaults = registry.yaml_default_scores();
     let provider_scores = db_scores::load_effective_scores(pool, manga.id, &yaml_defaults).await?;
+    let quality_rules = db_quality_rules::get_all(pool).await?;
     db_chapter::update_canonical(
         pool,
         manga.id,
@@ -393,7 +404,14 @@ async fn scrape_single_provider(
 
     // Auto-download if monitored
     if manga.monitored {
-        enqueue_auto_downloads(pool, manga, &new_ids_for_download).await;
+        enqueue_auto_downloads(
+            pool,
+            manga,
+            &new_ids_for_download,
+            &quality_rules,
+            &provider_scores,
+        )
+        .await;
         if !disable_chapter_upgrades {
             enqueue_upgrades(pool, manga, &trusted_groups).await;
         }
@@ -526,6 +544,8 @@ async fn scrape_chapters(
     Ok((total_new, new_ids))
 }
 
+/// Case insenstive similarity matching for provider -> series matching
+/// search_providers function (line 132~) has the actual threshold
 fn best_match<'a>(
     search_titles: &[String],
     results: &'a [ProviderSearchResult],
@@ -544,10 +564,18 @@ fn best_match<'a>(
 
 /// Enqueue DownloadChapter tasks for canonical chapters that were newly discovered.
 /// Only chapters present in `new_ids` and confirmed canonical are queued.
+///
+/// When a chapter base has both a full chapter (variant=0) AND split parts (variant>0)
+/// in the canonical list, the source with the higher quality score wins:
+/// - Higher scored full chapter → download full, skip splits
+/// - Higher scored splits → download splits, skip full
+/// - Equal score → full chapter wins (tie-breaker, fewer files)
 async fn enqueue_auto_downloads(
     pool: &SqlitePool,
     manga: &Manga,
     new_ids: &std::collections::HashSet<uuid::Uuid>,
+    quality_rules: &[QualityRule],
+    provider_scores: &std::collections::HashMap<String, i32>,
 ) {
     if new_ids.is_empty() {
         return;
@@ -559,17 +587,46 @@ async fn enqueue_auto_downloads(
             return;
         }
     };
-    // If a whole chapter (variant=0) is canonical for a given base, skip its split
-    // sub-parts (variant>0) — they cover the same content.
-    let whole_chapter_bases: std::collections::HashSet<i32> = canonical
-        .iter()
-        .filter(|ch| ch.chapter_variant == 0)
-        .map(|ch| ch.chapter_base)
-        .collect();
+
+    // For bases that have BOTH a full (variant=0) and split (variant>0) canonicals,
+    // decide which to download based on quality score.
+    let mut skip_ids: std::collections::HashSet<uuid::Uuid> = std::collections::HashSet::new();
+
+    // Group canonical by chapter_base.
+    let mut by_base: std::collections::HashMap<i32, Vec<&crate::manga::core::Chapter>> =
+        std::collections::HashMap::new();
+    for ch in &canonical {
+        by_base.entry(ch.chapter_base).or_default().push(ch);
+    }
+
+    for chs in by_base.values() {
+        let full = chs.iter().find(|c| c.chapter_variant == 0);
+        let splits: Vec<_> = chs.iter().filter(|c| c.chapter_variant > 0).collect();
+        if full.is_none() || splits.is_empty() {
+            continue; // no conflict — nothing to skip
+        }
+        let full = full.unwrap();
+        let full_score = compute_score(full, quality_rules, provider_scores);
+        let splits_best_score = splits
+            .iter()
+            .map(|s| compute_score(s, quality_rules, provider_scores))
+            .max()
+            .unwrap_or(i32::MIN);
+
+        if splits_best_score > full_score {
+            // Splits are better — skip the full chapter.
+            skip_ids.insert(full.id);
+        } else {
+            // Full chapter wins (strictly better or tie) — skip all splits.
+            for s in &splits {
+                skip_ids.insert(s.id);
+            }
+        }
+    }
 
     let mut enqueued = 0usize;
     for ch in &canonical {
-        if ch.chapter_variant > 0 && whole_chapter_bases.contains(&ch.chapter_base) {
+        if skip_ids.contains(&ch.id) {
             continue;
         }
         if new_ids.contains(&ch.id) {

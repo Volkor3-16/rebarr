@@ -1,6 +1,6 @@
 // Settings view
 
-import { providers, settings, trustedGroups, providerScores, webhooks } from '../api.js';
+import { providers, settings, trustedGroups, providerScores, webhooks, qualityRules as qualityRulesApi, metadataRules as metadataRulesApi } from '../api.js';
 import { render } from '../router.js';
 import { escape, skeleton, showToast } from '../utils.js';
 import { showWizard } from './wizard.js';
@@ -211,6 +211,30 @@ export async function viewSettings() {
 
       <div class="settings-card">
         <div class="settings-card-header">
+          <iconify-icon icon="mdi:star-settings-outline" width="20" height="20"></iconify-icon>
+          <h3>Quality Rules</h3>
+        </div>
+        <p class="settings-card-desc">Rules scored when choosing the best source for each chapter. Each rule's score is added when all its conditions match. Higher total score wins. Re-scan series after changing rules to apply.</p>
+        <div id="quality-rules-list"><p>Loading...</p></div>
+        <div class="mt-2">
+          <button class="btn btn-sm" onclick="showAddQualityRuleModal()">+ Add rule</button>
+        </div>
+      </div>
+
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <iconify-icon icon="mdi:tag-text-outline" width="20" height="20"></iconify-icon>
+          <h3>Metadata Rules</h3>
+        </div>
+        <p class="settings-card-desc">Clean up or override chapter metadata (title, scanlator group) from specific providers before it is displayed or used in merging.</p>
+        <div id="metadata-rules-list"><p>Loading...</p></div>
+        <div class="mt-2">
+          <button class="btn btn-sm" onclick="showAddMetadataRuleModal()">+ Add rule</button>
+        </div>
+      </div>
+
+      <div class="settings-card">
+        <div class="settings-card-header">
           <iconify-icon icon="mdi:folder-multiple-outline" width="20" height="20"></iconify-icon>
           <h3>Libraries</h3>
         </div>
@@ -224,6 +248,8 @@ export async function viewSettings() {
     bindSchedulerAutoSave();
 
     loadTrustedGroups();
+    loadQualityRules();
+    loadMetadataRules();
     loadWebhooks();
   } catch(e) {
     render(`<p class="error">Error: ${escape(e.message)}</p>`);
@@ -631,5 +657,346 @@ window.deleteWebhook = async function(id) {
   } catch (e) {
     const status = document.getElementById('webhooks-status');
     if (status) status.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Quality Rules
+// ---------------------------------------------------------------------------
+
+let _qualityRulesCache = [];
+let _qualityRuleFields = [];
+
+async function loadQualityRules() {
+  const el = document.getElementById('quality-rules-list');
+  if (!el) return;
+  try {
+    [_qualityRulesCache, _qualityRuleFields] = await Promise.all([
+      qualityRulesApi.list(),
+      qualityRulesApi.fields(),
+    ]);
+    renderQualityRules();
+  } catch(e) {
+    el.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
+  }
+}
+
+function renderQualityRules() {
+  const el = document.getElementById('quality-rules-list');
+  if (!el) return;
+  if (_qualityRulesCache.length === 0) {
+    el.innerHTML = '<p><small>No rules yet.</small></p>';
+    return;
+  }
+  el.innerHTML = `
+    <table class="table table-sm" style="width:100%">
+      <thead><tr><th style="width:2rem"></th><th>Name</th><th>Score</th><th>Conditions</th><th></th></tr></thead>
+      <tbody id="quality-rules-tbody">
+        ${_qualityRulesCache.map(rule => `
+          <tr data-rule-id="${escape(rule.id)}">
+            <td style="cursor:grab;color:#666">⠿</td>
+            <td>${escape(rule.name)}</td>
+            <td>
+              <span class="badge ${rule.score >= 0 ? 'badge-success' : 'badge-error'}" style="font-variant-numeric:tabular-nums">
+                ${rule.score >= 0 ? '+' : ''}${rule.score}
+              </span>
+            </td>
+            <td><small style="color:#888">${formatConditions(rule.conditions)}</small></td>
+            <td>
+              <button class="btn btn-xs btn-ghost" onclick='editQualityRule(${JSON.stringify(rule)})'>Edit</button>
+              <button class="btn btn-xs btn-ghost" style="color:var(--error)" onclick="deleteQualityRule('${escape(rule.id)}')">Delete</button>
+            </td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>`;
+}
+
+function formatConditions(conditions) {
+  if (!conditions || conditions.length === 0) return '<em>always</em>';
+  return conditions.map(c => {
+    const neg = c.negate ? 'NOT ' : '';
+    if (c.op === 'present') return `${neg}${c.field} present`;
+    if (c.op === 'not_present') return `${c.field} not present`;
+    return `${neg}${c.field} ${c.op} "${c.value || ''}"`;
+  }).join(' AND ');
+}
+
+window.showAddQualityRuleModal = function() {
+  showQualityRuleModal(null);
+};
+
+window.editQualityRule = function(rule) {
+  showQualityRuleModal(rule);
+};
+
+function showQualityRuleModal(rule) {
+  const isEdit = rule !== null;
+  const conditionsJson = isEdit ? JSON.stringify(rule.conditions) : '[]';
+  document.getElementById('quality-rule-modal')?.remove();
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'quality-rule-modal';
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:560px">
+      <h2>${isEdit ? 'Edit' : 'Add'} Quality Rule</h2>
+      <div style="margin-top:0.75rem">
+        <label>Rule name</label>
+        <input type="text" id="qr-name" class="input input-sm" value="${escape(rule?.name || '')}" placeholder="e.g. Official">
+      </div>
+      <div style="margin-top:0.75rem">
+        <label>Score <small style="color:#888">(positive = preferred, negative = penalised)</small></label>
+        <input type="number" id="qr-score" class="input input-sm" value="${rule?.score ?? 0}" placeholder="e.g. 500">
+      </div>
+      <div style="margin-top:0.75rem">
+        <label>Sort order</label>
+        <input type="number" id="qr-sort" class="input input-sm" value="${rule?.sort_order ?? 50}">
+      </div>
+      <div style="margin-top:0.75rem">
+        <label>Conditions <small style="color:#888">(all must match — leave empty to always apply)</small></label>
+        <div id="qr-conditions"></div>
+        <button class="btn btn-xs btn-ghost" style="margin-top:0.25rem" onclick="addQrCondition()">+ Add condition</button>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-sm btn-ghost" onclick="document.getElementById('quality-rule-modal').remove()">Cancel</button>
+        <button class="btn btn-sm btn-primary" onclick="saveQualityRule('${escape(rule?.id || '')}')">Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  // Populate conditions
+  const condContainer = document.getElementById('qr-conditions');
+  const conditions = JSON.parse(conditionsJson);
+  conditions.forEach(c => addQrConditionRow(condContainer, c));
+}
+
+window.addQrCondition = function() {
+  const container = document.getElementById('qr-conditions');
+  if (container) addQrConditionRow(container, null);
+};
+
+function addQrConditionRow(container, cond) {
+  const row = document.createElement('div');
+  row.className = 'qr-condition-row';
+  row.style.cssText = 'display:flex;gap:0.25rem;margin-top:0.25rem;align-items:center';
+  const fieldOpts = _qualityRuleFields.map(f =>
+    `<option value="${escape(f.field)}" ${cond?.field === f.field ? 'selected' : ''}>${escape(f.label)}</option>`
+  ).join('');
+  const opOpts = ['eq','contains','regex','present','not_present'].map(op =>
+    `<option value="${op}" ${cond?.op === op ? 'selected' : ''}>${op}</option>`
+  ).join('');
+  row.innerHTML = `
+    <select class="input input-sm qr-field" onchange="updateQrOps(this)">${fieldOpts}</select>
+    <select class="input input-sm qr-op">${opOpts}</select>
+    <input class="input input-sm qr-value" style="flex:1" value="${escape(cond?.value || '')}" placeholder="value">
+    <label style="display:flex;align-items:center;gap:0.25rem;font-size:.8rem;white-space:nowrap"><input type="checkbox" class="qr-negate" ${cond?.negate ? 'checked' : ''}> NOT</label>
+    <button class="btn btn-xs btn-ghost" style="color:var(--error)" onclick="this.closest('.qr-condition-row').remove()">×</button>`;
+  container.appendChild(row);
+}
+
+window.updateQrOps = function(fieldSel) {
+  const row = fieldSel.closest('.qr-condition-row');
+  const field = fieldSel.value;
+  const fieldDef = _qualityRuleFields.find(f => f.field === field);
+  if (!fieldDef) return;
+  const opSel = row.querySelector('.qr-op');
+  const current = opSel.value;
+  opSel.innerHTML = fieldDef.ops.map(op =>
+    `<option value="${op}" ${op === current ? 'selected' : ''}>${op}</option>`
+  ).join('');
+};
+
+window.saveQualityRule = async function(existingId) {
+  const name = document.getElementById('qr-name')?.value.trim();
+  const score = parseInt(document.getElementById('qr-score')?.value, 10);
+  const sortOrder = parseInt(document.getElementById('qr-sort')?.value, 10);
+  if (!name) { showToast('Rule name is required', 'error'); return; }
+  if (isNaN(score)) { showToast('Score must be a number', 'error'); return; }
+  const conditions = [];
+  document.querySelectorAll('.qr-condition-row').forEach(row => {
+    const field = row.querySelector('.qr-field')?.value;
+    const op = row.querySelector('.qr-op')?.value;
+    const value = row.querySelector('.qr-value')?.value || undefined;
+    const negate = row.querySelector('.qr-negate')?.checked || false;
+    if (field && op) conditions.push({ field, op, value, negate });
+  });
+  try {
+    if (existingId) {
+      await qualityRulesApi.update(existingId, { name, score, sort_order: sortOrder, conditions });
+    } else {
+      await qualityRulesApi.create({ name, score, sort_order: sortOrder, conditions });
+    }
+    document.getElementById('quality-rule-modal')?.remove();
+    showToast('Rule saved');
+    loadQualityRules();
+  } catch(e) {
+    showToast('Error: ' + e.message, 'error');
+  }
+};
+
+window.deleteQualityRule = async function(id) {
+  try {
+    await qualityRulesApi.delete(id);
+    showToast('Rule deleted');
+    loadQualityRules();
+  } catch(e) {
+    showToast('Error: ' + e.message, 'error');
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Metadata Rules
+// ---------------------------------------------------------------------------
+
+let _metadataRulesCache = [];
+
+async function loadMetadataRules() {
+  try {
+    _metadataRulesCache = await metadataRulesApi.list();
+    renderMetadataRules();
+  } catch(e) {
+    const el = document.getElementById('metadata-rules-list');
+    if (el) el.innerHTML = `<p class="error">Error loading rules: ${escape(e.message)}</p>`;
+  }
+}
+
+function renderMetadataRules() {
+  const el = document.getElementById('metadata-rules-list');
+  if (!el) return;
+  if (_metadataRulesCache.length === 0) {
+    el.innerHTML = '<p style="color:#888;font-size:.875rem">No rules defined.</p>';
+    return;
+  }
+  el.innerHTML = `
+    <table class="table table-xs w-full">
+      <thead><tr><th>Name</th><th>Provider</th><th>Field</th><th>Action</th><th>Pattern / Value</th><th></th></tr></thead>
+      <tbody>
+        ${_metadataRulesCache.map(rule => `
+          <tr data-mr-id="${escape(rule.id)}">
+            <td>${escape(rule.name)}</td>
+            <td><small style="color:#888">${rule.provider_name ? escape(rule.provider_name) : '<em>all</em>'}</small></td>
+            <td><code>${escape(rule.field)}</code></td>
+            <td><span class="badge badge-neutral badge-sm">${escape(rule.action)}</span></td>
+            <td><small style="color:#888;word-break:break-all">${rule.pattern ? escape(rule.pattern) : ''}${rule.value ? (rule.pattern ? ' → ' : '') + escape(rule.value) : ''}</small></td>
+            <td>
+              <button class="btn btn-xs btn-ghost" onclick='editMetadataRule(${JSON.stringify(rule)})'>Edit</button>
+              <button class="btn btn-xs btn-ghost" style="color:var(--error)" onclick="deleteMetadataRule('${escape(rule.id)}')">Delete</button>
+            </td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>`;
+}
+
+window.showAddMetadataRuleModal = function() {
+  showMetadataRuleModal(null);
+};
+
+window.editMetadataRule = function(rule) {
+  showMetadataRuleModal(rule);
+};
+
+function showMetadataRuleModal(rule) {
+  const isEdit = rule !== null;
+  document.getElementById('metadata-rule-modal')?.remove();
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'metadata-rule-modal';
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:500px">
+      <h2>${isEdit ? 'Edit' : 'Add'} Metadata Rule</h2>
+      <div style="margin-top:0.75rem">
+        <label>Rule name</label>
+        <input type="text" id="mr-name" class="input input-sm" value="${escape(rule?.name || '')}" placeholder="e.g. Strip generic titles">
+      </div>
+      <div style="margin-top:0.75rem">
+        <label>Sort order</label>
+        <input type="number" id="mr-sort" class="input input-sm" value="${rule?.sort_order ?? 50}">
+      </div>
+      <div style="margin-top:0.75rem">
+        <label>Provider <small style="color:#888">(leave blank to apply to all providers)</small></label>
+        <input type="text" id="mr-provider" class="input input-sm" value="${escape(rule?.provider_name || '')}" placeholder="e.g. WeebCentral">
+      </div>
+      <div style="margin-top:0.75rem">
+        <label>Field</label>
+        <select id="mr-field" class="input input-sm" onchange="updateMrActionHelp()">
+          <option value="title" ${(rule?.field || 'title') === 'title' ? 'selected' : ''}>title</option>
+          <option value="scanlator_group" ${rule?.field === 'scanlator_group' ? 'selected' : ''}>scanlator_group</option>
+        </select>
+      </div>
+      <div style="margin-top:0.75rem">
+        <label>Action</label>
+        <select id="mr-action" class="input input-sm" onchange="updateMrActionHelp()">
+          <option value="clear" ${(rule?.action || '') === 'clear' ? 'selected' : ''}>clear — remove value (if pattern matches)</option>
+          <option value="set" ${rule?.action === 'set' ? 'selected' : ''}>set — override with fixed value</option>
+          <option value="replace" ${rule?.action === 'replace' ? 'selected' : ''}>replace — regex substitution</option>
+        </select>
+      </div>
+      <div class="form-group" id="mr-pattern-row">
+        <label>Pattern (regex) — required for clear/replace</label>
+        <input type="text" id="mr-pattern" class="input input-sm" style="font-family:monospace" value="${escape(rule?.pattern || '')}" placeholder="e.g. ^Chapter\\s*\\d+$">
+      </div>
+      <div class="form-group" id="mr-value-row">
+        <label>Value — required for set/replace</label>
+        <input type="text" id="mr-value" class="input input-sm" value="${escape(rule?.value || '')}" placeholder="e.g. Official">
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-sm btn-ghost" onclick="document.getElementById('metadata-rule-modal').remove()">Cancel</button>
+        <button class="btn btn-sm btn-primary" onclick="saveMetadataRule('${escape(rule?.id || '')}')">Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  updateMrActionHelp();
+}
+
+window.updateMrActionHelp = function() {
+  const action = document.getElementById('mr-action')?.value;
+  const patternRow = document.getElementById('mr-pattern-row');
+  const valueRow = document.getElementById('mr-value-row');
+  if (!action || !patternRow || !valueRow) return;
+  patternRow.style.display = action === 'set' ? 'none' : '';
+  valueRow.style.display = action === 'clear' ? 'none' : '';
+};
+
+window.saveMetadataRule = async function(existingId) {
+  const name = document.getElementById('mr-name')?.value.trim();
+  const sortOrder = parseInt(document.getElementById('mr-sort')?.value, 10);
+  const providerName = document.getElementById('mr-provider')?.value.trim() || null;
+  const field = document.getElementById('mr-field')?.value;
+  const action = document.getElementById('mr-action')?.value;
+  const pattern = document.getElementById('mr-pattern')?.value.trim() || null;
+  const value = document.getElementById('mr-value')?.value.trim() || null;
+
+  if (!name) { showToast('Rule name is required', 'error'); return; }
+  if (!field) { showToast('Field is required', 'error'); return; }
+  if (!action) { showToast('Action is required', 'error'); return; }
+  if ((action === 'clear' || action === 'replace') && !pattern) {
+    showToast('Pattern is required for clear/replace actions', 'error'); return;
+  }
+  if ((action === 'set' || action === 'replace') && !value) {
+    showToast('Value is required for set/replace actions', 'error'); return;
+  }
+
+  const payload = { name, sort_order: sortOrder, provider_name: providerName, field, action, pattern, value };
+  try {
+    if (existingId) {
+      await metadataRulesApi.update(existingId, payload);
+    } else {
+      await metadataRulesApi.create(payload);
+    }
+    document.getElementById('metadata-rule-modal')?.remove();
+    showToast('Rule saved');
+    loadMetadataRules();
+  } catch(e) {
+    showToast('Error: ' + e.message, 'error');
+  }
+};
+
+window.deleteMetadataRule = async function(id) {
+  try {
+    await metadataRulesApi.delete(id);
+    showToast('Rule deleted');
+    loadMetadataRules();
+  } catch(e) {
+    showToast('Error: ' + e.message, 'error');
   }
 };

@@ -9,8 +9,9 @@ use uuid::Uuid;
 
 use crate::{
     db,
-    manga::{core::DownloadStatus, files, scoring},
+    manga::{core::DownloadStatus, files, metadata_rules, scoring},
     scheduler::worker::CancelMap,
+    scraper::ProviderRegistry,
 };
 
 use super::errors::{ApiError, ApiResult, bad_request, internal, not_found};
@@ -42,6 +43,8 @@ pub struct ChapterListItem {
     pub is_extra: bool,
     /// True if this row is the current canonical winner for its (chapter_base, chapter_variant) slot.
     pub is_canonical: bool,
+    /// True if the canonical for this slot was set by the user (not auto-scored).
+    pub has_canonical_override: bool,
     /// Scanlation tier: 1=Official, 2=Known Scanner, 3=Unknown Scanner, 4=No Group.
     pub tier: u8,
     /// Size of the CBZ file on disk in bytes (None if not yet downloaded or not measured).
@@ -72,6 +75,8 @@ pub async fn list_chapters(pool: &State<SqlitePool>, id: &str) -> ApiResult<Vec<
 /// Load and shape the full chapter list for a manga:
 /// applies preferred-language filtering, annotates each row with its canonical flag
 /// and tier score, and returns the API response shape.
+/// Metadata (title, released_at) is merged from all providers for each canonical slot:
+/// the highest-scored source's title is used, earliest release date wins.
 async fn build_chapter_list(pool: &SqlitePool, manga_id: Uuid) -> ApiResult<Vec<ChapterListItem>> {
     let all_rows = db::chapter::get_all_for_manga(pool, manga_id)
         .await
@@ -83,13 +88,14 @@ async fn build_chapter_list(pool: &SqlitePool, manga_id: Uuid) -> ApiResult<Vec<
 
     // Filter by preferred language; chapters with no language set are always included.
     let filtered_rows: Vec<_> = if preferred_language.is_empty() {
-        all_rows
+        all_rows.clone()
     } else {
         all_rows
-            .into_iter()
+            .iter()
             .filter(|ch| {
                 ch.language.eq_ignore_ascii_case(&preferred_language) || ch.language.is_empty()
             })
+            .cloned()
             .collect()
     };
 
@@ -100,6 +106,80 @@ async fn build_chapter_list(pool: &SqlitePool, manga_id: Uuid) -> ApiResult<Vec<
             .into_iter()
             .collect();
 
+    // Load canonical overrides so we can expose has_canonical_override per row.
+    let canonical_overrides = db::chapter::get_canonical_overrides_map(pool, manga_id)
+        .await
+        .map_err(internal)?;
+
+    // Load quality rules for metadata merging score comparisons.
+    let quality_rules = db::quality_rules::get_all(pool).await.map_err(internal)?;
+    let empty_scores = std::collections::HashMap::new();
+
+    // Load metadata filtering rules to clean up provider metadata before merging.
+    let meta_rules = metadata_rules::load(pool).await.map_err(internal)?;
+
+    // Build a per-slot metadata merge map: (base, variant) -> (best_title, earliest_released_at).
+    // Only for canonical slots — non-canonical rows never need merged metadata.
+    // We look across ALL provider rows for the same (base, variant, language) slot.
+    let mut slot_meta: std::collections::HashMap<(i32, i32), (Option<String>, Option<i64>)> =
+        std::collections::HashMap::new();
+
+    for canonical_uuid in &canonical_uuids {
+        // Find the canonical chapter row.
+        let Some(canonical_ch) = filtered_rows
+            .iter()
+            .find(|ch| &ch.id.to_string() == canonical_uuid)
+        else {
+            continue;
+        };
+
+        let key = (canonical_ch.chapter_base, canonical_ch.chapter_variant);
+        let lang = &canonical_ch.language;
+
+        // Collect all provider rows for this (base, variant, language) slot.
+        let slot_rows: Vec<_> = all_rows
+            .iter()
+            .filter(|ch| {
+                ch.chapter_base == canonical_ch.chapter_base
+                    && ch.chapter_variant == canonical_ch.chapter_variant
+                    && ch.language.eq_ignore_ascii_case(lang)
+            })
+            .collect();
+
+        // Best title: score-ordered, first non-empty title wins after applying metadata rules.
+        let mut scored: Vec<_> = slot_rows
+            .iter()
+            .map(|ch| {
+                let score = scoring::compute_score(ch, &quality_rules, &empty_scores);
+                (score, ch)
+            })
+            .collect();
+        scored.sort_by(|a, b| b.0.cmp(&a.0));
+
+        let best_title = scored
+            .iter()
+            .filter_map(|(_, ch)| {
+                let provider = ch.provider_name.as_deref();
+                let filtered = metadata_rules::apply_rules(
+                    &meta_rules,
+                    provider,
+                    "title",
+                    ch.title.as_deref(),
+                );
+                filtered.filter(|t| !t.is_empty())
+            })
+            .next();
+
+        // Earliest released_at across all providers.
+        let earliest_released_at = slot_rows
+            .iter()
+            .filter_map(|ch| ch.released_at)
+            .map(|dt| dt.timestamp())
+            .min();
+
+        slot_meta.insert(key, (best_title, earliest_released_at));
+    }
+
     let trusted = db::provider::get_trusted_groups(pool)
         .await
         .map_err(internal)?;
@@ -108,27 +188,57 @@ async fn build_chapter_list(pool: &SqlitePool, manga_id: Uuid) -> ApiResult<Vec<
         .into_iter()
         .map(|ch| {
             let is_canonical = canonical_uuids.contains(&ch.id.to_string());
+            let slot_key_str = format!("{}:{}", ch.chapter_base, ch.chapter_variant);
+            let has_canonical_override = is_canonical
+                && canonical_overrides
+                    .get(&slot_key_str)
+                    .map(|ov| ov == &ch.id.to_string())
+                    .unwrap_or(false);
             let tier = scoring::compute_tier(
                 ch.scanlator_group.as_deref(),
                 &trusted,
                 ch.provider_name.as_deref(),
             );
+
+            // For canonical rows, use merged metadata; non-canonical rows use their own data.
+            let (display_title, display_released_at) = if is_canonical {
+                let slot_key = (ch.chapter_base, ch.chapter_variant);
+                if let Some((merged_title, merged_released)) = slot_meta.get(&slot_key) {
+                    (
+                        merged_title.clone().or_else(|| ch.title.clone()),
+                        merged_released.or_else(|| ch.released_at.map(|dt| dt.timestamp())),
+                    )
+                } else {
+                    (ch.title.clone(), ch.released_at.map(|dt| dt.timestamp()))
+                }
+            } else {
+                (ch.title.clone(), ch.released_at.map(|dt| dt.timestamp()))
+            };
+
+            let display_scanlator_group = metadata_rules::apply_rules(
+                &meta_rules,
+                ch.provider_name.as_deref(),
+                "scanlator_group",
+                ch.scanlator_group.as_deref(),
+            );
+
             ChapterListItem {
                 id: ch.id.to_string(),
                 manga_id: ch.manga_id.to_string(),
                 chapter_base: ch.chapter_base,
                 chapter_variant: ch.chapter_variant,
-                title: ch.title,
+                title: display_title,
                 language: ch.language,
-                scanlator_group: ch.scanlator_group,
+                scanlator_group: display_scanlator_group,
                 provider_name: ch.provider_name,
                 chapter_url: ch.chapter_url,
                 download_status: ch.download_status.as_str().to_string(),
-                released_at: ch.released_at.map(|dt| dt.timestamp()),
+                released_at: display_released_at,
                 downloaded_at: ch.downloaded_at.map(|dt| dt.timestamp()),
                 scraped_at: ch.scraped_at.map(|dt| dt.timestamp()),
                 is_extra: ch.is_extra,
                 is_canonical,
+                has_canonical_override,
                 tier,
                 file_size_bytes: ch.file_size_bytes,
             }
@@ -261,6 +371,7 @@ pub fn routes() -> Vec<rocket::Route> {
         toggle_extra_api,
         optimise_chapter_api,
         set_canonical_api,
+        clear_canonical_override_api,
     ]
 }
 
@@ -362,7 +473,7 @@ pub async fn toggle_extra_api(
         .map_err(internal)?
         .ok_or_else(|| not_found("chapter not found"))?;
 
-    db::chapter::set_is_extra(pool.inner(), chapter.id, !chapter.is_extra)
+    db::chapter::set_is_extra_manual(pool.inner(), chapter.id, !chapter.is_extra)
         .await
         .map_err(internal)?;
 
@@ -445,5 +556,56 @@ pub async fn set_canonical_api(
 
     info!("[api] Canonical override set: manga={manga_id}, ch={base}.{variant} → {chapter_id}");
 
+    Ok(Status::NoContent)
+}
+
+// ---------------------------------------------------------------------------
+// DELETE /api/manga/<id>/chapters/<base>/<variant>/canonical-override
+// ---------------------------------------------------------------------------
+
+/// Clears a user-set canonical override, returning the slot to auto-scored selection.
+#[openapi(tag = "Chapters")]
+#[delete("/api/manga/<id>/chapters/<base>/<variant>/canonical-override")]
+pub async fn clear_canonical_override_api(
+    pool: &State<SqlitePool>,
+    registry: &State<std::sync::Arc<ProviderRegistry>>,
+    id: &str,
+    base: i32,
+    variant: i32,
+) -> Result<Status, (Status, Json<ApiError>)> {
+    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+
+    db::manga::get_by_id(pool.inner(), manga_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("manga not found"))?;
+
+    db::chapter::remove_canonical_override(pool.inner(), manga_id, base, variant)
+        .await
+        .map_err(internal)?;
+
+    // Re-score so the auto-selected winner takes effect immediately.
+    let trusted_groups = db::provider::get_trusted_groups(pool.inner())
+        .await
+        .map_err(internal)?;
+    let preferred_language = db::settings::get(pool.inner(), "preferred_language", "")
+        .await
+        .map_err(internal)?;
+    let yaml_defaults = registry.yaml_default_scores();
+    let provider_scores =
+        db::provider_scores::load_effective_scores(pool.inner(), manga_id, &yaml_defaults)
+            .await
+            .map_err(internal)?;
+    db::chapter::update_canonical(
+        pool.inner(),
+        manga_id,
+        &trusted_groups,
+        &preferred_language,
+        &provider_scores,
+    )
+    .await
+    .map_err(internal)?;
+
+    info!("[api] Canonical override cleared: manga={manga_id}, ch={base}.{variant}");
     Ok(Status::NoContent)
 }

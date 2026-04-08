@@ -747,13 +747,16 @@ function chapterRow(mangaId, ch, {
     const canReset = (status === 'Failed' || status === 'Queued' || status === 'Downloading') && ch.is_canonical;
     const resetBtn = canReset ? `<button onclick="doResetChapter('${mangaId}', ${base}, ${variant})">Reset</button>` : '';
     const extraBtn = ch.is_canonical ? `<button onclick="doToggleExtra('${mangaId}', ${base}, ${variant})">${ch.is_extra ? 'Un-extra' : 'Extra'}</button>` : '';
+    const clearOverrideBtn = (ch.is_canonical && ch.has_canonical_override)
+      ? `<button onclick="doClearCanonicalOverride('${mangaId}', ${base}, ${variant})">Reset to auto</button>`
+      : '';
     const deleteBtn = (ch.is_canonical && status !== 'Missing') ? `<button class="danger" onclick="doDeleteChapter('${mangaId}', ${base}, ${variant})">Delete</button>` : '';
 
     actionMenuHtml = `<div class="action-menu">
       <button class="action-menu-btn" type="button" aria-haspopup="menu" aria-expanded="false"
         onclick="toggleActionMenu('${menuId}')"><iconify-icon icon="mdi:dots-vertical" width="18" height="18"></iconify-icon></button>
       <div class="action-menu-dropdown" id="${menuId}">
-        ${dlBtn}${resetBtn}${extraBtn}${deleteBtn}
+        ${dlBtn}${resetBtn}${extraBtn}${clearOverrideBtn}${deleteBtn}
       </div>
     </div>`;
   }
@@ -1475,6 +1478,15 @@ window.doToggleExtra = async function(mangaId, base, variant) {
 window.doSetCanonical = async function(mangaId, base, variant, chapterId) {
   try {
     await mangaApi.setCanonical(mangaId, base, variant, chapterId);
+    loadChapters(mangaId);
+  } catch(e) {
+    showToast('Error: ' + e.message, 'error');
+  }
+};
+
+window.doClearCanonicalOverride = async function(mangaId, base, variant) {
+  try {
+    await mangaApi.clearCanonicalOverride(mangaId, base, variant);
     loadChapters(mangaId);
   } catch(e) {
     showToast('Error: ' + e.message, 'error');

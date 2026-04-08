@@ -220,10 +220,7 @@ async fn scan_keeps_true_extra_variants_marked_as_extra() {
     let provider = StaticProvider::new("static").with_series(
         "ExtraVariantSeries",
         "static://extra-variant",
-        vec![
-            StaticChapter::new("12.5").with_title("Extra"),
-            ch("13"),
-        ],
+        vec![StaticChapter::new("12.5").with_title("Extra"), ch("13")],
     );
     let registry = provider_registry(provider);
     let ctx = test_ctx(&registry);
@@ -240,7 +237,10 @@ async fn scan_keeps_true_extra_variants_marked_as_extra() {
         .find(|c| c.chapter_base == 12 && c.chapter_variant == 5)
         .expect("chapter 12.5 should exist");
 
-    assert!(extra.is_extra, "real extra variants should stay marked extra");
+    assert!(
+        extra.is_extra,
+        "real extra variants should stay marked extra"
+    );
 }
 
 /// Two scanlator groups providing the same chapter number both get stored.
