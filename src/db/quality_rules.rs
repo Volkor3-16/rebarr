@@ -149,3 +149,71 @@ pub async fn reorder(pool: &SqlitePool, ordering: &[(String, i32)]) -> Result<()
     }
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Default provider rules
+// ---------------------------------------------------------------------------
+
+/// Ensure that default quality rules exist for each provider that has a default_score defined.
+/// Will only add a rule if there are **no existing rules at all** for that provider.
+/// Existing rules (even with different score) are never modified or removed.
+pub async fn ensure_default_provider_rules(
+    pool: &SqlitePool,
+    providers: &[crate::scraper::def::ProviderDef],
+) -> Result<(), sqlx::Error> {
+    use tracing::info;
+
+    let existing_rules = get_all(pool).await?;
+
+    // Collect all provider names that already have any rule
+    let mut providers_with_existing_rules = std::collections::HashSet::new();
+    for rule in &existing_rules {
+        for condition in &rule.conditions {
+            if condition.field == "provider_name" && condition.op == "eq" {
+                if let Some(ref provider_name) = condition.value {
+                    providers_with_existing_rules.insert(provider_name);
+                }
+            }
+        }
+    }
+
+    let mut added_count = 0;
+
+    for provider in providers {
+        // Skip if no default score defined
+        let Some(score) = provider.default_score else {
+            continue;
+        };
+
+        // Skip if this provider already has any rule
+        if providers_with_existing_rules.contains(&provider.name) {
+            continue;
+        }
+
+        // Create default rule for this provider
+        let rule_name = format!("Default: {}", provider.name);
+        let conditions = vec![RuleCondition {
+            field: "provider_name".to_string(),
+            op: "eq".to_string(),
+            value: Some(provider.name.clone()),
+            negate: false,
+        }];
+
+        // Insert with sort_order 0 (lowest priority, runs last)
+        match insert(pool, &rule_name, score, 0, &conditions).await {
+            Ok(_) => {
+                info!("Added default quality rule for provider '{}' with score {}", provider.name, score);
+                added_count += 1;
+            }
+            Err(e) => {
+                tracing::warn!("Failed to add default quality rule for provider '{}': {}", provider.name, e);
+            }
+        }
+    }
+
+    if added_count > 0 {
+        info!("Added {} default provider quality rules", added_count);
+    }
+
+    Ok(())
+}

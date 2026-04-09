@@ -377,7 +377,8 @@ async fn run_scheduler(
 
 /// This is where each task in the queue is processed.
 #[tracing::instrument(
-    skip(pool, registry, ctx, cancel_token),
+    level = "trace",
+    skip(pool, registry, ctx, cancel_token, task),
     fields(task_id = %task.id, task_type = ?task.task_type)
 )]
 async fn dispatch(
@@ -403,7 +404,7 @@ async fn dispatch(
                 .map_err(|e| e.to_string())?;
 
             // Phase 2: Enqueue per-provider chapter sync tasks
-            let globally_disabled = crate::db::provider_scores::get_globally_disabled(pool)
+            let globally_disabled = crate::db::provider_settings::get_globally_disabled(pool)
                 .await
                 .unwrap_or_default();
             let all_entries = db_provider::get_all_for_manga(pool, manga.id)

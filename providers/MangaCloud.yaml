@@ -17,7 +17,7 @@ search:
           content-type: application/json
           Referer: "{base_url}/"
           Origin: "{base_url}"
-        body: '{"terms":"{query_raw}"}'
+        body: '{"terms":"{query_raw|slice:0:62}"}'
         var: results
         json_path: data
     - from_json:

@@ -11,7 +11,6 @@ use crate::{
     db,
     manga::{core::DownloadStatus, files, metadata_rules, scoring},
     scheduler::worker::CancelMap,
-    scraper::ProviderRegistry,
 };
 
 use super::errors::{ApiError, ApiResult, bad_request, internal, not_found};
@@ -45,8 +44,10 @@ pub struct ChapterListItem {
     pub is_canonical: bool,
     /// True if the canonical for this slot was set by the user (not auto-scored).
     pub has_canonical_override: bool,
-    /// Scanlation tier: 1=Official, 2=Known Scanner, 3=Unknown Scanner, 4=No Group.
-    pub tier: u8,
+    /// Quality score computed from quality rules (higher = preferred source).
+    pub score: i32,
+    /// List of quality rules that matched this chapter, with their individual score values.
+    pub matched_rules: Vec<(String, i32)>,
     /// Size of the CBZ file on disk in bytes (None if not yet downloaded or not measured).
     pub file_size_bytes: Option<i64>,
 }
@@ -113,7 +114,6 @@ async fn build_chapter_list(pool: &SqlitePool, manga_id: Uuid) -> ApiResult<Vec<
 
     // Load quality rules for metadata merging score comparisons.
     let quality_rules = db::quality_rules::get_all(pool).await.map_err(internal)?;
-    let empty_scores = std::collections::HashMap::new();
 
     // Load metadata filtering rules to clean up provider metadata before merging.
     let meta_rules = metadata_rules::load(pool).await.map_err(internal)?;
@@ -150,7 +150,7 @@ async fn build_chapter_list(pool: &SqlitePool, manga_id: Uuid) -> ApiResult<Vec<
         let mut scored: Vec<_> = slot_rows
             .iter()
             .map(|ch| {
-                let score = scoring::compute_score(ch, &quality_rules, &empty_scores);
+                let score = scoring::compute_score(ch, &quality_rules);
                 (score, ch)
             })
             .collect();
@@ -180,10 +180,6 @@ async fn build_chapter_list(pool: &SqlitePool, manga_id: Uuid) -> ApiResult<Vec<
         slot_meta.insert(key, (best_title, earliest_released_at));
     }
 
-    let trusted = db::provider::get_trusted_groups(pool)
-        .await
-        .map_err(internal)?;
-
     let items = filtered_rows
         .into_iter()
         .map(|ch| {
@@ -194,11 +190,8 @@ async fn build_chapter_list(pool: &SqlitePool, manga_id: Uuid) -> ApiResult<Vec<
                     .get(&slot_key_str)
                     .map(|ov| ov == &ch.id.to_string())
                     .unwrap_or(false);
-            let tier = scoring::compute_tier(
-                ch.scanlator_group.as_deref(),
-                &trusted,
-                ch.provider_name.as_deref(),
-            );
+            let score = scoring::compute_score(&ch, &quality_rules);
+            let matched_rules = scoring::compute_matched_rules(&ch, &quality_rules);
 
             // For canonical rows, use merged metadata; non-canonical rows use their own data.
             let (display_title, display_released_at) = if is_canonical {
@@ -239,7 +232,8 @@ async fn build_chapter_list(pool: &SqlitePool, manga_id: Uuid) -> ApiResult<Vec<
                 is_extra: ch.is_extra,
                 is_canonical,
                 has_canonical_override,
-                tier,
+                score,
+                matched_rules,
                 file_size_bytes: ch.file_size_bytes,
             }
         })
@@ -305,7 +299,7 @@ pub async fn download_chapter_api(
 // DELETE /api/manga/<id>/chapters/<base>/<variant>
 // ---------------------------------------------------------------------------
 
-/// Deletes the downloaded cbz from disk
+/// Deletes the downloaded cbz from disk and keeps the chapter entry in the database.
 #[openapi(tag = "Chapters")]
 #[delete("/api/manga/<id>/chapters/<base>/<variant>")]
 pub async fn delete_chapter_api(
@@ -349,7 +343,40 @@ pub async fn delete_chapter_api(
         }
     }
 
-    // Delete from database
+    db::chapter::set_status(pool.inner(), chapter.id, DownloadStatus::Missing, None)
+        .await
+        .map_err(internal)?;
+    db::chapter::clear_download_artifacts(pool.inner(), chapter.id)
+        .await
+        .map_err(internal)?;
+    db::chapter::update_manga_counts(pool.inner(), manga_id)
+        .await
+        .map_err(internal)?;
+
+    Ok(Status::NoContent)
+}
+
+/// Deletes the chapter entry from the database.
+#[openapi(tag = "Chapters")]
+#[delete("/api/manga/<id>/chapters/<base>/<variant>/entry")]
+pub async fn delete_chapter_entry_api(
+    pool: &State<SqlitePool>,
+    id: &str,
+    base: i32,
+    variant: i32,
+) -> Result<Status, (Status, Json<ApiError>)> {
+    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+
+    db::manga::get_by_id(pool.inner(), manga_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("manga not found"))?;
+
+    let chapter = db::chapter::get_canonical_by_number(pool.inner(), manga_id, base, variant)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("chapter not found"))?;
+
     db::chapter::delete(pool.inner(), chapter.id)
         .await
         .map_err(internal)?;
@@ -366,6 +393,7 @@ pub fn routes() -> Vec<rocket::Route> {
         list_chapters,
         download_chapter_api,
         delete_chapter_api,
+        delete_chapter_entry_api,
         mark_chapter_downloaded,
         reset_chapter_api,
         toggle_extra_api,
@@ -568,7 +596,6 @@ pub async fn set_canonical_api(
 #[delete("/api/manga/<id>/chapters/<base>/<variant>/canonical-override")]
 pub async fn clear_canonical_override_api(
     pool: &State<SqlitePool>,
-    registry: &State<std::sync::Arc<ProviderRegistry>>,
     id: &str,
     base: i32,
     variant: i32,
@@ -585,26 +612,12 @@ pub async fn clear_canonical_override_api(
         .map_err(internal)?;
 
     // Re-score so the auto-selected winner takes effect immediately.
-    let trusted_groups = db::provider::get_trusted_groups(pool.inner())
-        .await
-        .map_err(internal)?;
     let preferred_language = db::settings::get(pool.inner(), "preferred_language", "")
         .await
         .map_err(internal)?;
-    let yaml_defaults = registry.yaml_default_scores();
-    let provider_scores =
-        db::provider_scores::load_effective_scores(pool.inner(), manga_id, &yaml_defaults)
-            .await
-            .map_err(internal)?;
-    db::chapter::update_canonical(
-        pool.inner(),
-        manga_id,
-        &trusted_groups,
-        &preferred_language,
-        &provider_scores,
-    )
-    .await
-    .map_err(internal)?;
+    db::chapter::update_canonical(pool.inner(), manga_id, &preferred_language)
+        .await
+        .map_err(internal)?;
 
     info!("[api] Canonical override cleared: manga={manga_id}, ch={base}.{variant}");
     Ok(Status::NoContent)

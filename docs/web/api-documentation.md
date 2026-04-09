@@ -516,6 +516,18 @@ POST /api/manga/{id}/chapters/{base}/{variant}/download
 DELETE /api/manga/{id}/chapters/{base}/{variant}
 ```
 
+Deletes the downloaded file from disk, keeps the chapter entry in the database, and marks it `Missing`.
+
+**Response:** `204 No Content`
+
+### Delete Chapter Entry
+
+```
+DELETE /api/manga/{id}/chapters/{base}/{variant}/entry
+```
+
+Deletes the chapter entry from the database entirely.
+
 **Response:** `204 No Content`
 
 ### Mark Chapter Downloaded

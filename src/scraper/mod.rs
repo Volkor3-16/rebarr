@@ -210,8 +210,14 @@ impl ScraperCtx {
 /// YAML-defined providers implement this through `YamlProvider` + the
 /// declarative engine. Complex providers can also be implemented directly
 /// in Rust by implementing this trait.
+use std::any::Any;
+
 #[async_trait]
-pub trait Provider: Send + Sync {
+pub trait Provider: Send + Sync + Any {
+    /// Returns self as Any for downcasting.
+    fn as_any(&self) -> &dyn Any where Self: Sized {
+        self
+    }
     /// Human-readable provider name (e.g. "MangaFire").
     fn name(&self) -> &str;
 
@@ -219,13 +225,6 @@ pub trait Provider: Send + Sync {
     /// Always true for YAML-driven providers (all actions use the headless browser).
     fn needs_browser(&self) -> bool {
         true
-    }
-
-    /// Default score used as a tiebreaker within the same tier when selecting the canonical
-    /// chapter. Higher scores are preferred. Can be overridden globally or per-series via the API.
-    /// Defaults to 0.
-    fn default_score(&self) -> i32 {
-        0
     }
 
     /// Maximum requests per minute to enforce for this provider.
@@ -281,6 +280,8 @@ pub trait Provider: Send + Sync {
 pub struct ProviderRegistry {
     /// All loaded providers
     providers: Vec<Arc<dyn Provider>>,
+    /// Raw ProviderDefs from YAML
+    defs: Vec<ProviderDef>,
 }
 
 impl ProviderRegistry {
@@ -292,6 +293,7 @@ impl ProviderRegistry {
             .unwrap_or_else(|_| PathBuf::from("./providers"));
 
         let mut providers: Vec<Arc<dyn Provider>> = Vec::new();
+        let mut defs: Vec<ProviderDef> = Vec::new();
 
         if !dir.exists() {
             info!(
@@ -299,7 +301,7 @@ impl ProviderRegistry {
                  Create the directory and add YAML files to enable scraping.",
                 dir.display()
             );
-            return Ok(Self { providers });
+            return Ok(Self { providers, defs });
         }
 
         let mut read_dir = tokio::fs::read_dir(&dir).await?;
@@ -313,16 +315,17 @@ impl ProviderRegistry {
             match serde_yaml::from_str::<ProviderDef>(&content) {
                 Ok(def) => {
                     info!("Loaded provider '{}' from {}", def.name, path.display());
-                    providers.push(Arc::new(YamlProvider::new(def)));
+                    providers.push(Arc::new(YamlProvider::new(def.clone())));
+                    defs.push(def);
                 }
                 Err(e) => {
-                    warn!("Skipping invalid provider config '{}': {e}", path.display());
+                    warn!("Skipping invalid provider config '{}': {}", path.display(), e);
                 }
             }
         }
 
         info!("Loaded {} provider(s) total.", providers.len());
-        Ok(Self { providers })
+        Ok(Self { providers, defs })
     }
 
     /// All loaded providers in load order.
@@ -336,19 +339,17 @@ impl ProviderRegistry {
         self.providers.iter().filter(|p| p.needs_browser())
     }
 
-    /// Returns a map of provider_name → YAML default score for all loaded providers.
-    pub fn yaml_default_scores(&self) -> std::collections::HashMap<String, i32> {
-        self.providers
-            .iter()
-            .map(|p| (p.name().to_owned(), p.default_score()))
-            .collect()
-    }
-
     pub fn is_empty(&self) -> bool {
         self.providers.is_empty()
     }
 
     pub fn from_providers_for_tests(providers: Vec<Arc<dyn Provider>>) -> Self {
-        Self { providers }
+        Self { providers, defs: Vec::new() }
+    }
+
+    /// Get all ProviderDef instances for loaded YAML providers.
+    /// Used to populate default quality rules.
+    pub fn all_defs(&self) -> &[ProviderDef] {
+        &self.defs
     }
 }

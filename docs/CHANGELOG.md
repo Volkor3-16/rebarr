@@ -2,19 +2,31 @@
 
 This a informal changelog so i can keep track of what im doing.
 
-## 2026-04-07
+## 2026-04-07 to 2026-04-10
 
-Now that I'm actually /using/ rebarr properly...
+Now that I'm actually /using/ rebarr properly, and i've been sick at home doing nothing...
 
-- Upped the best_match threshold to help avoid bad matches (you can always manually match with 'Pick' button)
-- Removed Trusted Scanlator Ranking
-- Removed provider scoring ranking
-- Added a Quality Rules system
+- Search matches now have to have a jaro winkler of 90 for auto-matching to work.
+    - I kept getting bullshit matches and I didn't like needing to disable providers constantly.
+- Searches will no longer exit early if they find a (potential) match, we search all names and merge and match.
+- `n.5` chapters no longer get flagged as extras.
+    - Only flags now if it has 'extra|omake|bonus|special|side' OR `n.1, n.2, n.3, n.4` don't exist.
+- Replaced Tier ranking and provider scores with one 'Quality Score' system.
     - Like the other *arrs, the user enters their own preferences and scores, and all of them are added up to figure out what is the best chapter.
     - We automatically convert trusted scanlators
-- `n.5` release chapters aren't always made extras, but only if there's no `n.1, n.2, n.3, n.4`
+    - Clicking a scanlator group on the chapter list will now have a widget that will easily change the quality rules scoring for that group. (because it used to just add/remove the group from trusted tier.)
 - Manually set extras is saved properly, not reset on next scan.
-- 
+- Implemented slice templates, since some stupid (MangaCloud) providers can't handle searching more than 64 characters.
+- Improved series page
+    - You can only expand one chapter row at a time. It's just more clean this way.
+    - Removed page flickering as you scrolled. Maybe?
+    - You can click the first chapter's action menu items now.
+    - Chapters you've 'picked' (made canonical) now show a chip on them.
+    - Extra/Bonus/Omake Chapters now also have a chip.
+    - The download button is integrated with the download status button now.
+    - You can now delete just the cbz file, or both the cbz and chapter entry.
+- Improved error handling
+    - We now check if a provider gives us fake images, no images, or duplicate images, or if some of the chapters fail.
 
 ## 2026-04-06
 

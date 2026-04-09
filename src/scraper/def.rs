@@ -25,11 +25,6 @@ pub struct ProviderDef {
     #[serde(default)]
     pub tags: Vec<ProviderTag>,
 
-    /// Default score for chapter ranking tiebreaks within the same tier.
-    /// Can be overridden globally or per-series via the API.
-    #[serde(default)]
-    pub default_score: i32,
-
     /// Per-provider rate limiting.
     #[serde(default)]
     pub rate_limit: RateLimitDef,
@@ -37,6 +32,11 @@ pub struct ProviderDef {
     /// Per-provider scheduler concurrency.
     #[serde(default)]
     pub concurrency: ProviderConcurrencyDef,
+
+    /// Default quality score for this provider. If no existing quality rule matches this provider,
+    /// this score will be automatically added as a default rule at application startup.
+    #[serde(default)]
+    pub default_score: Option<i32>,
 
     /// Steps to search for a manga by title.
     pub search: Option<ActionDef>,

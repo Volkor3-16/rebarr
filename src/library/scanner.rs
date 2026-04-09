@@ -304,7 +304,7 @@ pub async fn scan_existing_chapters(
     }
 
     // Recompute canonical chapters (disk-scanned files win with no trusted groups needed)
-    db_chapter::update_canonical(pool, manga_id, &[], "", &std::collections::HashMap::new())
+    db_chapter::update_canonical(pool, manga_id, "")
         .await
         .map_err(|e| e.to_string())?;
 

@@ -9,13 +9,12 @@ pub(crate) mod events;
 pub(crate) mod import;
 pub(crate) mod libraries;
 pub(crate) mod manga;
-pub(crate) mod provider_scores;
+pub(crate) mod provider_settings;
 pub(crate) mod metadata_rules;
 pub(crate) mod quality_rules;
 pub(crate) mod settings;
 pub(crate) mod system;
 pub(crate) mod tasks;
-pub(crate) mod trusted_groups;
 pub(crate) mod webhooks;
 
 // Frontend HTML
@@ -28,13 +27,12 @@ pub use frontend::routes as frontend_routes;
 pub use import::routes as import_routes;
 pub use libraries::routes as library_routes;
 pub use manga::routes as manga_routes;
-pub use provider_scores::routes as provider_score_routes;
+pub use provider_settings::routes as provider_setting_routes;
 pub use metadata_rules::routes as metadata_rule_routes;
 pub use quality_rules::routes as quality_rule_routes;
 pub use settings::routes as settings_routes;
 pub use system::routes as system_routes;
 pub use tasks::routes as task_routes;
-pub use trusted_groups::routes as trusted_group_routes;
 pub use webhooks::routes as webhook_routes;
 
 /// Routes that can't be included in the OpenAPI spec (e.g. raw file responses)
@@ -51,8 +49,7 @@ pub fn api_routes() -> Vec<rocket::Route> {
     routes.extend(import_routes());
     routes.extend(task_routes());
     routes.extend(settings_routes());
-    routes.extend(trusted_group_routes());
-    routes.extend(provider_score_routes());
+    routes.extend(provider_setting_routes());
     routes.extend(metadata_rule_routes());
     routes.extend(quality_rule_routes());
     routes.extend(system_routes());
@@ -108,13 +105,12 @@ pub fn openapi_routes() -> Vec<rocket::Route> {
             manga::set_provider_url,
             manga::upload_cover_url,
             manga::upload_cover_file,
-            // Provider Scores
-            provider_scores::get_global_score,
-            provider_scores::set_global_score,
-            provider_scores::delete_global_score,
-            provider_scores::get_series_score,
-            provider_scores::set_series_score,
-            provider_scores::delete_series_score,
+            // Provider Settings
+            provider_settings::get_global_settings,
+            provider_settings::set_global_settings,
+            provider_settings::get_series_settings,
+            provider_settings::set_series_settings,
+            provider_settings::delete_series_settings,
             // Settings
             settings::get_settings,
             settings::update_settings,
@@ -139,10 +135,6 @@ pub fn openapi_routes() -> Vec<rocket::Route> {
             quality_rules::update_rule,
             quality_rules::delete_rule,
             quality_rules::reorder_rules,
-            // Trusted Groups
-            trusted_groups::list_trusted_groups,
-            trusted_groups::add_trusted_group,
-            trusted_groups::remove_trusted_group,
             // Webhooks
             webhooks::list_webhooks,
             webhooks::create_webhook,

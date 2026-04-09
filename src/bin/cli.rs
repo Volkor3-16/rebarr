@@ -344,17 +344,16 @@ fn cmd_providers(registry: &ProviderRegistry) {
         return;
     }
     println!(
-        "{:<22} {:>5}  {:>6}  {:<8}  Tags",
-        "Name", "RPM", "Score", "Version"
+        "{:<22} {:>5}  {:<8}  Tags",
+        "Name", "RPM", "Version"
     );
-    println!("{}", "-".repeat(72));
+    println!("{}", "-".repeat(60));
     for p in &all {
         let tags: Vec<String> = p.tags().iter().map(|t| format!("{t:?}")).collect();
         println!(
-            "{:<22} {:>5}  {:>6}  {:<8}  {}",
+            "{:<22} {:>5}  {:<8}  {}",
             p.name(),
             p.rate_limit_rpm(),
-            p.default_score(),
             p.version().unwrap_or("—"),
             tags.join(", ")
         );

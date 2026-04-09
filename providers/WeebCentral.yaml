@@ -10,20 +10,33 @@ rate_limit:
 
 search:
   steps:
-    - open: "/search/data?author=&text={query}&sort=Best%20Match&order=Descending&official=Any&anime=Any&adult=Any&display_mode=Full%20Display"
+    - open: "{base_url}"
+    - fetch:
+        url: "{base_url}/search/simple?location=main"
+        method: POST
+        headers:
+          HX-Request: "true"
+          HX-Trigger: "quick-search-input"
+          HX-Trigger-Name: "text"
+          HX-Target: "quick-search-result"
+          Content-Type: "application/x-www-form-urlencoded"
+        body: "text={query}"
+        var: search_result
+    - script: "document.write(`{search_result}`);"
     - foreach:
-        selector: "article > section > a"
+        selector: "a"
         extract:
           title:
-            selector: "div:not([class]):last-child"
+            selector: "div:last-child"
             content: text
+            trim: true
           url:
             selector: ""
             content: attr
             attr_name: href
             prefix: "{base_url}"
           cover:
-            selector: "source, img"
+            selector: "img"
             content: attr
             attr_name: src
 

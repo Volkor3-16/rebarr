@@ -1,12 +1,161 @@
 use chrono::{DateTime, TimeZone, Utc};
+use ordered_float::OrderedFloat;
 use sqlx::SqlitePool;
 use tracing::debug;
 use uuid::Uuid;
 
-use crate::db::{manga as db_manga, provider_scores, quality_rules};
+use crate::db::{manga as db_manga, provider_settings, quality_rules};
 use crate::manga::core::{Chapter, DownloadStatus};
 use crate::manga::scoring::compute_score;
 use crate::scraper::ProviderChapterInfo;
+
+// Chapter normalization and canonical selection types
+#[derive(Debug, Clone, PartialEq)]
+enum BundleType {
+    Full,
+    Split,
+    Extra,
+}
+
+#[derive(Debug, Clone)]
+struct ProviderBundle {
+    entries: Vec<Chapter>,
+    bundle_type: BundleType,
+    coverage: usize,
+}
+
+// Helper functions for slot assignment and split detection
+async fn assign_slot_id(chapter_base: i32, chapter_variant: i32, all_chapters: &[Chapter]) -> f64 {
+    if chapter_variant == 0 {
+        return chapter_base as f64;
+    }
+
+    // Check if this is a standalone decimal chapter
+    let has_split_structure = all_chapters.iter().any(|ch| {
+        ch.chapter_base == chapter_base &&
+        ch.chapter_variant >= 1 && ch.chapter_variant <= 4
+    });
+
+    if !has_split_structure {
+        // Standalone decimal - use full chapter number as slot
+        chapter_base as f64 + chapter_variant as f64 * 0.1
+    } else {
+        // Part of a split structure - use base chapter as slot
+        chapter_base as f64
+    }
+}
+
+async fn detect_split_chapters(chapter_base: i32, all_chapters: &[Chapter]) -> bool {
+    let variants: Vec<i32> = all_chapters
+        .iter()
+        .filter(|ch| ch.chapter_base == chapter_base)
+        .map(|ch| ch.chapter_variant)
+        .collect();
+
+    // Explicit split presence: variants 1-4 exist
+    let has_explicit_split = variants.iter().any(|v| *v >= 1 && *v <= 4);
+
+    // Implicit split presence: more than 1 variant exists
+    let has_implicit_split = variants.len() > 1;
+
+    has_explicit_split || has_implicit_split
+}
+
+async fn classify_bundle(pool: &SqlitePool, bundle: &[Chapter]) -> BundleType {
+    if bundle.len() == 1 {
+        let chapter = &bundle[0];
+        if chapter.chapter_variant == 0 {
+            BundleType::Full
+        } else {
+            // Check if this is an extra chapter
+            let all_chapters = get_all_for_manga(pool, chapter.manga_id).await.unwrap();
+            let is_extra = assign_slot_id(chapter.chapter_base, chapter.chapter_variant, &all_chapters).await != chapter.chapter_base as f64;
+            if is_extra { BundleType::Extra } else { BundleType::Full }
+        }
+    } else {
+        BundleType::Split
+    }
+}
+
+async fn compute_bundle_coverage(pool: &SqlitePool, bundle: &[Chapter]) -> usize {
+    if let BundleType::Split = classify_bundle(pool, bundle).await {
+        bundle.len()
+    } else {
+        1
+    }
+}
+
+// Select the best bundle according to the structured selection rules.
+// Returns all chapters that should be canonical for this slot:
+// - Split bundles → all entries (every part is canonical)
+// - Full/Extra bundles → the single best-scored entry
+async fn select_best_bundle(
+    bundles: &[ProviderBundle],
+    _all_chapters: &[Chapter],
+    quality_rules: &[quality_rules::QualityRule],
+) -> Vec<Chapter> {
+    if bundles.is_empty() {
+        return vec![];
+    }
+
+    // Step 1: Apply quality score
+    let mut best_bundles: Vec<&ProviderBundle> = Vec::new();
+    let mut best_score = i32::MIN;
+
+    for bundle in bundles {
+        // Use the highest-scored entry in the bundle as the representative
+        let bundle_score = bundle
+            .entries
+            .iter()
+            .map(|e| compute_score(e, quality_rules))
+            .max()
+            .unwrap_or(i32::MIN);
+
+        if bundle_score > best_score {
+            best_score = bundle_score;
+            best_bundles.clear();
+            best_bundles.push(bundle);
+        } else if bundle_score == best_score {
+            best_bundles.push(bundle);
+        }
+    }
+
+    // Step 2: Apply coverage (for bundles with multiple entries)
+    if best_bundles.len() > 1 {
+        let mut best_coverage = 0;
+        let mut coverage_bundles: Vec<&ProviderBundle> = Vec::new();
+
+        for bundle in &best_bundles {
+            if bundle.entries.len() > 1 && bundle.coverage > best_coverage {
+                best_coverage = bundle.coverage;
+                coverage_bundles.clear();
+                coverage_bundles.push(bundle);
+            } else if bundle.entries.len() == 1 || bundle.coverage == best_coverage {
+                coverage_bundles.push(bundle);
+            }
+        }
+
+        best_bundles = coverage_bundles;
+    }
+
+    // Step 4: Stability rule — pick first remaining bundle.
+    // For split bundles, all parts are canonical. For full/extra, pick the best-scored entry.
+    if let Some(selected_bundle) = best_bundles.first() {
+        if selected_bundle.bundle_type == BundleType::Split {
+            return selected_bundle.entries.clone();
+        }
+
+        // Full or Extra: return the single best-scored entry.
+        let best_entry = selected_bundle
+            .entries
+            .iter()
+            .max_by_key(|e| compute_score(e, quality_rules))
+            .unwrap(); // entries is non-empty by construction
+        return vec![best_entry.clone()];
+    }
+
+    vec![]
+}
 
 // ---------------------------------------------------------------------------
 // Row types
@@ -359,6 +508,18 @@ pub async fn set_file_size(
     Ok(())
 }
 
+/// Clear downloaded_at and any tracked on-disk file size for a chapter.
+pub async fn clear_download_artifacts(
+    pool: &SqlitePool,
+    chapter_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE Chapters SET downloaded_at = NULL, file_size_bytes = NULL WHERE uuid = ?")
+        .bind(chapter_id.to_string())
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// Return the UUIDs and provider names of all chapters for a manga that are currently Downloaded.
 pub async fn get_downloaded(
     pool: &SqlitePool,
@@ -413,15 +574,13 @@ async fn load_canonical_overrides(
 pub async fn update_canonical(
     pool: &SqlitePool,
     manga_id: Uuid,
-    _trusted_groups: &[String],
-    preferred_language: &str,
-    provider_scores: &std::collections::HashMap<String, i32>,
+    _preferred_language: &str,
 ) -> Result<(), sqlx::Error> {
     let all = get_all_for_manga(pool, manga_id).await?;
 
     // Filter out chapters from disabled providers.
-    let globally_disabled = provider_scores::get_globally_disabled(pool).await?;
-    let series_overrides = provider_scores::get_all_series_overrides(pool, manga_id).await?;
+    let globally_disabled = provider_settings::get_globally_disabled(pool).await?;
+    let series_overrides = provider_settings::get_all_series_overrides(pool, manga_id).await?;
     let all: Vec<Chapter> = all
         .into_iter()
         .filter(|ch| {
@@ -430,10 +589,9 @@ pub async fn update_canonical(
                 None => return true, // keep chapters without provider (e.g. disk-scanned)
             };
             // Per-series override takes priority over global setting.
-
             series_overrides
                 .get(name)
-                .map(|(_, enabled)| *enabled)
+                .copied()
                 .unwrap_or_else(|| !globally_disabled.contains(name))
         })
         .collect();
@@ -457,13 +615,43 @@ pub async fn update_canonical(
             let has_low = chs
                 .iter()
                 .any(|c| c.chapter_variant >= 1 && c.chapter_variant <= 4);
-            for ch in chs.iter().filter(|c| c.chapter_variant >= 5) {
-                if has_low {
-                    // Part of a split sequence — not an extra.
-                    set_is_extra(pool, ch.id, false).await?;
-                } else {
-                    // Standalone .5+ with no split siblings — extra/bonus.
+            
+            // Get sorted list of all variants for this provider+base
+            let mut variants: Vec<i32> = chs.iter().map(|c| c.chapter_variant).collect();
+            variants.sort_unstable();
+            
+            for ch in chs.iter().filter(|c| c.chapter_variant >= 1) {
+                // First check title for explicit extra indicators
+                let title_lower = ch.title.as_deref().unwrap_or_default().to_lowercase();
+                let has_extra_title = title_lower.contains("extra")
+                    || title_lower.contains("bonus")
+                    || title_lower.contains("special")
+                    || title_lower.contains("omake")
+                    || title_lower.contains("side")
+                    || title_lower.contains("extras");
+                
+                if has_extra_title {
+                    // Title explicitly says it's extra - always mark as extra
                     set_is_extra(pool, ch.id, true).await?;
+                    continue;
+                }
+                
+                // For variants >=5, check if they are actually sequential
+                if ch.chapter_variant >= 5 {
+                    // Check if all previous numbers exist sequentially
+                    let expected = ch.chapter_variant - 1;
+                    let has_previous = variants.binary_search(&expected).is_ok();
+                    
+                    if !has_previous {
+                        // Missing previous variant number - this is an extra, not part of split
+                        set_is_extra(pool, ch.id, true).await?;
+                    } else if has_low {
+                        // Sequential and part of split sequence - not extra
+                        set_is_extra(pool, ch.id, false).await?;
+                    } else {
+                        // Standalone .5+ with no split siblings - extra/bonus
+                        set_is_extra(pool, ch.id, true).await?;
+                    }
                 }
             }
         }
@@ -478,64 +666,48 @@ pub async fn update_canonical(
 
     // Load user-set overrides before re-scoring.
     let overrides = load_canonical_overrides(pool, manga_id).await?;
-    let disable_chapter_upgrades =
+    let _disable_chapter_upgrades =
         crate::db::settings::get(pool, "disable_chapter_upgrades", "false").await? == "true";
 
-    // Group by (chapter_base, chapter_variant)
-    let mut groups: std::collections::BTreeMap<(i32, i32), Vec<Chapter>> =
-        std::collections::BTreeMap::new();
-    for ch in all {
-        groups
-            .entry((ch.chapter_base, ch.chapter_variant))
+    // Group by (slot_id, provider_name, is_full) to create Provider Bundles.
+    // A full chapter (variant=0) and split parts (variant>0) from the same provider at the
+    // same slot are *different logical representations* and must be separate competing bundles.
+    let mut bundles: std::collections::HashMap<(OrderedFloat<f64>, Option<String>, bool), Vec<Chapter>> =
+        std::collections::HashMap::new();
+    for ch in &all {
+        let slot_id = assign_slot_id(ch.chapter_base, ch.chapter_variant, &all).await;
+        let is_full = ch.chapter_variant == 0;
+        bundles
+            .entry((ordered_float::OrderedFloat(slot_id), ch.provider_name.clone(), is_full))
             .or_default()
-            .push(ch);
+            .push(ch.clone());
     }
 
-    let mut canonical_uuids: Vec<String> = Vec::with_capacity(groups.len());
+    // Classify bundles and collect all bundles by slot_id
+    let mut bundles_by_slot: std::collections::HashMap<OrderedFloat<f64>, Vec<ProviderBundle>> = std::collections::HashMap::new();
+    for ((slot_id, _provider_name, _is_full), entries) in bundles {
+        let bundle_type = classify_bundle(pool, &entries).await;
+        let coverage = compute_bundle_coverage(pool, &entries).await;
+        let _is_split_chapter = detect_split_chapters(entries[0].chapter_base, &all).await;
 
-    for ((base, variant), mut entries) in groups {
-        let key = format!("{base}:{variant}");
-        if let Some(ov_uuid) = overrides.get(&key) {
-            if valid_uuids.contains(ov_uuid.as_str()) {
-                canonical_uuids.push(ov_uuid.clone());
-                continue;
-            }
-        }
+        let bundle = ProviderBundle {
+            entries,
+            bundle_type,
+            coverage,
+        };
 
-        if disable_chapter_upgrades {
-            let downloaded_entries: Vec<_> = entries
-                .iter()
-                .filter(|entry| entry.download_status == DownloadStatus::Downloaded)
-                .cloned()
-                .collect();
-            if !downloaded_entries.is_empty() {
-                entries = downloaded_entries;
-            }
-        }
+        bundles_by_slot
+            .entry(slot_id)
+            .or_default()
+            .push(bundle);
+    }
 
-        // Language filter: prefer matching language but fall back to all
-        if !preferred_language.is_empty() {
-            let lang_filtered: Vec<_> = entries
-                .iter()
-                .filter(|e| e.language.eq_ignore_ascii_case(preferred_language))
-                .cloned()
-                .collect();
-            if !lang_filtered.is_empty() {
-                entries = lang_filtered;
-            }
-        }
+    let mut canonical_uuids: Vec<String> = Vec::with_capacity(bundles_by_slot.len());
 
-        // Sort by quality score descending: highest-scored source wins.
-        // Quality rules replace the old fixed-tier + provider-score system.
-        entries.sort_by(|a, b| {
-            compute_score(b, &quality_rules, provider_scores).cmp(&compute_score(
-                a,
-                &quality_rules,
-                provider_scores,
-            ))
-        });
-
-        if let Some(winner) = entries.into_iter().next() {
+    for (_slot_id, bundles) in bundles_by_slot {
+        // Apply deterministic selection priority; splits return all parts.
+        let winners = select_best_bundle(&bundles, &all, &quality_rules).await;
+        for winner in winners {
             canonical_uuids.push(winner.id.to_string());
         }
     }
@@ -649,13 +821,46 @@ pub async fn set_canonical_override(
         "[db] set_canonical_override: manga={manga_id}, ch={chapter_base}.{chapter_variant} → {new_uuid}"
     );
     let current = get_canonical_for_manga(pool, manga_id).await?;
+    let all_chapters = get_all_for_manga(pool, manga_id).await?;
 
+    // Get the chapter that the user selected
+    let selected_chapter = all_chapters.iter()
+        .find(|ch| ch.id == new_uuid)
+        .ok_or_else(|| sqlx::Error::RowNotFound)?;
+
+    // Remove ALL chapters with the same chapter_base (clear entire slot, not just exact variant)
+    // This fixes the bug where both split and full chapters remained canonical
     let mut new_uuids: Vec<String> = current
         .iter()
-        .filter(|ch| !(ch.chapter_base == chapter_base && ch.chapter_variant == chapter_variant))
+        .filter(|ch| ch.chapter_base != chapter_base)
         .map(|ch| ch.id.to_string())
         .collect();
-    new_uuids.push(new_uuid.to_string());
+
+    // Find all split parts from the SAME provider for this chapter base
+    // If user picked part 15.1, automatically include 15.2, 15.3 etc from same provider
+    let mut bundle_chapters: Vec<&Chapter> = all_chapters.iter()
+        .filter(|ch| {
+            ch.chapter_base == chapter_base
+            && ch.provider_name == selected_chapter.provider_name
+            && ch.chapter_variant >= 1
+            && ch.chapter_variant <= 4
+            && !ch.is_extra
+        })
+        .collect();
+
+    // Sort by variant number to maintain correct order
+    bundle_chapters.sort_by_key(|ch| ch.chapter_variant);
+
+    if bundle_chapters.len() > 1 {
+        // This is a split bundle - add ALL parts
+        debug!("[db] set_canonical_override: detected split bundle with {} parts", bundle_chapters.len());
+        for part in bundle_chapters {
+            new_uuids.push(part.id.to_string());
+        }
+    } else {
+        // Single chapter (full or standalone extra) - add just this one
+        new_uuids.push(new_uuid.to_string());
+    }
 
     let json = serde_json::to_string(&new_uuids).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
 
@@ -828,7 +1033,6 @@ pub struct UpgradeCandidate {
 pub async fn find_upgrade_candidates(
     pool: &SqlitePool,
     manga_id: Uuid,
-    _trusted_groups: &[String],
 ) -> Result<Vec<UpgradeCandidate>, sqlx::Error> {
     let all = get_all_for_manga(pool, manga_id).await?;
     let canonical_set: std::collections::HashSet<String> = get_canonical_uuids(pool, manga_id)
@@ -837,8 +1041,6 @@ pub async fn find_upgrade_candidates(
         .collect();
 
     let rules = quality_rules::get_all(pool).await?;
-    // Use empty provider scores as baseline (per-manga scores from Providers table loaded separately if needed)
-    let empty_scores = std::collections::HashMap::new();
 
     // Group by (chapter_base, chapter_variant)
     let mut groups: std::collections::HashMap<(i32, i32), Vec<Chapter>> =
@@ -862,7 +1064,7 @@ pub async fn find_upgrade_candidates(
             None => continue,
         };
 
-        let canon_score = compute_score(canonical, &rules, &empty_scores);
+        let canon_score = compute_score(canonical, &rules);
 
         // Find Downloaded entries that have a lower score than the canonical.
         for entry in &entries {
@@ -872,7 +1074,7 @@ pub async fn find_upgrade_candidates(
             if entry.download_status != DownloadStatus::Downloaded {
                 continue;
             }
-            let entry_score = compute_score(entry, &rules, &empty_scores);
+            let entry_score = compute_score(entry, &rules);
             if canon_score > entry_score {
                 candidates.push(UpgradeCandidate {
                     chapter_base: base,

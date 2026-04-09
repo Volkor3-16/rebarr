@@ -32,6 +32,7 @@ zip = "8.2.0"
 humantime = "2"
 image = { version = "0.25.10", features = ["webp"] }
 base64 = "0.22.1"
+blake3 = "1.5.1"
 clap = { version = "4", features = ["derive"] }
 governor = "0.10"
 nonzero_ext = "0.3"
@@ -39,6 +40,7 @@ dashmap = "6"
 schemars = { version = "0.8", features = ["chrono", "uuid1"] }
 okapi = { version = "0.7", features = ["preserve_order"] }
 rocket_okapi = { version = "0.9", features = ["swagger", "rapidoc"] }
+ordered-float = "5.3.0"
 
 [dev-dependencies]
 tempfile = "3"

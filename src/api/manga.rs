@@ -65,8 +65,6 @@ pub(crate) struct ProviderInfo {
     needs_browser: bool,
     version: Option<String>,
     tags: Vec<crate::scraper::def::ProviderTag>,
-    /// Default score from the provider YAML config (used as fallback when no override is set).
-    default_score: i32,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -468,7 +466,6 @@ pub async fn list_providers(
             needs_browser: p.needs_browser(),
             version: p.version().map(str::to_owned),
             tags: p.tags().to_vec(),
-            default_score: p.default_score(),
         })
         .collect();
     Json(providers)
@@ -821,23 +818,22 @@ pub async fn provider_candidates(
     search_titles.sort();
     search_titles.dedup();
 
-    // Try each title until we get some results
+    // Search ALL titles and merge all results
     let mut raw_results = Vec::new();
     for title in &search_titles {
         match ctx.executor.search(ctx.inner(), provider, title).await {
-            Ok(r) if !r.is_empty() => {
-                raw_results = r;
-                break;
+            Ok(r) => {
+                raw_results.extend(r);
             }
-            Ok(_) => continue,
             Err(e) => {
-                return Err(err(
-                    rocket::http::Status::BadGateway,
-                    format!("provider search failed: {e}"),
-                ));
+                warn!("Search for title '{}' failed: {}", title, e);
             }
         }
     }
+
+    // Deduplicate results by URL
+    let mut seen = std::collections::HashSet::new();
+    raw_results.retain(|r| seen.insert(r.url.clone()));
 
     // Score every result against all synonyms and return sorted descending
     let mut candidates: Vec<ProviderCandidate> = raw_results

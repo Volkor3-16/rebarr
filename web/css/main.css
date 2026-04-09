@@ -99,6 +99,8 @@
 html {
   font-size: 16px;
   -webkit-font-smoothing: antialiased;
+  /* Reserve scrollbar space so fixed elements don't jitter when scrollbar appears/disappears */
+  scrollbar-gutter: stable;
 }
 
 body {
@@ -232,6 +234,8 @@ th {
   background: var(--bg-secondary);
   position: sticky;
   top: 0;
+  z-index: 10;
+  background-clip: padding-box;
 }
 
 /* Forms */
@@ -565,6 +569,34 @@ img.cover-lg {
   background: var(--bg-secondary);
 }
 
+/* Chapter status chips */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 0.75em;
+  font-weight: 600;
+  margin-right: 4px;
+  line-height: 1.4;
+}
+
+.chip-canonical {
+  background: rgba(51, 153, 51, 0.15);
+  color: var(--success);
+  border: 1px solid rgba(51, 153, 51, 0.3);
+}
+
+.chip-extra {
+  background: rgba(204, 119, 0, 0.15);
+  color: var(--warning);
+  border: 1px solid rgba(204, 119, 0, 0.3);
+}
+
+.canonical-chapter {
+  color: inherit;
+}
+
 .ch-variant {
   background: var(--bg-tertiary);
 }
@@ -622,6 +654,61 @@ img.cover-lg {
 .ch-dl-icon.disabled {
   color: var(--border);
   cursor: default;
+}
+
+/* Action Menu Dropdown Positioning Fix */
+.action-menu {
+  position: relative;
+  display: inline-block;
+}
+
+.action-menu-dropdown {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  margin-top: 4px;
+  min-width: 140px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  z-index: 100;
+  display: none;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.action-menu-dropdown.open {
+  display: flex;
+}
+
+/* Flip dropdown upwards when near bottom of viewport */
+.action-menu-dropdown.flip-up {
+  top: auto;
+  bottom: 100%;
+  margin-top: 0;
+  margin-bottom: 4px;
+}
+
+.action-menu-dropdown button {
+  width: 100%;
+  text-align: left;
+  border-radius: 0;
+  border: none;
+  background: transparent;
+  padding: 8px 12px;
+}
+
+.action-menu-dropdown button:hover {
+  background: var(--bg-secondary);
+}
+
+.action-menu-dropdown button.danger {
+  color: var(--error);
+}
+
+.action-menu-dropdown button.danger:hover {
+  background: rgba(204, 51, 51, 0.1);
 }
 
 /* Utility classes */
@@ -685,6 +772,7 @@ img.cover-lg {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+  overflow: hidden;
 }
 
 .toast {
@@ -1129,7 +1217,7 @@ pre {
   display: flex;
   gap: 1rem;
   margin-bottom: 1rem;
-  transition: all 0.3s ease;
+  transition: margin-bottom 0.3s ease, padding-bottom 0.3s ease;
 }
 
 .header-container.collapsed {
@@ -2578,24 +2666,37 @@ nav.header-collapsed a {
 body.bulk-bar-active { padding-bottom: 60px; }
 
 /* Quick-download hover button on chapter rows */
-.ch-quick-dl {
+.ch-status-cell {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ch-status-overlay-btn {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   opacity: 0;
   background: var(--accent);
   color: white;
   border: none;
-  border-radius: var(--radius);
-  padding: 0.2rem 0.4rem;
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   cursor: pointer;
-  font-size: 0.75rem;
   transition: opacity var(--transition), background var(--transition);
   display: inline-flex;
   align-items: center;
-  gap: 0.2rem;
-  margin-right: 0.25rem;
+  justify-content: center;
+  z-index: 5;
 }
 
-.ch-row:hover .ch-quick-dl { opacity: 1; }
-.ch-quick-dl:hover { background: var(--accent-hover); }
+.ch-row:hover .ch-status-overlay-btn { opacity: 1; }
+.ch-status-overlay-btn:hover { background: var(--accent-hover); }
+.ch-status-overlay-btn:active { transform: translate(-50%, calc(-50% + 1px)); }
 
 /* ===== Cancelled Tasks Toggle (inline) ===== */
 

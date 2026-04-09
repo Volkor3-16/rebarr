@@ -13,19 +13,10 @@ I'll remove this when I've got the first public release out, this is just a quic
 
 ### Backend
 
-- [ ] Make sure chapters are done nicely, `A Veternarian in Another World` - Local chapters aren't flagged as downloaded, despite being there.
-    - Do we have ScanDisk task validate and check this?
 - [ ] Upgrade Policy (when do we replace existing chapters with a new (better?) copy?)
     - Never (Downloaded chapters will never be replaced)
     - Always (New & better chapters will replace older ones) - default, and what we have now
 - [ ] Importing is flakey
-- [ ] The setup wizard sets the scores for all providers to 0, it should instead be left null and used the defaults from the provider yaml.
-- [ ] Make sure Search all providers is prioritised above DownloadChapter
-    - And manual downloads have higher priority than automatic ones
-- [ ] Chapter counts should be the highest `chapter_base` instead of the total number.
-- [ ] DownloadChapter: Doctor Elise: The Royal Lady with the Lamp (Ch. 118 - p. 32 / 58) Provider: Comix
-    - It's getting confused or failing strangely. The Task is WeebCentral, it opens it, fails? (also related to the weebcentral tab not closing) and then tries Comix, without spawning a new task. The downloaded chapter is the comix pages, with weebcentral metadata.
-    - We should be marking them as failed downloads (or fix the bug that causes this if it's not a failed download?) and either re-queue or leave alone depending on settings.
 
 ### Frontend
 
@@ -33,14 +24,8 @@ I'll remove this when I've got the first public release out, this is just a quic
     - The site looks nice as it is, and the import is half broken, this'd be a lot of work... polishing up a poop.
 - [ ] Include the downloaded_at in task queue page and series.
 - [ ] Have a 'Downloads' Page, where it shows pretty much a condensed version of the queue, where stuff is grouped by series (sequential chapters?)
-    - Let users re-order the queue
+- [ ] Let users re-order the queue
 - [ ] Setup Wizard: Adding 49 series to library… should have some logging or progress.
-- [ ] Higher tier chapters (but split) aren't set as the canonical chapter, they show all variants under the base chapter
-- [ ] Does the worker page show rate limited / disabled providers?
-- [ ] The 3 dot 'action menu' doesn't render above the table, when you click it on the first few chapters, you can't click any of them because it's behind the rest of the window.
-- [ ] The worker page doesn't live-update anymore... wtf happened?
-- [ ] Only one chapter should be able to be expanded at a time.
-- [ ] selecting chapters/expanding/whatever makes the thing 
 
 ### Assend (GraphQL frontend for Moku-like frontend?)
 
@@ -67,6 +52,8 @@ I'll remove this when I've got the first public release out, this is just a quic
     - During setup wizard, ask the user to paste in a repo (or multiple)
     - Automatic updates and all that nice stuff
     - Add more providers
+    - The separate repo should also have a nice CI Pipeline that runs tests for each provider, using text_fixtures, to find broken providers, and alert of new broken ones & a nice 'auto updating' list of what providers work
+- [ ] Fix AllManga again... yay
 
 ## Features
 

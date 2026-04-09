@@ -1,12 +1,10 @@
 // Settings view
 
-import { providers, settings, trustedGroups, providerScores, webhooks, qualityRules as qualityRulesApi, metadataRules as metadataRulesApi } from '../api.js';
+import { providers, settings, providerSettings, webhooks, qualityRules as qualityRulesApi, metadataRules as metadataRulesApi } from '../api.js';
 import { render } from '../router.js';
 import { escape, skeleton, showToast } from '../utils.js';
 import { showWizard } from './wizard.js';
 
-// Store provider default scores mapping: name -> default_score
-let _providerDefaults = {};
 let _settingsSaveSeq = 0;
 
 export async function viewSettings() {
@@ -27,30 +25,13 @@ export async function viewSettings() {
       `<span class="badge badge-neutral">${escape(lang)} <button class="synonym-remove btn btn-xs btn-ghost" style="padding:0;margin-left:4px;min-height:auto;line-height:1" onclick="removeFilterLanguage('${escape(lang)}')" title="Remove">×</button></span>`
     ).join('');
 
-    // Store provider defaults for later use
-    _providerDefaults = {};
-    providerList.forEach(p => { _providerDefaults[p.name] = p.default_score != null ? p.default_score : 0; });
-
-    // Provider rows with global score inputs and enabled toggle
+    // Provider rows with enabled toggle
     const pRows = providerList.length === 0
-      ? '<tr><td colspan="4">No providers loaded. Add YAML files to the providers/ directory.</td></tr>'
+      ? '<tr><td colspan="3">No providers loaded. Add YAML files to the providers/ directory.</td></tr>'
       : providerList.map(p => `
           <tr data-provider-row="${escape(p.name)}">
             <td>${escape(p.name)}</td>
             <td>${p.needs_browser ? '<iconify-icon icon="mdi:google-chrome" width="16" height="16" title="Requires browser"></iconify-icon>' : '—'}</td>
-            <td>
-              <div class="score-input-wrapper" data-provider="${escape(p.name)}">
-                <input type="number" class="score-input" data-provider="${escape(p.name)}"
-                  min="-100" max="100"
-                  placeholder="default"
-                  title="Global score override for ${escape(p.name)} (used as tiebreaker within same tier). Leave blank to use YAML default."
-                  onchange="saveGlobalScore('${escape(p.name)}', this.value)"
-                  onblur="saveGlobalScore('${escape(p.name)}', this.value)">
-                <button class="score-clear-btn" data-provider="${escape(p.name)}"
-                  style="display:none" title="Clear override, revert to default"
-                  onclick="clearGlobalScore('${escape(p.name)}')">&times;</button>
-              </div>
-            </td>
             <td>
               <input type="checkbox" class="enabled-toggle" data-provider="${escape(p.name)}"
                 checked title="Globally enable/disable ${escape(p.name)}"
@@ -129,15 +110,15 @@ export async function viewSettings() {
 
       <div class="settings-card">
         <div class="settings-card-header">
-          <iconify-icon icon="mdi:star-outline" width="20" height="20"></iconify-icon>
-          <h3>Provider Scores</h3>
+          <iconify-icon icon="mdi:power" width="20" height="20"></iconify-icon>
+          <h3>Providers</h3>
         </div>
-        <p class="settings-card-desc">Global score overrides — used as a tiebreaker within the same tier. Higher scores are preferred. Score never promotes a lower tier over a higher one. Per-series overrides are set on each series page.</p>
+        <p class="settings-card-desc">Enable or disable providers globally. Disabled providers are excluded from all chapter lookups. Per-series overrides can be set on each series page.</p>
         <table>
-          <thead><tr><th>Provider</th><th>Browser</th><th>Global Score</th><th>Enabled</th></tr></thead>
-          <tbody id="provider-scores-body">${pRows}</tbody>
+          <thead><tr><th>Provider</th><th>Browser</th><th>Enabled</th></tr></thead>
+          <tbody id="provider-settings-body">${pRows}</tbody>
         </table>
-        <div id="provider-scores-status"></div>
+        <div id="provider-settings-status"></div>
       </div>
 
       <div class="settings-card">
@@ -196,21 +177,6 @@ export async function viewSettings() {
 
       <div class="settings-card">
         <div class="settings-card-header">
-          <iconify-icon icon="mdi:account-group-outline" width="20" height="20"></iconify-icon>
-          <h3>Trusted Scanlation Groups</h3>
-        </div>
-        <p class="settings-card-desc">Groups listed here are Tier 2 (Trusted). They rank above unknown groups (Tier 3) but below official releases (Tier 1). Re-scan a series after changing this list to update scores.</p>
-        <input type="search" id="trusted-groups-filter" class="input input-bordered input-sm" placeholder="Filter groups…" style="width:220px;margin-bottom:0.5rem" oninput="filterTrustedGroups(this.value)">
-        <div id="trusted-groups-list"><p>Loading...</p></div>
-        <div class="mt-2 flex gap-1">
-          <input type="text" id="new-trusted-group" class="input input-bordered input-sm" placeholder="Group name (exact)" style="width:220px">
-          <button class="btn btn-sm" onclick="addTrustedGroup()">Add</button>
-        </div>
-        <div id="trusted-groups-status"></div>
-      </div>
-
-      <div class="settings-card">
-        <div class="settings-card-header">
           <iconify-icon icon="mdi:star-settings-outline" width="20" height="20"></iconify-icon>
           <h3>Quality Rules</h3>
         </div>
@@ -242,12 +208,11 @@ export async function viewSettings() {
       </div>
     `);
 
-    // Load existing global scores into inputs
-    loadGlobalScores(providerList);
+    // Load existing global enabled settings
+    loadProviderSettings(providerList);
 
     bindSchedulerAutoSave();
 
-    loadTrustedGroups();
     loadQualityRules();
     loadMetadataRules();
     loadWebhooks();
@@ -344,25 +309,10 @@ function bindSchedulerAutoSave() {
   });
 }
 
-async function loadGlobalScores(providerList) {
+async function loadProviderSettings(providerList) {
   for (const p of providerList) {
     try {
-      const res = await providerScores.getGlobal(p.name);
-      const scoreInput = document.querySelector(`.score-input[data-provider="${CSS.escape(p.name)}"]`);
-      const clearBtn = document.querySelector(`.score-clear-btn[data-provider="${CSS.escape(p.name)}"]`);
-      const def = _providerDefaults[p.name] != null ? _providerDefaults[p.name] : 0;
-      if (scoreInput) {
-        if (res.score != null) {
-          scoreInput.value = res.score;
-          scoreInput.classList.remove('using-default');
-          if (clearBtn) clearBtn.style.display = '';
-        } else {
-          // No override — show the actual default score greyed out
-          scoreInput.value = def;
-          scoreInput.classList.add('using-default');
-          if (clearBtn) clearBtn.style.display = 'none';
-        }
-      }
+      const res = await providerSettings.getGlobal(p.name);
       const toggle = document.querySelector(`.enabled-toggle[data-provider="${CSS.escape(p.name)}"]`);
       if (toggle) {
         toggle.checked = res.enabled;
@@ -377,56 +327,10 @@ function _applyProviderRowStyle(providerName, enabled) {
   if (row) row.style.opacity = enabled ? '' : '0.5';
 }
 
-window.saveGlobalScore = async function(providerName, value) {
-  const input = document.querySelector(`.score-input[data-provider="${CSS.escape(providerName)}"]`);
-  const clearBtn = document.querySelector(`.score-clear-btn[data-provider="${CSS.escape(providerName)}"]`);
-  const trimmed = (value || '').trim();
-  const statusEl = document.getElementById('provider-scores-status');
-  const toggle = document.querySelector(`.enabled-toggle[data-provider="${CSS.escape(providerName)}"]`);
-  const enabled = toggle ? toggle.checked : true;
-  const def = _providerDefaults[providerName] != null ? _providerDefaults[providerName] : 0;
-  try {
-    if (trimmed === '' || parseInt(trimmed, 10) === def) {
-      // Empty or re-entered default — delete the override row
-      await providerScores.deleteGlobal(providerName);
-      input.value = def;
-      input.classList.add('using-default');
-      if (clearBtn) clearBtn.style.display = 'none';
-      if (statusEl) {
-        statusEl.innerHTML = `<small style="color:var(--text-muted)">Score reset to default (${def}) for ${escape(providerName)}</small>`;
-        setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 2000);
-      }
-    } else {
-      const score = parseInt(trimmed, 10);
-      if (isNaN(score)) return;
-      await providerScores.setGlobal(providerName, score, enabled);
-      input.classList.remove('using-default');
-      if (clearBtn) clearBtn.style.display = '';
-      if (statusEl) {
-        statusEl.innerHTML = `<small style="color:var(--success)">Score saved for ${escape(providerName)}</small>`;
-        setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 2000);
-      }
-    }
-  } catch(e) {
-    if (statusEl) statusEl.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
-  }
-};
-
-window.clearGlobalScore = async function(providerName) {
-  const input = document.querySelector(`.score-input[data-provider="${CSS.escape(providerName)}"]`);
-  const def = _providerDefaults[providerName] != null ? _providerDefaults[providerName] : 0;
-  if (input) input.value = def;
-  await window.saveGlobalScore(providerName, String(def));
-};
-
 window.saveGlobalEnabled = async function(providerName, enabled) {
-  const scoreInput = document.querySelector(`.score-input[data-provider="${CSS.escape(providerName)}"]`);
-  const def = _providerDefaults[providerName] != null ? _providerDefaults[providerName] : 0;
-  const isDefault = scoreInput && scoreInput.classList.contains('using-default');
-  const score = isDefault ? def : (scoreInput ? (parseInt(scoreInput.value, 10) || 0) : 0);
-  const statusEl = document.getElementById('provider-scores-status');
+  const statusEl = document.getElementById('provider-settings-status');
   try {
-    await providerScores.setGlobal(providerName, score, enabled);
+    await providerSettings.setGlobal(providerName, enabled);
     _applyProviderRowStyle(providerName, enabled);
     if (statusEl) {
       const state = enabled ? 'enabled' : 'disabled';
@@ -485,65 +389,7 @@ window.removeFilterLanguage = async function(code) {
   }
 };
 
-let _trustedGroupsCache = [];
 let _webhookCache = [];
-
-function renderTrustedGroupPills(filter = '') {
-  const el = document.getElementById('trusted-groups-list');
-  if (!el) return;
-  const q = filter.trim().toLowerCase();
-  const visible = q ? _trustedGroupsCache.filter(g => g.toLowerCase().includes(q)) : _trustedGroupsCache;
-  if (visible.length === 0) {
-    el.innerHTML = q ? '<p><small>No groups match.</small></p>' : '<p><small>No trusted groups yet.</small></p>';
-    return;
-  }
-  el.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:0.4rem;margin:0.3rem 0">${
-    visible.map(g =>
-      `<span class="badge badge-neutral" style="cursor:default;gap:0.35rem">${escape(g)}<button class="btn btn-xs btn-ghost" style="padding:0;min-height:auto;line-height:1;color:var(--error)" onclick='removeTrustedGroup("${escape(g)}")' title="Remove">×</button></span>`
-    ).join('')
-  }</div>`;
-}
-
-async function loadTrustedGroups() {
-  const el = document.getElementById('trusted-groups-list');
-  if (!el) return;
-  try {
-    _trustedGroupsCache = await trustedGroups.list();
-    const filterInput = document.getElementById('trusted-groups-filter');
-    renderTrustedGroupPills(filterInput ? filterInput.value : '');
-  } catch(e) {
-    el.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
-  }
-}
-
-window.filterTrustedGroups = function(value) {
-  renderTrustedGroupPills(value);
-};
-
-window.addTrustedGroup = async function() {
-  const input = document.getElementById('new-trusted-group');
-  const status = document.getElementById('trusted-groups-status');
-  const name = input ? input.value.trim() : '';
-  if (!name) { status.innerHTML = '<p class="error">Enter a group name.</p>'; return; }
-  try {
-    await trustedGroups.add(name);
-    input.value = '';
-    showToast('Group added');
-    loadTrustedGroups();
-  } catch(e) {
-    status.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
-  }
-};
-
-window.removeTrustedGroup = async function(name) {
-  try {
-    await trustedGroups.remove(name);
-    showToast('Group removed');
-    loadTrustedGroups();
-  } catch(e) {
-    showToast('Error: ' + e.message, 'error');
-  }
-};
 
 window.viewSettings = viewSettings;
 

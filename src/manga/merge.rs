@@ -8,7 +8,7 @@ use crate::db::provider::MangaProvider;
 use crate::db::quality_rules::QualityRule;
 use crate::db::task::TaskType;
 use crate::db::{
-    chapter as db_chapter, provider as db_provider, provider_scores as db_scores,
+    chapter as db_chapter, provider as db_provider, provider_settings as db_prov_settings,
     quality_rules as db_quality_rules, settings as db_settings, task as db_task,
 };
 use crate::manga::core::{DownloadStatus, Manga};
@@ -92,11 +92,11 @@ pub async fn search_providers(
         manga.metadata.title, search_titles
     );
 
-    let globally_disabled = db_scores::get_globally_disabled(pool).await?;
+    let globally_disabled = db_prov_settings::get_globally_disabled(pool).await?;
 
     let mut providers_to_search = Vec::new();
     for provider in registry.all() {
-        if globally_disabled.contains(provider.name()) {
+        if globally_disabled.iter().any(|d| d == provider.name()) {
             debug!(
                 "[scan] {} is globally disabled, skipping search.",
                 provider.name()
@@ -248,7 +248,7 @@ async fn scrape_known_providers(
     manga: &Manga,
     task_id: uuid::Uuid,
 ) -> Result<ScanResult, ScanError> {
-    let globally_disabled = db_scores::get_globally_disabled(pool).await?;
+    let globally_disabled = db_prov_settings::get_globally_disabled(pool).await?;
     let all_entries = db_provider::get_all_for_manga(pool, manga.id).await?;
     let provider_entries: Vec<_> = all_entries
         .into_iter()
@@ -258,33 +258,16 @@ async fn scrape_known_providers(
     let (total_new, new_ids_for_download) =
         scrape_chapters(pool, registry, ctx, manga, &provider_entries, task_id).await?;
 
-    let trusted_groups = db_provider::get_trusted_groups(pool).await?;
     let preferred_language = db_settings::get(pool, "preferred_language", "").await?;
     let disable_chapter_upgrades =
         db_settings::get(pool, "disable_chapter_upgrades", "false").await? == "true";
-    let yaml_defaults = registry.yaml_default_scores();
-    let provider_scores = db_scores::load_effective_scores(pool, manga.id, &yaml_defaults).await?;
     let quality_rules = db_quality_rules::get_all(pool).await?;
-    db_chapter::update_canonical(
-        pool,
-        manga.id,
-        &trusted_groups,
-        &preferred_language,
-        &provider_scores,
-    )
-    .await?;
+    db_chapter::update_canonical(pool, manga.id, &preferred_language).await?;
 
     if manga.monitored {
-        enqueue_auto_downloads(
-            pool,
-            manga,
-            &new_ids_for_download,
-            &quality_rules,
-            &provider_scores,
-        )
-        .await;
+        enqueue_auto_downloads(pool, manga, &new_ids_for_download, &quality_rules).await;
         if !disable_chapter_upgrades {
-            enqueue_upgrades(pool, manga, &trusted_groups).await;
+            enqueue_upgrades(pool, manga).await;
         }
     }
 
@@ -306,7 +289,7 @@ async fn scrape_single_provider(
     task_id: uuid::Uuid,
     provider_name: &str,
 ) -> Result<ScanResult, ScanError> {
-    let globally_disabled = db_scores::get_globally_disabled(pool).await?;
+    let globally_disabled = db_prov_settings::get_globally_disabled(pool).await?;
     let all_entries = db_provider::get_all_for_manga(pool, manga.id).await?;
 
     let entry = all_entries
@@ -386,34 +369,17 @@ async fn scrape_single_provider(
     };
 
     // After scraping, update canonical chapters
-    let trusted_groups = db_provider::get_trusted_groups(pool).await?;
     let preferred_language = db_settings::get(pool, "preferred_language", "").await?;
     let disable_chapter_upgrades =
         db_settings::get(pool, "disable_chapter_upgrades", "false").await? == "true";
-    let yaml_defaults = registry.yaml_default_scores();
-    let provider_scores = db_scores::load_effective_scores(pool, manga.id, &yaml_defaults).await?;
     let quality_rules = db_quality_rules::get_all(pool).await?;
-    db_chapter::update_canonical(
-        pool,
-        manga.id,
-        &trusted_groups,
-        &preferred_language,
-        &provider_scores,
-    )
-    .await?;
+    db_chapter::update_canonical(pool, manga.id, &preferred_language).await?;
 
     // Auto-download if monitored
     if manga.monitored {
-        enqueue_auto_downloads(
-            pool,
-            manga,
-            &new_ids_for_download,
-            &quality_rules,
-            &provider_scores,
-        )
-        .await;
+        enqueue_auto_downloads(pool, manga, &new_ids_for_download, &quality_rules).await;
         if !disable_chapter_upgrades {
-            enqueue_upgrades(pool, manga, &trusted_groups).await;
+            enqueue_upgrades(pool, manga).await;
         }
     }
 
@@ -575,7 +541,6 @@ async fn enqueue_auto_downloads(
     manga: &Manga,
     new_ids: &std::collections::HashSet<uuid::Uuid>,
     quality_rules: &[QualityRule],
-    provider_scores: &std::collections::HashMap<String, i32>,
 ) {
     if new_ids.is_empty() {
         return;
@@ -606,10 +571,10 @@ async fn enqueue_auto_downloads(
             continue; // no conflict — nothing to skip
         }
         let full = full.unwrap();
-        let full_score = compute_score(full, quality_rules, provider_scores);
+        let full_score = compute_score(full, quality_rules);
         let splits_best_score = splits
             .iter()
-            .map(|s| compute_score(s, quality_rules, provider_scores))
+            .map(|s| compute_score(s, quality_rules))
             .max()
             .unwrap_or(i32::MIN);
 
@@ -658,8 +623,8 @@ async fn enqueue_auto_downloads(
 /// Enqueue DownloadChapter tasks for chapters where a better-tier source became canonical
 /// since the last download (e.g. official release now available for a chapter we got from
 /// an unknown scanlator). Skips chapters already Queued or Downloading.
-async fn enqueue_upgrades(pool: &SqlitePool, manga: &Manga, trusted_groups: &[String]) {
-    let candidates = match db_chapter::find_upgrade_candidates(pool, manga.id, trusted_groups).await
+async fn enqueue_upgrades(pool: &SqlitePool, manga: &Manga) {
+    let candidates = match db_chapter::find_upgrade_candidates(pool, manga.id).await
     {
         Ok(v) if !v.is_empty() => v,
         Ok(_) => return,

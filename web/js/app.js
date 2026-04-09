@@ -34,6 +34,7 @@ let isFirstPoll = true;
 // Header scroll state
 let lastScrollY = 0;
 let headerCollapsed = false;
+let headerCollapseThreshold = 200; // updated at init to actual header height
 
 // Format task description with manga title and chapter
 function formatTaskDescription(task) {
@@ -114,12 +115,13 @@ function handleScroll() {
   
   if (!headerContainer || !nav) return;
   
-  // Collapse when scrolled down more than 50px, expand when near top
-  if (currentScrollY > 50 && !headerCollapsed) {
+  // Only collapse once the header has fully scrolled off-screen.
+  // Using the measured header height prevents collapsing while it's still visible (which causes visible jitter).
+  if (currentScrollY > headerCollapseThreshold && !headerCollapsed) {
     headerCollapsed = true;
     headerContainer.classList.add('collapsed');
     nav.classList.add('header-collapsed');
-  } else if (currentScrollY <= 50 && headerCollapsed) {
+  } else if (currentScrollY <= 20 && headerCollapsed) {
     headerCollapsed = false;
     headerContainer.classList.remove('collapsed');
     nav.classList.remove('header-collapsed');
@@ -415,6 +417,13 @@ async function init() {
   // System stats polling every 30s (low frequency, fine to poll)
   updateSystemStats();
   setInterval(updateSystemStats, 30000);
+
+  // Measure the header height so we only collapse after it has fully scrolled off-screen.
+  // We read offsetHeight before any collapse has occurred, giving us the full expanded height.
+  const headerEl = document.querySelector('.header-container');
+  if (headerEl) {
+    headerCollapseThreshold = headerEl.offsetHeight;
+  }
 
   // Add scroll listener for header collapse
   window.addEventListener('scroll', handleScroll, { passive: true });

@@ -198,31 +198,3 @@ pub async fn has_url(
     Ok(count > 0)
 }
 
-// ---------------------------------------------------------------------------
-// Public functions — TrustedGroup
-// ---------------------------------------------------------------------------
-
-/// Fetch all trusted scanlation group names.
-pub async fn get_trusted_groups(pool: &SqlitePool) -> Result<Vec<String>, sqlx::Error> {
-    sqlx::query_scalar("SELECT name FROM TrustedGroup ORDER BY name COLLATE NOCASE")
-        .fetch_all(pool)
-        .await
-}
-
-/// Add a name to the trusted group list. No-op if already present.
-pub async fn add_trusted_group(pool: &SqlitePool, name: &str) -> Result<(), sqlx::Error> {
-    sqlx::query("INSERT OR IGNORE INTO TrustedGroup (name) VALUES (?)")
-        .bind(name)
-        .execute(pool)
-        .await?;
-    Ok(())
-}
-
-/// Remove a name from the trusted group list. No-op if not present.
-pub async fn remove_trusted_group(pool: &SqlitePool, name: &str) -> Result<(), sqlx::Error> {
-    sqlx::query("DELETE FROM TrustedGroup WHERE name = ?")
-        .bind(name)
-        .execute(pool)
-        .await?;
-    Ok(())
-}

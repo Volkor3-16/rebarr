@@ -128,6 +128,24 @@ impl YamlProvider {
                             .map(|i| result[i + 1..].to_string())
                             .unwrap_or(result),
                         "js_escape" => js_escape(&result),
+                        mod_name if mod_name.starts_with("slice:") => {
+                            let parts: Vec<&str> = mod_name.split(':').collect();
+                            if parts.len() >= 3 {
+                                if let (Ok(start), Ok(end)) = (parts[1].parse::<usize>(), parts[2].parse::<usize>()) {
+                                    if start < result.len() && end <= result.len() {
+                                        result[start..end].to_string()
+                                    } else if start < result.len() {
+                                        result[start..].to_string()
+                                    } else {
+                                        result
+                                    }
+                                } else {
+                                    result
+                                }
+                            } else {
+                                result
+                            }
+                        },
                         _ => result,
                     };
                 }
@@ -1580,10 +1598,6 @@ impl Provider for YamlProvider {
 
     fn needs_browser(&self) -> bool {
         true
-    }
-
-    fn default_score(&self) -> i32 {
-        self.def.default_score
     }
 
     fn rate_limit_rpm(&self) -> u32 {

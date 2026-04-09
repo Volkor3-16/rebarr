@@ -28,7 +28,7 @@ search:
           x-mhub-access: "{mhub_token}"
           origin: "https://mangahub.io"
           referer: "https://mangahub.io/"
-        body: '{"query":"{search(x:m01,q:\\"{query_raw}\\",limit:20){rows{id,title,slug,image,latestChapter}}}"}'
+        body: '{"query":"{search(x:m01,q:\\"{query_raw}\\",alt:true,limit:20){rows{id,title,slug,image,latestChapter}}}"}'
         var: search_results
         json_path: "data.search.rows"
     - from_json:

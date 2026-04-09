@@ -1,9 +1,9 @@
 // First-run setup wizard — full-page version at /setup
 
-import { importApi, libraries, providers, search, settings, providerScores } from '../api.js';
+import { importApi, libraries, providers, search, settings, providerSettings } from '../api.js';
 import { escape } from '../utils.js';
 
-const TOTAL_STEPS = 5;
+const TOTAL_STEPS = 3;
 
 // ---------------------------------------------------------------------------
 // Module-level series import state
@@ -88,12 +88,11 @@ function render() {
   `;
 
   wireHandlers();
-  if (_currentStep === 2) loadProviders();
-  if (_currentStep === 4 && _seriesSubstep === 'intro') loadStep4Libraries();
+  if (_currentStep === 2 && _seriesSubstep === 'intro') loadStep4Libraries();
 }
 
 function stepsIndicatorHtml() {
-  const labels = ['Library', 'Providers', 'Priority', 'Import', 'Ready'];
+  const labels = ['Library', 'Import', 'Ready'];
   const items = labels.map((label, i) => {
     const n = i + 1;
     const active = n === _currentStep;
@@ -109,10 +108,10 @@ function stepsIndicatorHtml() {
 function navHtml() {
   const isFirst = _currentStep === 1;
   const isLast = _currentStep === TOTAL_STEPS;
-  const hideNext = _currentStep === 4 &&
+  const hideNext = _currentStep === 2 &&
     (_seriesSubstep === 'matching' || _seriesSubstep === 'chapter_import' || _seriesSubstep === 'done');
   let nextLabel = 'Next';
-  if (_currentStep === 4 && _seriesSubstep === 'intro') nextLabel = 'Skip';
+  if (_currentStep === 2 && _seriesSubstep === 'intro') nextLabel = 'Skip';
 
   return `
     <div class="setup-nav">
@@ -130,7 +129,7 @@ function navHtml() {
 
 function wireHandlers() {
   document.getElementById('wizard-back-btn')?.addEventListener('click', () => {
-    if (_currentStep === 4 && _seriesSubstep !== 'intro') {
+    if (_currentStep === 2 && _seriesSubstep !== 'intro') {
       _seriesSubstep = 'intro';
       _series.matchQueue = [];
       _series.matchRunning = false;
@@ -175,9 +174,8 @@ async function advanceStep() {
     if (status) { status.textContent = 'Create a library to continue.'; status.style.color = 'var(--er)'; }
     return;
   }
-  if (_currentStep === 2) await saveProviders();
-  if (_currentStep === 4 && _seriesSubstep === 'intro') { _seriesSubstep = 'skip'; render(); return; }
-  if (_currentStep === 4 && _seriesSubstep !== 'skip') return;
+  if (_currentStep === 2 && _seriesSubstep === 'intro') { _seriesSubstep = 'skip'; render(); return; }
+  if (_currentStep === 2 && _seriesSubstep !== 'skip') return;
   if (_currentStep < TOTAL_STEPS) { _currentStep++; render(); }
 }
 
@@ -206,10 +204,8 @@ async function finishWizard() {
 function stepBodyHtml(step) {
   switch (step) {
     case 1: return step1Html();
-    case 2: return step2LoadingHtml();
-    case 3: return step3Html();
-    case 4: return step4Html();
-    case 5: return step5Html();
+    case 2: return step4Html();
+    case 3: return step5Html();
     default: return '';
   }
 }
@@ -278,7 +274,7 @@ function step2LoadingHtml() {
 async function loadProviders() {
   try {
     _providerList = await providers.list();
-    const scoreResults = await Promise.allSettled(_providerList.map(p => providerScores.getGlobal(p.name).then(s => ({ name: p.name, ...s }))));
+    const scoreResults = await Promise.allSettled(_providerList.map(p => providerSettings.getGlobal(p.name).then(s => ({ name: p.name, ...s }))));
     for (const r of scoreResults) {
       if (r.status === 'fulfilled') {
         const { name, score, enabled } = r.value;
@@ -311,7 +307,7 @@ function syncProviderState(name) {
 
 async function saveProviders() {
   document.querySelectorAll('.wiz-score').forEach(el => syncProviderState(el.dataset.p));
-  await Promise.allSettled(Object.entries(_providerChanges).map(([name, { score, enabled }]) => providerScores.setGlobal(name, score, enabled)));
+  await Promise.allSettled(Object.entries(_providerChanges).map(([name, { score, enabled }]) => providerSettings.setGlobal(name, enabled, score)));
 }
 
 // ---------------------------------------------------------------------------
@@ -353,7 +349,7 @@ async function loadStep4Libraries() {
   try {
     _step4Libraries = await libraries.list();
     if (_step4Libraries.length === 1) _series.libraryId = _step4Libraries[0].uuid;
-    if (_currentStep === 4 && _seriesSubstep === 'intro') render();
+    if (_currentStep === 2 && _seriesSubstep === 'intro') render();
   } catch (_) {}
 }
 

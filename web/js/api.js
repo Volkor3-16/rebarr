@@ -65,6 +65,7 @@ export const manga = {
   downloadChapter: (id, base, variant) => post(`/api/manga/${id}/chapters/${base}/${variant}/download`, null),
   resetChapter: (id, base, variant) => post(`/api/manga/${id}/chapters/${base}/${variant}/reset`, null),
   deleteChapter: (id, base, variant) => del(`/api/manga/${id}/chapters/${base}/${variant}`),
+  deleteChapterEntry: (id, base, variant) => del(`/api/manga/${id}/chapters/${base}/${variant}/entry`),
   toggleExtra: (id, base, variant) => post(`/api/manga/${id}/chapters/${base}/${variant}/toggle-extra`, null),
   setCanonical: (id, base, variant, chapterId) => post(`/api/manga/${id}/chapters/${base}/${variant}/set-canonical`, { chapter_id: chapterId }),
   clearCanonicalOverride: (id, base, variant) => del(`/api/manga/${id}/chapters/${base}/${variant}/canonical-override`),
@@ -106,12 +107,6 @@ export const tasks = {
   listGrouped: () => get('/api/tasks/grouped'),
 };
 
-// Trusted Groups API
-export const trustedGroups = {
-  list: () => get('/api/trusted-groups'),
-  add: (name) => post('/api/trusted-groups', { name }),
-  remove: (name) => del(`/api/trusted-groups/${encodeURIComponent(name)}`),
-};
 
 // System info API
 export const system = {
@@ -163,12 +158,11 @@ export const qualityRules = {
   reorder: (ordering) => post('/api/quality-rules/reorder', { ordering }),
 };
 
-// Provider scores API
-export const providerScores = {
-  getGlobal: (name) => get(`/api/providers/${encodeURIComponent(name)}/score`),
-  setGlobal: (name, score, enabled) => put(`/api/providers/${encodeURIComponent(name)}/score`, { score, enabled }),
-  deleteGlobal: (name) => del(`/api/providers/${encodeURIComponent(name)}/score`),
-  getSeries: (mangaId, name) => get(`/api/manga/${mangaId}/providers/${encodeURIComponent(name)}/score`),
-  setSeries: (mangaId, name, score, enabled) => put(`/api/manga/${mangaId}/providers/${encodeURIComponent(name)}/score`, { score, enabled }),
-  deleteSeries: (mangaId, name) => del(`/api/manga/${mangaId}/providers/${encodeURIComponent(name)}/score`),
+// Provider settings API (enable/disable per provider, globally or per-series)
+export const providerSettings = {
+  getGlobal: (name) => get(`/api/providers/${encodeURIComponent(name)}/settings`),
+  setGlobal: (name, enabled) => put(`/api/providers/${encodeURIComponent(name)}/settings`, { enabled }),
+  getSeries: (mangaId, name) => get(`/api/manga/${mangaId}/providers/${encodeURIComponent(name)}/settings`),
+  setSeries: (mangaId, name, enabled) => put(`/api/manga/${mangaId}/providers/${encodeURIComponent(name)}/settings`, { enabled }),
+  deleteSeries: (mangaId, name) => del(`/api/manga/${mangaId}/providers/${encodeURIComponent(name)}/settings`),
 };

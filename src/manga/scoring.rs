@@ -1,81 +1,7 @@
-// Tiers:
-// 1 = Official Publisher releases
-// 2 = Trusted scanlator groups (from the trusted-groups list)
-// 3 = Scanlator groups not on the list
-// 4 = No scanlator group listed
-
-use std::collections::HashMap;
-
 use tracing::warn;
 
 use crate::db::quality_rules::{QualityRule, RuleCondition};
 use crate::manga::core::Chapter;
-
-/// Criteria applied when selecting which provider entries to try for a download.
-pub struct ChapterFilter {
-    /// BCP 47 language code to prefer (e.g. "en"). `None` = accept any language.
-    pub language: Option<String>,
-}
-
-/// Returns entries sorted best-first for download attempts, applying in order:
-/// 1. Language filter (falls back to all if no entries match the language).
-/// 2. Tier sort ascending (tier 1 = Official first, tier 4 = No group last).
-pub fn rank_entries(
-    mut entries: Vec<Chapter>,
-    filter: &ChapterFilter,
-    trusted_groups: &[String],
-) -> Vec<Chapter> {
-    if let Some(ref lang) = filter.language {
-        let filtered: Vec<_> = entries
-            .iter()
-            .filter(|e| e.language.eq_ignore_ascii_case(lang))
-            .cloned()
-            .collect();
-        if !filtered.is_empty() {
-            entries = filtered;
-        } else {
-            warn!("[scoring] No entries match language '{lang}'; falling back to all languages.");
-        }
-    }
-
-    entries.sort_by_key(|e| {
-        compute_tier(
-            e.scanlator_group.as_deref(),
-            trusted_groups,
-            e.provider_name.as_deref(),
-        )
-    });
-    entries
-}
-
-/// Calculates the tier for a chapter based on the scanlator group name.
-/// Tier 0 = Local provider (always preferred).
-/// Tier 1 = Official Publisher releases.
-/// Tier 2 = Trusted scanlator groups.
-/// Tier 3 = Unknown scanlator groups.
-/// Tier 4 = No scanlator group.
-pub fn compute_tier(group: Option<&str>, trusted: &[String], provider_name: Option<&str>) -> u8 {
-    // Local provider always wins — manually imported chapters should not be
-    // overridden by any scraped source.
-    if provider_name == Some("Local") {
-        return 0;
-    }
-    match group {
-        None | Some("") => 4,
-        Some(g) => {
-            if g.trim()
-                .trim_end_matches(|c: char| c == '?' || c == '!' || c == '.')
-                .eq_ignore_ascii_case("official")
-            {
-                1
-            } else if trusted.iter().any(|t| t.eq_ignore_ascii_case(g)) {
-                2
-            } else {
-                3
-            }
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Quality-rules scoring engine
@@ -106,6 +32,18 @@ fn evaluate_condition(cond: &RuleCondition, chapter: &Chapter) -> bool {
         }
         "released_at" => {
             let present = chapter.released_at.is_some();
+            match_presence_op(cond, present)
+        }
+        "chapter_variant" => {
+            let val = chapter.chapter_variant.to_string();
+            match_string_op(cond, &val)
+        }
+        "is_full_chapter" => {
+            let present = chapter.chapter_variant == 0;
+            match_presence_op(cond, present)
+        }
+        "is_split_chapter" => {
+            let present = chapter.chapter_variant >= 1 && chapter.chapter_variant <= 4;
             match_presence_op(cond, present)
         }
         _ => {
@@ -147,30 +85,24 @@ fn match_presence_op(cond: &RuleCondition, is_present: bool) -> bool {
 
 /// Compute a total quality score for a chapter by evaluating all rules.
 /// Rules whose conditions ALL match contribute their score.
-/// The per-provider score (from `provider_scores`) is added as a tiebreaker.
-pub fn compute_score(
-    chapter: &Chapter,
-    rules: &[QualityRule],
-    provider_scores: &HashMap<String, i32>,
-) -> i32 {
-    let rule_total: i32 = rules
+pub fn compute_score(chapter: &Chapter, rules: &[QualityRule]) -> i32 {
+    compute_matched_rules(chapter, rules)
+        .iter()
+        .map(|(_, score)| *score)
+        .sum()
+}
+
+/// Returns list of (rule name, score) for all rules that matched this chapter.
+pub fn compute_matched_rules(chapter: &Chapter, rules: &[QualityRule]) -> Vec<(String, i32)> {
+    rules
         .iter()
         .filter(|rule| {
             rule.conditions
                 .iter()
                 .all(|cond| evaluate_condition(cond, chapter))
         })
-        .map(|rule| rule.score)
-        .sum();
-
-    let provider_bonus = chapter
-        .provider_name
-        .as_deref()
-        .and_then(|n| provider_scores.get(n))
-        .copied()
-        .unwrap_or(0);
-
-    rule_total + provider_bonus
+        .map(|rule| (rule.name.clone(), rule.score))
+        .collect()
 }
 
 /// Returns entries sorted best-first using quality rules scoring.
@@ -179,7 +111,6 @@ pub fn rank_entries_scored(
     mut entries: Vec<Chapter>,
     language: Option<&str>,
     rules: &[QualityRule],
-    provider_scores: &HashMap<String, i32>,
 ) -> Vec<Chapter> {
     if let Some(lang) = language {
         let filtered: Vec<_> = entries
@@ -193,9 +124,7 @@ pub fn rank_entries_scored(
             warn!("[scoring] No entries match language '{lang}'; falling back to all languages.");
         }
     }
-    entries.sort_by(|a, b| {
-        compute_score(b, rules, provider_scores).cmp(&compute_score(a, rules, provider_scores))
-    });
+    entries.sort_by_key(|b| std::cmp::Reverse(compute_score(b, rules)));
     entries
 }
 
@@ -235,6 +164,21 @@ pub const KNOWN_FIELDS: &[FieldDef] = &[
         label: "Has release date",
         ops: &["present", "not_present"],
     },
+    FieldDef {
+        field: "is_full_chapter",
+        label: "Is full chapter",
+        ops: &["present", "not_present"],
+    },
+    FieldDef {
+        field: "is_split_chapter",
+        label: "Is split chapter part",
+        ops: &["present", "not_present"],
+    },
+    FieldDef {
+        field: "chapter_variant",
+        label: "Chapter variant number",
+        ops: &["eq", "contains", "present", "not_present"],
+    },
 ];
 
 #[cfg(test)]
@@ -264,84 +208,7 @@ mod tests {
         }
     }
 
-    fn trusted(groups: &[&str]) -> Vec<String> {
-        groups.iter().map(|s| s.to_string()).collect()
-    }
-
-    // --- compute_tier ---
-
-    #[test]
-    fn tier_none_group_is_four() {
-        assert_eq!(compute_tier(None, &[], None), 4);
-    }
-
-    #[test]
-    fn tier_empty_string_is_four() {
-        assert_eq!(compute_tier(Some(""), &[], None), 4);
-    }
-
-    #[test]
-    fn tier_official_is_one() {
-        assert_eq!(compute_tier(Some("Official"), &[], None), 1);
-        // Case-insensitive
-        assert_eq!(compute_tier(Some("OFFICIAL"), &[], None), 1);
-        assert_eq!(compute_tier(Some("official"), &[], None), 1);
-    }
-
-    #[test]
-    fn tier_official_with_whitespace_is_one() {
-        assert_eq!(compute_tier(Some("  official  "), &[], None), 1);
-    }
-
-    #[test]
-    fn tier_official_with_question_mark_is_one() {
-        assert_eq!(compute_tier(Some("Official?"), &[], None), 1);
-        assert_eq!(compute_tier(Some("official?"), &[], None), 1);
-        assert_eq!(compute_tier(Some("OFFICIAL?"), &[], None), 1);
-    }
-
-    #[test]
-    fn tier_official_with_exclamation_mark_is_one() {
-        assert_eq!(compute_tier(Some("Official!"), &[], None), 1);
-        assert_eq!(compute_tier(Some("official!"), &[], None), 1);
-        assert_eq!(compute_tier(Some("OFFICIAL!"), &[], None), 1);
-    }
-
-    #[test]
-    fn tier_official_with_period_is_one() {
-        assert_eq!(compute_tier(Some("Official."), &[], None), 1);
-        assert_eq!(compute_tier(Some("official."), &[], None), 1);
-        assert_eq!(compute_tier(Some("OFFICIAL."), &[], None), 1);
-    }
-
-    #[test]
-    fn tier_trusted_group_is_two() {
-        let trusted = trusted(&["MangaStream", "CatScans"]);
-        assert_eq!(compute_tier(Some("MangaStream"), &trusted, None), 2);
-        // Case-insensitive
-        assert_eq!(compute_tier(Some("MANGASTREAM"), &trusted, None), 2);
-    }
-
-    #[test]
-    fn tier_unknown_group_is_three() {
-        let trusted = trusted(&["MangaStream"]);
-        assert_eq!(compute_tier(Some("SomeRandomGroup"), &trusted, None), 3);
-    }
-
-    #[test]
-    fn tier_unknown_group_no_trusted_list_is_three() {
-        assert_eq!(compute_tier(Some("AnyGroup"), &[], None), 3);
-    }
-
-    #[test]
-    fn tier_local_provider_is_zero() {
-        // Local provider always wins regardless of scanlator group
-        assert_eq!(compute_tier(None, &[], Some("Local")), 0);
-        assert_eq!(compute_tier(Some("official"), &[], Some("Local")), 0);
-        assert_eq!(compute_tier(Some("AnyGroup"), &[], Some("Local")), 0);
-    }
-
-    // --- rank_entries ---
+    // --- rank_entries_scored ---
 
     #[test]
     fn rank_filters_by_language_exact() {
@@ -350,10 +217,7 @@ mod tests {
             make_chapter("FR", Some("GroupB")),
             make_chapter("EN", Some("official")),
         ];
-        let filter = ChapterFilter {
-            language: Some("EN".to_owned()),
-        };
-        let ranked = rank_entries(chapters, &filter, &[]);
+        let ranked = rank_entries_scored(chapters, Some("EN"), &[]);
         assert!(ranked.iter().all(|c| c.language == "EN"));
         assert_eq!(ranked.len(), 2);
     }
@@ -364,11 +228,7 @@ mod tests {
             make_chapter("FR", Some("GroupA")),
             make_chapter("DE", Some("GroupB")),
         ];
-        let filter = ChapterFilter {
-            language: Some("EN".to_owned()),
-        };
-        let ranked = rank_entries(chapters, &filter, &[]);
-        // Fallback: all languages returned
+        let ranked = rank_entries_scored(chapters, Some("EN"), &[]);
         assert_eq!(ranked.len(), 2);
     }
 
@@ -378,47 +238,18 @@ mod tests {
             make_chapter("EN", Some("GroupA")),
             make_chapter("FR", Some("GroupB")),
         ];
-        let filter = ChapterFilter { language: None };
-        let ranked = rank_entries(chapters, &filter, &[]);
+        let ranked = rank_entries_scored(chapters, None, &[]);
         assert_eq!(ranked.len(), 2);
-    }
-
-    #[test]
-    fn rank_sorts_by_tier_ascending() {
-        let trusted = trusted(&["TrustedGroup"]);
-        let chapters = vec![
-            make_chapter("EN", None),                 // tier 4
-            make_chapter("EN", Some("UnknownGroup")), // tier 3
-            make_chapter("EN", Some("TrustedGroup")), // tier 2
-            make_chapter("EN", Some("official")),     // tier 1
-        ];
-        let filter = ChapterFilter { language: None };
-        let ranked = rank_entries(chapters, &filter, &trusted);
-
-        let tiers: Vec<u8> = ranked
-            .iter()
-            .map(|c| {
-                compute_tier(
-                    c.scanlator_group.as_deref(),
-                    &trusted,
-                    c.provider_name.as_deref(),
-                )
-            })
-            .collect();
-        assert_eq!(tiers, vec![1, 2, 3, 4]);
     }
 
     #[test]
     fn rank_language_filter_case_insensitive() {
         let chapters = vec![
-            make_chapter("en", Some("GroupA")), // lowercase
-            make_chapter("EN", Some("GroupB")), // uppercase
+            make_chapter("en", Some("GroupA")),
+            make_chapter("EN", Some("GroupB")),
             make_chapter("FR", Some("GroupC")),
         ];
-        let filter = ChapterFilter {
-            language: Some("EN".to_owned()),
-        };
-        let ranked = rank_entries(chapters, &filter, &[]);
+        let ranked = rank_entries_scored(chapters, Some("EN"), &[]);
         assert_eq!(ranked.len(), 2);
     }
 }

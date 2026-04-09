@@ -11,20 +11,20 @@ search:
   steps:
     - open: "{base_url}"
     - fetch:
-        url: "https://atsu.moe/api/explore/filteredView"
-        method: POST
+        url: "https://atsu.moe/collections/manga/documents/search?filter_by=&q={query}&limit=12&query_by=title%2CenglishTitle%2CotherNames%2Cauthors&query_by_weights=4%2C3%2C2%2C1&include_fields=id%2Ctitle%2CenglishTitle%2Cposter%2CposterSmall%2CposterMedium%2Ctype%2CisAdult%2Cstatus%2Cyear&num_typos=4%2C3%2C2%2C1"
+        method: GET
         headers:
-          Content-Type: application/json
           Referer: "{base_url}/"
-        body: '{"filter":{"search":"{query}","genres":[],"excludeGenres":[],"types":[],"status":[],"years":[],"minChapters":null,"hideBookmarked":false,"officialTranslation":false,"showAdult":true,"sortBy":"popularity"},"page":0,"adult":false}'
         var: search_results
-        json_path: items
+        json_path: hits
     - from_json:
         var: search_results
         extract:
-          title: title
-          url: id
-          cover: largeImage
+          title: document.title
+          url: document.id
+          cover: document.posterMedium
+        prefix:
+          url: "{base_url}/series/"
 
 chapters:
   steps:

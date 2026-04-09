@@ -27,7 +27,7 @@ use helpers::{
     test_ctx, test_db,
 };
 use rebarr::{
-    db::{chapter as db_chapter, provider as db_provider, settings as db_settings},
+    db::{chapter as db_chapter, quality_rules as db_quality_rules, settings as db_settings},
     manga::{core::DownloadStatus, core::MangaType, merge},
     scraper::ProviderRegistry,
 };
@@ -109,6 +109,20 @@ async fn setup_manga(pool: &SqlitePool) -> rebarr::manga::core::Manga {
     manga
 }
 
+/// Insert a Quality Rule that boosts chapters from "TrustedGroup" (score 500).
+/// Replaces the old TrustedGroup trusted-scanlator mechanism in these tests.
+async fn add_trusted_group_rule(pool: &SqlitePool) {
+    let conditions = vec![db_quality_rules::RuleCondition {
+        field: "scanlator_group".to_string(),
+        op: "eq".to_string(),
+        value: Some("TrustedGroup".to_string()),
+        negate: false,
+    }];
+    db_quality_rules::insert(pool, "Trusted: TrustedGroup", 500, 30, &conditions)
+        .await
+        .unwrap();
+}
+
 /// Count Pending DownloadChapter tasks for a manga in the task queue.
 async fn count_pending_downloads(pool: &SqlitePool, manga_id: Uuid) -> i64 {
     sqlx::query_scalar(
@@ -152,10 +166,8 @@ async fn canonical_chapter_download_queueing_three_scans() {
     let pool = test_db().await;
     let manga = setup_manga(&pool).await;
 
-    // Register "TrustedGroup" so ProviderA's chapters get tier 2
-    db_provider::add_trusted_group(&pool, "TrustedGroup")
-        .await
-        .unwrap();
+    // Add a Quality Rule that gives "TrustedGroup" score 500 (replaces old tier system)
+    add_trusted_group_rule(&pool).await;
 
     // -----------------------------------------------------------------------
     // SCAN 1 — initial full scan, both providers first-time
@@ -345,10 +357,8 @@ async fn local_provider_wins_canonical_over_all_others() {
     let pool = test_db().await;
     let manga = setup_manga(&pool).await;
 
-    // Register "TrustedGroup" so ProviderA's chapters get tier 2
-    db_provider::add_trusted_group(&pool, "TrustedGroup")
-        .await
-        .unwrap();
+    // Add a Quality Rule that gives "TrustedGroup" score 500 (replaces old tier system)
+    add_trusted_group_rule(&pool).await;
 
     // Scan 1: ProviderA has chapters 1-3
     let a_chapters = vec![
@@ -399,20 +409,9 @@ async fn local_provider_wins_canonical_over_all_others() {
     }
 
     // Recompute canonical
-    let yaml_defaults = std::collections::HashMap::new();
-    let provider_scores =
-        rebarr::db::provider_scores::load_effective_scores(&pool, manga.id, &yaml_defaults)
-            .await
-            .unwrap();
-    db_chapter::update_canonical(
-        &pool,
-        manga.id,
-        &["TrustedGroup".to_string()],
-        "en",
-        &provider_scores,
-    )
-    .await
-    .unwrap();
+    db_chapter::update_canonical(&pool, manga.id, "en")
+        .await
+        .unwrap();
 
     // Canonical should now be Local provider chapters (tier 0 beats tier 2)
     let canonical_after = db_chapter::get_canonical_for_manga(&pool, manga.id)
@@ -445,9 +444,7 @@ async fn upgrades_disabled_keeps_downloaded_chapter_canonical() {
     db_settings::set(&pool, "disable_chapter_upgrades", "true")
         .await
         .unwrap();
-    db_provider::add_trusted_group(&pool, "TrustedGroup")
-        .await
-        .unwrap();
+    add_trusted_group_rule(&pool).await;
 
     let registry1 = make_registry(vec![], vec![ch_group("1", "RandomGroup")]);
     let ctx1 = test_ctx(&registry1);
@@ -508,9 +505,7 @@ async fn upgrades_enabled_promotes_better_source_and_queues_upgrade() {
     let pool = test_db().await;
     let manga = setup_manga(&pool).await;
 
-    db_provider::add_trusted_group(&pool, "TrustedGroup")
-        .await
-        .unwrap();
+    add_trusted_group_rule(&pool).await;
 
     let registry1 = make_registry(vec![], vec![ch_group("1", "RandomGroup")]);
     let ctx1 = test_ctx(&registry1);

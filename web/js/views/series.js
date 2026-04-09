@@ -1,11 +1,10 @@
 // Series detail view - manga info + chapters + live task status
 
-import { manga as mangaApi, tasks, trustedGroups, providerScores, coverApi } from '../api.js';
+import { manga as mangaApi, tasks, providerSettings, coverApi, qualityRules } from '../api.js';
 import { render, setPoll, navigate } from '../router.js';
-import { escape, relTime, statusBadge, taskBadge, tierBadgeHtml, skeleton, showToast, truncateMiddle, formatFileSize, renderTaskProgress } from '../utils.js';
+import { escape, relTime, statusBadge, taskBadge, skeleton, showToast, truncateMiddle, formatFileSize, renderTaskProgress } from '../utils.js';
 
 let currentMangaId = null;
-let trustedGroupsCache = [];
 let chapterDataCache = [];
 let chapterSlotsCache = [];
 let allChapterGroupsCache = [];
@@ -128,13 +127,6 @@ export async function viewSeries(id) {
   render(`<div class="series">${skeleton(5)}</div>`);
   
   try {
-    // Load trusted groups for bubble UI
-    try {
-      trustedGroupsCache = await trustedGroups.list();
-    } catch(e) {
-      trustedGroupsCache = [];
-    }
-    
     const m = await mangaApi.get(id);
     const meta = m.metadata ?? {};
     const year = meta.start_year ? (meta.end_year ? `${meta.start_year} - ${meta.end_year}` : `${meta.start_year} - ongoing`) : '?';
@@ -437,14 +429,10 @@ function chapterNumberValue(ch) {
 }
 
 function compareRows(a, b) {
-  if (!!a.is_canonical !== !!b.is_canonical) return a.is_canonical ? -1 : 1;
-  const tierDiff = (a.tier || 4) - (b.tier || 4);
-  if (tierDiff !== 0) return tierDiff;
-  const releasedDiff = (b.released_at || 0) - (a.released_at || 0);
-  if (releasedDiff !== 0) return releasedDiff;
-  const sourceA = a.provider_name || a.scanlator_group || '';
-  const sourceB = b.provider_name || b.scanlator_group || '';
-  return sourceA.localeCompare(sourceB);
+  // Simply compare chapter numbers - backend has already selected the best chapters
+  const aVal = chapterNumberValue(a);
+  const bVal = chapterNumberValue(b);
+  return aVal - bVal;
 }
 
 function buildChapterSlots(chapters) {
@@ -526,10 +514,10 @@ function compareVisibleSlots(a, b) {
       aVal = a.mainRow.download_status;
       bVal = b.mainRow.download_status;
       break;
-    case 'tier':
-      aVal = a.mainRow.tier || 4;
-      bVal = b.mainRow.tier || 4;
-      break;
+    case 'score':
+      aVal = a.mainRow.score ?? 0;
+      bVal = b.mainRow.score ?? 0;
+      return currentSort.direction === 'desc' ? bVal - aVal : aVal - bVal;
     case 'released':
       aVal = a.mainRow.released_at || 0;
       bVal = b.mainRow.released_at || 0;
@@ -571,9 +559,14 @@ function buildChapterGroups(slots) {
     const normalBase = slotsForBase.find(slot => !slot.is_extra && slot.chapter_variant === 0) || null;
     const splitSlots = slotsForBase
       .filter(slot => !slot.is_extra && slot.chapter_variant > 0)
-      .sort((a, b) => b.chapter_variant - a.chapter_variant);
+      .sort((a, b) => a.chapter_variant - b.chapter_variant);
 
-    if (normalBase) {
+    // Use normalBase as the main layout only if it actually has a canonical row.
+    // When splits are canonical (normalBase is not), each split is its own group entry.
+    const normalBaseIsCanonical = normalBase?.canonicalRow != null;
+
+    if (normalBaseIsCanonical) {
+      // Full chapter is canonical — show it as main, splits as sub-rows.
       const subRows = [...normalBase.altRows];
       for (const splitSlot of splitSlots) {
         subRows.push(splitSlot.mainRow, ...splitSlot.altRows);
@@ -586,12 +579,33 @@ function buildChapterGroups(slots) {
         subRows: subRows.filter(Boolean),
       });
     } else {
-      for (const splitSlot of splitSlots) {
+      // Splits are canonical (or there's no variant-0 at all) — each split is its own entry.
+      // Attach the non-canonical full chapter rows to the first split as alternatives.
+      const normalBaseRows = normalBase
+        ? [normalBase.mainRow, ...normalBase.altRows].filter(Boolean)
+        : [];
+
+      for (let i = 0; i < splitSlots.length; i++) {
+        const splitSlot = splitSlots[i];
+        const subRows = [...splitSlot.altRows];
+        if (i === 0 && normalBaseRows.length > 0) {
+          subRows.push(...normalBaseRows);
+        }
         groups.push({
           key: splitSlot.key,
           mainSlot: splitSlot,
           mainRow: splitSlot.mainRow,
-          subRows: splitSlot.altRows,
+          subRows: subRows.filter(Boolean),
+        });
+      }
+
+      // If there's only a non-canonical normalBase and no splits, still show it.
+      if (splitSlots.length === 0 && normalBase) {
+        groups.push({
+          key: normalBase.key,
+          mainSlot: normalBase,
+          mainRow: normalBase.mainRow,
+          subRows: normalBase.altRows,
         });
       }
     }
@@ -704,12 +718,36 @@ function chapterRow(mangaId, ch, {
          title="Show ${subRowCount} alternative${subRowCount === 1 ? '' : 's'}">+${subRowCount}</button>`
     : '';
 
+  let chips = '';
+  if (ch.is_extra) {
+    chips += `<span class="chip chip-extra">EXTRA</span>`;
+  }
+  if (ch.is_canonical && ch.has_canonical_override) {
+    chips += `<span class="chip chip-canonical" style="cursor: pointer" onclick="event.stopPropagation(); doClearCanonicalOverride('${mangaId}', ${base}, ${variant})" title="Click to reset to auto selection">Override</span>`;
+  }
+
   const chapterLabel = `<div class="chapter-cell">
     ${expanderHtml}
-    <span><b title="A comic reader will be coming soon">${chNum}</b>${titleHtml}${langHtml}</span>
+    <span class="${ch.is_canonical ? 'canonical-chapter' : ''}">
+      <b title="A comic reader will be coming soon">${chNum}</b>${titleHtml}${langHtml}
+    </span>
+    <span style="margin-left: auto; display: inline-flex; gap: 4px;">
+      ${chips}
+    </span>
   </div>`;
 
-  const tierHtml = tierBadgeHtml(ch.tier || 4);
+  let scoreTooltip = 'Quality Score Breakdown:\n';
+  if (ch.matched_rules && ch.matched_rules.length > 0) {
+    const maxLength = Math.max(...ch.matched_rules.map(([name]) => name.length));
+    ch.matched_rules.forEach(([name, score]) => {
+      const sign = score >= 0 ? '+' : '';
+      scoreTooltip += `  ${name.padEnd(maxLength)}  ${sign}${score}\n`;
+    });
+    scoreTooltip += `\nTotal: ${ch.score ?? 0}`;
+  } else {
+    scoreTooltip = `Quality score: ${ch.score ?? 0}`;
+  }
+  const scoreHtml = `<span class="score-badge" title="${escape(scoreTooltip)}">${ch.score ?? 0}</span>`;
   const sourceUrl = ch.chapter_url;
   const sourceTitle = sourceUrl ? ` title="${escape(sourceUrl)}"` : '';
   const sourceName = ch.provider_name ? escape(ch.provider_name) : (ch.scanlator_group ? escape(ch.scanlator_group) : '—');
@@ -717,14 +755,10 @@ function chapterRow(mangaId, ch, {
     ? `<div class="provider-cell"><a href="${escape(sourceUrl)}" target="_blank" rel="noopener" class="ch-source"${sourceTitle}>${sourceName}</a></div>`
     : `<div class="provider-cell"><span class="ch-source">${sourceName}</span></div>`;
 
-  const scanlatorName = ch.scanlator_group || '—';
-  const isTrusted = trustedGroupsCache.includes(scanlatorName);
-  const trustedIndicator = isTrusted ? '<span class="trusted-indicator" title="Trusted scanlator"></span>' : '';
-  const trustedClass = isTrusted ? ' scanlator-trusted' : '';
-  const trustedTitle = isTrusted ? 'Trusted — click to remove from trusted' : 'Click to add to trusted';
-  const scanlatorHtml = scanlatorName !== '—'
-    ? `<button class="badge badge-neutral synonym-pill scanlator-pill${trustedClass}" type="button" title="${trustedTitle}" onclick="${isTrusted ? `removeTrustedFromBubble('${escape(scanlatorName)}')` : `addTrustedFromBubble('${escape(scanlatorName)}')`}">${trustedIndicator}${escape(scanlatorName)}</button>`
-    : '—';
+   const scanlatorName = ch.scanlator_group || null;
+   const scanlatorHtml = scanlatorName
+     ? `<span class="badge badge-neutral synonym-pill scanlator-pill" style="cursor: pointer" onclick="openScanlatorRuleModal('${escape(scanlatorName)}')" title="Click to set quality score for this scanlator group">${escape(scanlatorName)}</span>`
+     : `<span class="badge badge-neutral synonym-pill scanlator-pill" style="opacity: 0.6">unknown</span>`;
 
   const status = ch.download_status;
   const canDl = status === 'Missing' || status === 'Failed';
@@ -735,8 +769,8 @@ function chapterRow(mangaId, ch, {
     ? `<input type="checkbox" class="ch-checkbox" data-slot-key="${groupKey}" ${isSelected ? 'checked' : ''} onclick="handleCheckboxClick(event, this)">`
     : '';
   const quickDlBtn = (canDl && !isSubrow)
-    ? `<button class="ch-quick-dl" onclick="doDownload('${mangaId}', ${base}, ${variant})" title="Download">
-         <iconify-icon icon="mdi:download" width="14" height="14"></iconify-icon>
+    ? `<button class="ch-status-overlay-btn" onclick="event.stopPropagation(); doDownload('${mangaId}', ${base}, ${variant})" title="Download">
+         <iconify-icon icon="mdi:download" width="18" height="18"></iconify-icon>
        </button>`
     : '';
 
@@ -750,13 +784,18 @@ function chapterRow(mangaId, ch, {
     const clearOverrideBtn = (ch.is_canonical && ch.has_canonical_override)
       ? `<button onclick="doClearCanonicalOverride('${mangaId}', ${base}, ${variant})">Reset to auto</button>`
       : '';
-    const deleteBtn = (ch.is_canonical && status !== 'Missing') ? `<button class="danger" onclick="doDeleteChapter('${mangaId}', ${base}, ${variant})">Delete</button>` : '';
+    const deleteBtn = (ch.is_canonical && status !== 'Missing')
+      ? `<button class="danger" onclick="doDeleteChapter('${mangaId}', ${base}, ${variant})" title="Delete the downloaded CBZ from disk, but keep this chapter entry in the database. The chapter will be marked Missing.">Delete</button>`
+      : '';
+    const deleteEntryBtn = ch.is_canonical
+      ? `<button class="danger" onclick="doDeleteChapterEntry('${mangaId}', ${base}, ${variant})" title="Delete this chapter entry from the database entirely. Use this when you want to remove the record, not just the downloaded file.">Delete Chapter Entry</button>`
+      : '';
 
     actionMenuHtml = `<div class="action-menu">
       <button class="action-menu-btn" type="button" aria-haspopup="menu" aria-expanded="false"
         onclick="toggleActionMenu('${menuId}')"><iconify-icon icon="mdi:dots-vertical" width="18" height="18"></iconify-icon></button>
       <div class="action-menu-dropdown" id="${menuId}">
-        ${dlBtn}${resetBtn}${extraBtn}${clearOverrideBtn}${deleteBtn}
+        ${dlBtn}${resetBtn}${extraBtn}${clearOverrideBtn}${deleteBtn}${deleteEntryBtn}
       </div>
     </div>`;
   }
@@ -774,12 +813,17 @@ function chapterRow(mangaId, ch, {
     <td>${checkboxHtml}</td>
     <td>${chapterLabel}</td>
     <td>${scanlatorHtml}</td>
-    <td>${tierHtml}</td>
+    <td>${scoreHtml}</td>
     <td>${sourceHtml}</td>
-    <td>${statusBadge(status)}${fileSizeHtml}</td>
+    <td>
+      <div class="ch-status-cell">
+        ${statusBadge(status)}${fileSizeHtml}
+        ${quickDlBtn}
+      </div>
+    </td>
     <td><small>${relTime(ch.released_at)}</small></td>
     <td><small>${relTime(ch.scraped_at)}</small></td>
-    <td>${useBtn}${quickDlBtn}${actionMenuHtml}</td>
+    <td><div style="display: inline-flex; align-items: center; gap: 4px;">${useBtn}${actionMenuHtml}</div></td>
   </tr>`;
 }
 
@@ -831,31 +875,65 @@ window.toggleChapterExpand = function(slotKey) {
   if (expandedSlotKeys.has(slotKey)) {
     expandedSlotKeys.delete(slotKey);
   } else {
+    // Clear all other expanded slots - only allow one expanded at a time
+    expandedSlotKeys.clear();
     expandedSlotKeys.add(slotKey);
   }
 
-  const expandRow = document.getElementById(`${slotDomId(slotKey)}-expand`);
-  const button = document.querySelector(`button[aria-controls="${slotDomId(slotKey)}-expand"]`);
-  if (expandRow) {
-    const isOpen = expandedSlotKeys.has(slotKey);
-    expandRow.classList.toggle('open', isOpen);
-    button?.setAttribute('aria-expanded', String(isOpen));
-  }
+  // Re-render entire chapter section to update all expanded states
+  renderChapterSection();
 };
 
 window.toggleActionMenu = function(menuId) {
-  document.querySelectorAll('.action-menu-dropdown.open').forEach(el => {
-    const btn = el.parentElement?.querySelector('.action-menu-btn');
-    if (el.id !== menuId) {
-      el.classList.remove('open');
+  // Close all existing open menus
+  document.querySelectorAll('.action-menu-dropdown.open, .action-menu-portal.open').forEach(el => {
+    el.classList.remove('open');
+    el.classList.remove('flip-up');
+    if (el.classList.contains('action-menu-portal')) {
+      el.remove();
+    } else {
+      const btn = el.parentElement?.querySelector('.action-menu-btn');
       btn?.setAttribute('aria-expanded', 'false');
     }
   });
   
   const menu = document.getElementById(menuId);
   if (menu) {
-    const isOpen = menu.classList.toggle('open');
-    menu.parentElement?.querySelector('.action-menu-btn')?.setAttribute('aria-expanded', String(isOpen));
+    // Create portal element to move menu outside table overflow context
+    const portal = document.createElement('div');
+    portal.id = `${menuId}-portal`;
+    portal.className = 'action-menu-dropdown action-menu-portal open';
+    portal.innerHTML = menu.innerHTML;
+    
+    // Position portal fixed relative to button
+    const btn = menu.parentElement?.querySelector('.action-menu-btn');
+    const btnRect = btn.getBoundingClientRect();
+    
+    portal.style.position = 'fixed';
+    portal.style.right = `${window.innerWidth - btnRect.right}px`;
+    portal.style.top = `${btnRect.bottom + 4}px`;
+    portal.style.zIndex = '9999';
+    
+    document.body.appendChild(portal);
+    
+    // Check if portal would go off bottom of viewport
+    const portalRect = portal.getBoundingClientRect();
+    if (portalRect.bottom > window.innerHeight) {
+      portal.style.top = 'auto';
+      portal.style.bottom = `${window.innerHeight - btnRect.top + 4}px`;
+    }
+    
+    btn.setAttribute('aria-expanded', 'true');
+    
+    // Close when clicking anywhere outside
+    const closeHandler = (e) => {
+      if (!portal.contains(e.target) && !btn.contains(e.target)) {
+        portal.remove();
+        btn.setAttribute('aria-expanded', 'false');
+        document.removeEventListener('click', closeHandler);
+      }
+    };
+    setTimeout(() => document.addEventListener('click', closeHandler), 0);
   }
 };
 
@@ -903,7 +981,7 @@ function renderChapterTable(groups) {
           <th style="width:30px"><input type="checkbox" title="Select all visible" ${allVisibleSelected ? 'checked' : ''} onchange="toggleSelectAll(this.checked)"></th>
           <th>Chapter</th>
           <th>Scanlator</th>
-          <th title="Scanlator tier: Official (verified release), Trusted (added by you), Unknown, or No Group">Score</th>
+          <th title="Quality score computed from quality rules">Score</th>
           <th>Provider</th>
           <th><iconify-icon icon="mdi:tray-download" width="24" height="24"></iconify-icon></th>
           <th>Released</th>
@@ -930,7 +1008,7 @@ function renderChapterFilters() {
       <option value="chapter-asc" ${currentSort.field === 'chapter' && currentSort.direction === 'asc' ? 'selected' : ''}>Oldest first</option>
       <option value="released-desc" ${currentSort.field === 'released' && currentSort.direction === 'desc' ? 'selected' : ''}>Recently released</option>
       <option value="released-asc" ${currentSort.field === 'released' && currentSort.direction === 'asc' ? 'selected' : ''}>Oldest released</option>
-      <option value="tier-asc" ${currentSort.field === 'tier' && currentSort.direction === 'asc' ? 'selected' : ''}>Best score first</option>
+      <option value="score-desc" ${currentSort.field === 'score' && currentSort.direction === 'desc' ? 'selected' : ''}>Best score first</option>
       <option value="status-asc" ${currentSort.field === 'status' && currentSort.direction === 'asc' ? 'selected' : ''}>Status A-Z</option>
       <option value="status-desc" ${currentSort.field === 'status' && currentSort.direction === 'desc' ? 'selected' : ''}>Status Z-A</option>
     </select>
@@ -1104,9 +1182,9 @@ export async function loadProviders(mangaId) {
       return;
     }
 
-    // Fetch per-series scores in parallel
-    const scoreResults = await Promise.allSettled(
-      provList.map(p => providerScores.getSeries(mangaId, p.provider_name))
+    // Fetch per-series settings in parallel
+    const settingsResults = await Promise.allSettled(
+      provList.map(p => providerSettings.getSeries(mangaId, p.provider_name))
     );
 
     const rows = provList.map((p, i) => {
@@ -1115,40 +1193,23 @@ export async function loadProviders(mangaId) {
       const searched = p.search_attempted_at ? relTime(p.search_attempted_at) : 'never';
       const synced = p.last_synced_at ? relTime(p.last_synced_at) : 'Never';
 
-      const scoreData = scoreResults[i].status === 'fulfilled' ? scoreResults[i].value : null;
-      const currentScore = scoreData?.score; // null means no override
-      const effectiveScore = scoreData?.effective_score ?? 0;
-      const scoreSource = scoreData?.score_source ?? 'default';
-      const defaultScore = scoreData?.default_score ?? 0;
-      const isEnabled = scoreData?.enabled ?? true;
+      const settingsData = settingsResults[i].status === 'fulfilled' ? settingsResults[i].value : null;
+      const isEnabled = settingsData?.effective_enabled ?? true;
+      const hasOverride = settingsData?.enabled != null;
 
       const linkBtn = p.provider_url
         ? `<button onclick="window.open('${escape(p.provider_url)}', '_blank')">Open</button>`
         : '';
 
-      const enableToggle = `<label title="${isEnabled ? 'Enabled: click to disable (only for checking new chapters)' : 'Disabled — click to enable'}">
+      const overrideLabel = hasOverride ? '' : ' <small style="opacity:0.6">(global)</small>';
+      const enableToggle = `<label title="${isEnabled ? 'Enabled — click to disable for this series' : 'Disabled — click to enable for this series'}">
         <input type="checkbox" ${isEnabled ? 'checked' : ''} onchange="setProviderEnabled('${mangaId}', '${escape(p.provider_name)}', this.checked)">
-        ${isEnabled ? 'Enabled' : 'Disabled'}
+        ${isEnabled ? 'Enabled' : 'Disabled'}${overrideLabel}
       </label>`;
 
-      const isDefault = currentScore == null;
-      const scoreValue = isDefault ? defaultScore : currentScore;
-      const scoreClass = isDefault ? 'score-input using-default' : 'score-input';
-      const effectiveLabel = scoreSource === 'series' ? 'override' : (scoreSource === 'global' ? 'global' : 'default');
-      const effectiveIndicator = `<div class="effective-score" title="Using YAML ${escape(effectiveLabel)}">Effective: ${effectiveScore} (${escape(effectiveLabel)})</div>`;
-      const clearStyle = isDefault ? 'display:none' : '';
-
-      const scoreInput = `<div class="score-input-wrapper" data-provider="${escape(p.provider_name)}">
-        <input type="number" class="${scoreClass}" value="${scoreValue}" min="-100" max="100"
-          placeholder="default"
-          title="Per-series score override for ${escape(p.provider_name)}"
-          data-manga="${mangaId}" data-provider="${escape(p.provider_name)}"
-          onchange="setSeriesScore('${mangaId}', '${escape(p.provider_name)}', this.value)"
-          onblur="setSeriesScore('${mangaId}', '${escape(p.provider_name)}', this.value)">
-        <button class="score-clear-btn" style="${clearStyle}" title="Clear override, revert to effective score"
-          onclick="clearSeriesScore('${mangaId}', '${escape(p.provider_name)}')">&times;</button>
-        ${effectiveIndicator}
-      </div>`;
+      const resetBtn = hasOverride
+        ? `<button class="btn btn-xs btn-ghost" onclick="resetProviderEnabled('${mangaId}', '${escape(p.provider_name)}')" title="Reset to global setting">Reset</button>`
+        : '';
 
       const pickBtn = `<button class="btn btn-xs btn-ghost" onclick="pickProvider('${mangaId}', '${escape(p.provider_name)}')" title="Search this provider and pick the correct match">Pick</button>`;
 
@@ -1161,8 +1222,7 @@ export async function loadProviders(mangaId) {
         <td>${statusText}</td>
         <td><small>${synced}</small></td>
         <td><small>searched: ${searched}</small></td>
-        <td>${enableToggle}</td>
-        <td>${scoreInput}</td>
+        <td>${enableToggle}${resetBtn}</td>
         <td>${pickBtn}</td>
       </tr>`;
     }).join('');
@@ -1170,7 +1230,7 @@ export async function loadProviders(mangaId) {
     el.innerHTML = `<div class="chapters-table">
       <table>
         <thead>
-          <tr><th>Provider</th><th>Status</th><th>Last Synced</th><th>Searched</th><th>Enabled</th><th>Score</th><th></th></tr>
+          <tr><th>Provider</th><th>Status</th><th>Last Synced</th><th>Searched</th><th>Enabled</th><th></th></tr>
         </thead>
         <tbody>${rows}</tbody>
       </table>
@@ -1182,55 +1242,23 @@ export async function loadProviders(mangaId) {
 
 window.setProviderEnabled = async function(mangaId, providerName, enabled) {
   try {
-    const current = await providerScores.getSeries(mangaId, providerName);
-    await providerScores.setSeries(mangaId, providerName, current?.score ?? 0, enabled);
-    showToast(`${providerName} ${enabled ? 'enabled' : 'disabled'}`);
-    // Reload chapters to reflect canonical changes (disabled provider chapters are excluded)
+    await providerSettings.setSeries(mangaId, providerName, enabled);
+    showToast(`${providerName} ${enabled ? 'enabled' : 'disabled'} for this series`);
+    loadProviders(mangaId);
     await loadChapters(mangaId);
   } catch(e) {
     showToast('Error: ' + e.message, 'error');
   }
 };
 
-window.setSeriesScore = async function(mangaId, providerName, value) {
-  const input = document.querySelector(`.score-input[data-manga="${mangaId}"][data-provider="${CSS.escape(providerName)}"]`);
-  const clearBtn = document.querySelector(`.score-clear-btn[onclick*="${CSS.escape(providerName)}"]`);
-  const trimmed = (value || '').trim();
-  const parsed = trimmed === '' ? null : parseInt(trimmed, 10);
+window.resetProviderEnabled = async function(mangaId, providerName) {
   try {
-    if (parsed === null) {
-      // Empty — delete the override row
-      await providerScores.deleteSeries(mangaId, providerName);
-      if (input) input.classList.add('using-default');
-      if (clearBtn) clearBtn.style.display = 'none';
-    } else {
-      if (isNaN(parsed)) return;
-      const current = await providerScores.getSeries(mangaId, providerName);
-      await providerScores.setSeries(mangaId, providerName, parsed, current?.enabled ?? true);
-      if (input) input.classList.remove('using-default');
-      if (clearBtn) clearBtn.style.display = '';
-    }
-    // Reload providers to reflect updated effective score
+    await providerSettings.deleteSeries(mangaId, providerName);
+    showToast(`${providerName} reset to global setting`);
     loadProviders(mangaId);
+    await loadChapters(mangaId);
   } catch(e) {
-    showToast('Score save failed: ' + e.message, 'error');
-  }
-};
-
-window.clearSeriesScore = async function(mangaId, providerName) {
-  // Reload the series score to get the effective default
-  try {
-    const result = await providerScores.getSeries(mangaId, providerName);
-    const input = document.querySelector(`.score-input[data-manga="${mangaId}"][data-provider="${CSS.escape(providerName)}"]`);
-    if (result && result.score == null) {
-      // No series override — show the effective score (global or default)
-      if (input) input.value = result.effective_score;
-    } else if (result && result.score != null) {
-      if (input) input.value = result.score;
-    }
-    await window.setSeriesScore(mangaId, providerName, '');
-  } catch(e) {
-    showToast('Clear failed: ' + e.message, 'error');
+    showToast('Error: ' + e.message, 'error');
   }
 };
 
@@ -1315,30 +1343,6 @@ window.pickProviderSaveCustom = async function(mangaId, providerName) {
   await window.pickProviderSelect(mangaId, providerName, url);
 };
 
-// Trusted group functions for bubble UI
-window.addTrustedFromBubble = async function(groupName) {
-  try {
-    await trustedGroups.add(groupName);
-    trustedGroupsCache.push(groupName);
-    showToast(`"${groupName}" added to trusted`);
-    loadChapters(currentMangaId);
-  } catch(e) {
-    showToast('Error: ' + e.message, 'error');
-  }
-};
-
-window.removeTrustedFromBubble = async function(groupName) {
-  if (!confirm(`Remove "${groupName}" from trusted scanlators?`)) return;
-  try {
-    await trustedGroups.remove(groupName);
-    trustedGroupsCache = trustedGroupsCache.filter(g => g !== groupName);
-    showToast(`"${groupName}" removed from trusted`);
-    loadChapters(currentMangaId);
-  } catch(e) {
-    showToast('Error: ' + e.message, 'error');
-  }
-};
-
 // Action handlers
 window.doScan = async function(mangaId) {
   const statusEl = document.getElementById('scan-status');
@@ -1410,11 +1414,22 @@ window.doResetChapter = async function(mangaId, base, variant) {
 };
 
 window.doDeleteChapter = async function(mangaId, base, variant) {
-  if (!confirm('Delete this chapter? This will also remove downloaded files from disk.')) return;
+  if (!confirm('Delete the downloaded file for this chapter? The chapter entry will stay in the database and be marked Missing.')) return;
   try {
     await mangaApi.deleteChapter(mangaId, base, variant);
     loadChapters(mangaId);
-    showToast('Chapter deleted');
+    showToast('Chapter file deleted');
+  } catch(e) {
+    showToast('Delete error: ' + e.message, 'error');
+  }
+};
+
+window.doDeleteChapterEntry = async function(mangaId, base, variant) {
+  if (!confirm('Delete this chapter entry from the database? This removes the chapter record itself.')) return;
+  try {
+    await mangaApi.deleteChapterEntry(mangaId, base, variant);
+    loadChapters(mangaId);
+    showToast('Chapter entry deleted');
   } catch(e) {
     showToast('Delete error: ' + e.message, 'error');
   }
@@ -1995,3 +2010,122 @@ document.addEventListener('mouseover', (e) => {
 document.addEventListener('mouseout', (e) => {
   if (e.target.closest('.ch-row') && !e.relatedTarget?.closest('.ch-row')) hoveredChapterRow = null;
 });
+
+// ---------------------------------------------------------------------------
+// Scanlator Quality Rule Modal
+// ---------------------------------------------------------------------------
+
+window.openScanlatorRuleModal = async function(scanlatorName) {
+  // Remove any existing modal first
+  const existingModal = document.getElementById('scanlator-rule-modal');
+  if (existingModal) existingModal.remove();
+
+  try {
+    // Load all quality rules to check if we already have one for this scanlator
+    const allRules = await qualityRules.list();
+    
+    // Find exact matching rule: single condition, scanlator_group eq scanlatorName
+    let existingRule = null;
+    for (const rule of allRules) {
+      if (rule.conditions.length === 1 &&
+          rule.conditions[0].field === 'scanlator_group' &&
+          rule.conditions[0].op === 'eq' &&
+          rule.conditions[0].value === scanlatorName &&
+          !rule.conditions[0].negate) {
+        existingRule = rule;
+        break;
+      }
+    }
+
+    // Create modal
+    const modal = document.createElement('div');
+    modal.id = 'scanlator-rule-modal';
+    modal.className = 'modal-overlay';
+    
+    const currentScore = existingRule ? existingRule.score : 0;
+    
+    modal.innerHTML = `
+      <div class="modal-box">
+        <h3 class="modal-title">Quality Rule for <strong>${escape(scanlatorName)}</strong></h3>
+        
+        <div style="margin: 1rem 0;">
+          <label style="display: block; margin-bottom: 0.5rem;">Score adjustment for this scanlator group:</label>
+          <div style="display: flex; gap: 0.75rem; align-items: center;">
+            <input type="range" id="scanlator-score-slider" min="-100" max="100" value="${currentScore}" 
+                   style="flex: 1;" oninput="document.getElementById('scanlator-score-input').value = this.value">
+            <input type="number" id="scanlator-score-input" min="-100" max="100" value="${currentScore}" 
+                   style="width: 5rem;" oninput="document.getElementById('scanlator-score-slider').value = this.value">
+          </div>
+          <div style="display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem;">
+            <span>Worst (-100)</span>
+            <span>Default (0)</span>
+            <span>Best (+100)</span>
+          </div>
+        </div>
+        
+        <p style="font-size: 0.875rem; color: var(--text-muted); margin-bottom: 1rem;">
+          ${existingRule 
+            ? 'This will update the existing quality rule for this scanlator.' 
+            : 'A new quality rule will be created that matches chapters from this scanlator group.'}
+        </p>
+        
+        <div class="modal-footer">
+          <button class="btn btn-sm btn-ghost" onclick="document.getElementById('scanlator-rule-modal').remove()">Cancel</button>
+          <button class="btn btn-sm btn-primary" onclick="saveScanlatorRule('${escape(scanlatorName)}', ${existingRule ? `'${existingRule.id}'` : 'null'})">Save</button>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // Close on backdrop click
+    modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+    
+  } catch(e) {
+    showToast('Error loading quality rules: ' + e.message, 'error');
+  }
+};
+
+window.saveScanlatorRule = async function(scanlatorName, existingRuleId) {
+  const score = parseInt(document.getElementById('scanlator-score-input').value, 10);
+  
+  if (isNaN(score) || score < -100 || score > 100) {
+    showToast('Please enter a valid score between -100 and 100', 'error');
+    return;
+  }
+  
+  const ruleData = {
+    name: `Scanlator: ${scanlatorName}`,
+    score: score,
+    sort_order: 100,
+    conditions: [
+      {
+        field: 'scanlator_group',
+        op: 'eq',
+        value: scanlatorName,
+        negate: false
+      }
+    ]
+  };
+  
+  try {
+    if (existingRuleId) {
+      await qualityRules.update(existingRuleId, ruleData);
+      showToast(`Updated quality rule for ${scanlatorName}`);
+    } else {
+      await qualityRules.create(ruleData);
+      showToast(`Created quality rule for ${scanlatorName}`);
+    }
+    
+    // Close modal
+    document.getElementById('scanlator-rule-modal')?.remove();
+    
+    // Refresh chapters to apply new score
+    if (currentMangaId) {
+      await loadChapters(currentMangaId);
+    }
+    
+  } catch(e) {
+    showToast('Error saving quality rule: ' + e.message, 'error');
+  }
+};

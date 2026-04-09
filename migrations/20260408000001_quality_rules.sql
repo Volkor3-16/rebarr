@@ -19,17 +19,3 @@ INSERT INTO QualityRules (id, sort_order, name, score, conditions) VALUES
     ('00000000-0000-0000-0000-000000000080', 80,  'Has chapter title',   20, '[{"field":"title","op":"present"}]'),
     ('00000000-0000-0000-0000-000000000085', 85,  'Has release date',    10, '[{"field":"released_at","op":"present"}]'),
     ('00000000-0000-0000-0000-000000000090', 90,  'No scanlator group', -100, '[{"field":"scanlator_group","op":"present","negate":true}]');
-
--- Migrate existing TrustedGroup entries as quality rules (score=500, sort_order starts at 30).
--- Each gets a deterministic ID based on its row number so repeated migrations are idempotent.
-INSERT OR IGNORE INTO QualityRules (id, sort_order, name, score, conditions)
-SELECT
-    lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' ||
-        substr(lower(hex(randomblob(2))),2) || '-' ||
-        substr('89ab', abs(random()) % 4 + 1, 1) ||
-        substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6))) AS id,
-    30 + (row_number() OVER (ORDER BY name COLLATE NOCASE)) * 1 AS sort_order,
-    'Trusted: ' || name AS name,
-    500 AS score,
-    json_array(json_object('field', 'scanlator_group', 'op', 'eq', 'value', name)) AS conditions
-FROM TrustedGroup;

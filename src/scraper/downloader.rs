@@ -11,10 +11,11 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, instrument, warn};
 
 use crate::db::{
-    chapter as db_chapter, provider as db_provider, settings as db_settings, task as db_task,
+    chapter as db_chapter, quality_rules as db_quality_rules, settings as db_settings,
+    task as db_task,
 };
 use crate::manga::core::{Chapter, DownloadStatus, Manga};
-use crate::manga::scoring::{ChapterFilter, compute_tier, rank_entries};
+use crate::manga::scoring::{compute_score, rank_entries_scored};
 use crate::manga::{comicinfo, files};
 use crate::scraper::{ProviderRegistry, ScraperCtx, browser::close_page_tab};
 
@@ -32,6 +33,12 @@ pub enum DownloadError {
     Cancelled,
     #[error("invalid image data (likely HTML or error page)")]
     InvalidImage,
+    #[error("no valid images downloaded")]
+    NoValidImages,
+    #[error("failed to download all pages: got {ok}/{total}")]
+    IncompleteDownload { ok: usize, total: usize },
+    #[error("too many duplicate identical images (likely placeholder/404 failure)")]
+    DuplicateImages,
     #[error("database error: {0}")]
     Db(#[from] sqlx::Error),
     #[error("io error: {0}")]
@@ -69,7 +76,7 @@ pub async fn download_chapter(
 
     db_chapter::set_status(pool, chapter.id, DownloadStatus::Downloading, None).await?;
 
-    let trusted_groups = db_provider::get_trusted_groups(pool).await?;
+    let quality_rules = db_quality_rules::get_all(pool).await?;
 
     // Read download mode setting
     let download_mode = db_settings::get(pool, "download_mode", "must_have").await?;
@@ -89,20 +96,10 @@ pub async fn download_chapter(
         return Err(DownloadError::NoProviders);
     }
 
-    // Rank: language filter → tier sort
+    // Rank: language filter → quality score sort
     let lang_raw = db_settings::get(pool, "preferred_language", "").await?;
-    let lang_filter = if lang_raw.is_empty() {
-        None
-    } else {
-        Some(lang_raw.clone())
-    };
-    let ranked = rank_entries(
-        all_entries,
-        &ChapterFilter {
-            language: lang_filter,
-        },
-        &trusted_groups,
-    );
+    let lang_filter = if lang_raw.is_empty() { None } else { Some(lang_raw.as_str()) };
+    let ranked = rank_entries_scored(all_entries, lang_filter, &quality_rules);
 
     // Always try the user-selected canonical chapter first, then fall back to ranked order.
     let mut entries: Vec<Chapter> = Vec::with_capacity(ranked.len());
@@ -179,16 +176,10 @@ pub async fn download_chapter(
                 chapter.chapter_variant,
             )
             .await?;
-            let fresh_ranked = rank_entries(
+            let fresh_ranked = rank_entries_scored(
                 fresh_all,
-                &ChapterFilter {
-                    language: if lang_raw.is_empty() {
-                        None
-                    } else {
-                        Some(lang_raw.clone())
-                    },
-                },
-                &trusted_groups,
+                if lang_raw.is_empty() { None } else { Some(lang_raw.as_str()) },
+                &quality_rules,
             );
 
             // Rebuild entries preserving canonical-first ordering.
@@ -363,8 +354,8 @@ pub async fn download_chapter(
                     let _ = db_chapter::set_file_size(pool, chapter.id, meta.len() as i64).await;
                 }
 
-                // Remove any previously-downloaded lower-tier variants for this chapter slot.
-                cleanup_superseded_downloads(pool, manga, chapter, lib_root, &trusted_groups).await;
+                // Remove any previously-downloaded lower-scored variants for this chapter slot.
+                cleanup_superseded_downloads(pool, manga, chapter, lib_root, &quality_rules).await;
 
                 db_chapter::update_manga_counts(pool, manga.id).await?;
 
@@ -531,23 +522,43 @@ pub async fn download_pages_via_browser(
             // JS fetch() from the chapter page context.
             // Subrequests are not subject to ERR_BLOCKED_BY_CLIENT. CDP extra headers
             // inject the Referer automatically. Works for CDNs with CORS headers.
-            let escaped_url = url.replace('\\', "\\\\").replace('"', "\\\"");
+            let escaped_url = url.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r");
             let js = format!(
                 r#"(async () => {{
-                    const r = await fetch("{escaped_url}", {{ cache: 'reload' }});
-                    if (!r.ok) return null;
-                    const buf = await r.arrayBuffer();
-                    const bytes = new Uint8Array(buf);
-                    let binary = "";
-                    for (let i = 0; i < bytes.length; i += 8192) {{
-                        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+                    try {{
+                        const r = await fetch("{escaped_url}", {{
+                            cache: 'reload',
+                            mode: 'cors',
+                            credentials: 'include',
+                            referrerPolicy: 'strict-origin-when-cross-origin'
+                        }});
+                        if (!r.ok) {{
+                            return {{ error: `HTTP ${{r.status}}: ${{r.statusText}}`, status: r.status }};
+                        }}
+                        const buf = await r.arrayBuffer();
+                        const bytes = new Uint8Array(buf);
+                        let binary = "";
+                        for (let i = 0; i < bytes.length; i += 8192) {{
+                            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+                        }}
+                        return {{ ok: btoa(binary) }};
+                    }} catch (err) {{
+                            let reason = err.toString();
+                            if (err.name) reason = `${{err.name}}: ${{err.message}}`;
+                            if (err.cause) reason += ` (cause: ${{err.cause}})`;
+                            return {{ error: reason, name: err.name, message: err.message }};
                     }}
-                    return btoa(binary);
                 }})()"#
             );
 
-            let image_data = match page.evaluate::<Option<String>>(&js).await {
-                Ok(Some(b64)) => match BASE64.decode(b64.trim()) {
+            #[derive(serde::Deserialize, Debug)]
+            struct JsFetchResponse {
+                ok: Option<String>,
+                error: Option<String>,
+            }
+
+            let image_data = match page.evaluate::<JsFetchResponse>(&js).await {
+                Ok(resp) if resp.ok.is_some() => match BASE64.decode(resp.ok.unwrap().trim()) {
                     Ok(data) if !data.is_empty() => data,
                     Ok(_) => {
                         warn!("[dl] empty bytes for {url}");
@@ -558,13 +569,18 @@ pub async fn download_pages_via_browser(
                         continue;
                     }
                 },
-                Ok(None) => {
-                    warn!("[dl] fetch returned null for {url}");
+                Ok(resp) if resp.error.is_some() => {
+                    let err = resp.error.unwrap();
+                    warn!("[dl] fetch failed for {url}: {err}");
+                    return Err(DownloadError::Io(std::io::Error::other(format!("fetch failed: {err}"))));
+                },
+                Ok(_) => {
+                    warn!("[dl] invalid response from fetch script for {url}");
                     continue;
                 }
                 Err(e) => {
                     warn!("[dl] fetch eval error for {url}: {e}");
-                    continue;
+                    return Err(DownloadError::Io(std::io::Error::other(format!("CDP eval error: {e}"))));
                 }
             };
 
@@ -589,6 +605,50 @@ pub async fn download_pages_via_browser(
             .map_err(|e| std::io::Error::other(e.to_string()))?;
 
         results.sort_by_key(|(idx, _)| *idx);
+
+        // VALIDATION CHECKS
+        // 1. Check we actually have images
+        if results.is_empty() {
+            warn!("[dl] No valid images downloaded for chapter {}", chapter_url);
+            return Err(DownloadError::NoValidImages);
+        }
+
+        // 2. 100% success requirement: must have every single page
+        if results.len() != pages.len() {
+            warn!(
+                "[dl] Incomplete download: got {}/{} pages for {}",
+                results.len(),
+                pages.len(),
+                chapter_url
+            );
+            return Err(DownloadError::IncompleteDownload {
+                ok: results.len(),
+                total: pages.len(),
+            });
+        }
+
+        // 3. Check for duplicate identical images (404/placeholder failure)
+        use std::collections::HashSet;
+        let mut hashes = HashSet::new();
+        for (_, data) in &results {
+            let hash = blake3::hash(data);
+            hashes.insert(hash);
+        }
+
+        let unique_count = hashes.len();
+        let total_count = results.len();
+
+        // If more than half the images are identical, it's almost certainly failed
+        if unique_count <= (total_count / 2) {
+            warn!(
+                "[dl] Duplicate image failure: only {} unique images out of {} for {}",
+                unique_count,
+                total_count,
+                chapter_url
+            );
+            return Err(DownloadError::DuplicateImages);
+        }
+
         Ok(results)
     }
     .await;
@@ -600,17 +660,17 @@ pub async fn download_pages_via_browser(
     result
 }
 
-/// After a successful download, remove any previously-downloaded lower-tier variants
+/// After a successful download, remove any previously-downloaded lower-scored variants
 /// for the same (chapter_base, chapter_variant) slot.
 ///
 /// Non-fatal: logs errors and continues. Only removes variants with a strictly worse
-/// tier than `chapter` — same-tier variants are left untouched.
+/// quality score than `chapter` — same-or-better score variants are left untouched.
 async fn cleanup_superseded_downloads(
     pool: &sqlx::SqlitePool,
     manga: &Manga,
     chapter: &Chapter,
     lib_root: &Path,
-    trusted_groups: &[String],
+    quality_rules: &[crate::db::quality_rules::QualityRule],
 ) {
     let all_variants = match db_chapter::get_all_for_chapter(
         pool,
@@ -627,11 +687,7 @@ async fn cleanup_superseded_downloads(
         }
     };
 
-    let new_tier = compute_tier(
-        chapter.scanlator_group.as_deref(),
-        trusted_groups,
-        chapter.provider_name.as_deref(),
-    );
+    let new_score = compute_score(chapter, quality_rules);
     let series_dir = lib_root.join(&manga.relative_path);
     let number_prefix = format!("Chapter {}", chapter.number_sort());
 
@@ -642,13 +698,9 @@ async fn cleanup_superseded_downloads(
         if variant.download_status != DownloadStatus::Downloaded {
             continue;
         }
-        let old_tier = compute_tier(
-            variant.scanlator_group.as_deref(),
-            trusted_groups,
-            variant.provider_name.as_deref(),
-        );
-        if old_tier <= new_tier {
-            continue; // Same or better tier — don't touch
+        let old_score = compute_score(variant, quality_rules);
+        if old_score >= new_score {
+            continue; // Same or better quality — don't touch
         }
 
         // Find the CBZ file: prefix-match "Chapter {number}*.cbz" in series dir.

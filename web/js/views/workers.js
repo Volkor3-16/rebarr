@@ -58,21 +58,29 @@ function taskRow(task) {
         : escapeHtml(task.manga_title || '\u2014');
     const chapterLabel = task.chapter_number_raw ? `Ch. ${task.chapter_number_raw}` : '';
     const errorInfo = task.last_error
-        ? `<div class="error small">Error: ${escapeHtml(task.last_error)}</div>` : '';
+        ? `<div class="error small mt-1">Error: ${escapeHtml(task.last_error)}</div>` : '';
 
-    return `<tr class="task-row" data-id="${task.id}">
-        <td>${statusIcon(task.status)}</td>
-        <td class="small">${task.task_type}</td>
-        <td>${mangaLink} ${chapterLabel ? `<span class="text-muted small">${chapterLabel}</span>` : ''}</td>
-        <td>${task.attempt}/${task.max_attempts}</td>
-        <td>${timeAgo(task.updated_at)}</td>
-        <td>${progressBar(task)} ${errorInfo}</td>
-        <td>
+    return `<div class="task-row p-2" data-id="${task.id}">
+        <div class="flex justify-between items-start gap-1">
+            <div class="flex items-start gap-2 flex-grow-1">
+                <span class="flex-shrink-0">${statusIcon(task.status)}</span>
+                <div class="flex-grow-1">
+                    <div class="queue-task-main">
+                        ${mangaLink}
+                        ${chapterLabel ? `<span class="text-muted small ms-1">${chapterLabel}</span>` : ''}
+                    </div>
+                    <div class="queue-task-meta mt-05">
+                        ${task.task_type} &bull; ${task.attempt}/${task.max_attempts} attempts &bull; ${timeAgo(task.updated_at)}
+                    </div>
+                </div>
+            </div>
             ${task.status === 'Running' || task.status === 'Pending'
-                ? `<button class="btn btn-sm btn-danger cancel-btn" data-id="${task.id}">\u2715</button>`
+                ? `<button class="btn btn-sm btn-danger cancel-btn flex-shrink-0" data-id="${task.id}">\u2715</button>`
                 : ''}
-        </td>
-    </tr>`;
+        </div>
+        ${progressBar(task)}
+        ${errorInfo}
+    </div>`;
 }
 
 function queueSection(queue) {
@@ -80,27 +88,46 @@ function queueSection(queue) {
     const totalRunning = queue.running_count;
     const totalPending = queue.pending_count;
     const hasTasks = totalRunning > 0 || totalPending > 0;
+    const isDisabled = queue.is_provider && queue.disabled;
+    const isRateLimited = queue.is_provider && queue.rate_limited;
+    const isUnhealthy = isDisabled || isRateLimited;
 
-    return `<div class="queue-box ${hasTasks ? 'has-tasks' : ''}">
+    let statusBadge = '';
+    let statusMessage = '';
+
+    if (isDisabled) {
+        statusBadge = '<span class="badge bg-secondary">Disabled</span>';
+        statusMessage = '<div class="small text-muted">Provider is manually disabled</div>';
+    } else if (isRateLimited) {
+        statusBadge = '<span class="badge bg-danger">Rate Limited</span>';
+        const resetSeconds = Math.max(0, Math.ceil((new Date(queue.rate_limit_resets_at) - Date.now()) / 1000));
+        statusMessage = `<div class="small text-muted">Rate limited, resets in ${resetSeconds}s</div>`;
+    }
+
+    let extraClasses = [];
+    if (hasTasks) extraClasses.push('has-tasks');
+    if (isUnhealthy) extraClasses.push('disabled');
+
+    return `<div class="queue-box ${extraClasses.join(' ')}">
         <div class="queue-header"
              data-bs-toggle="collapse" data-bs-target="#queue-${qid}"
              style="cursor:pointer">
             <div class="queue-name">${escapeHtml(queue.display_name)}</div>
             <div class="queue-badges">
+                ${statusBadge}
                 ${totalRunning > 0 ? `<span class="badge bg-success">${totalRunning}</span>` : ''}
                 ${totalPending > 0 ? `<span class="badge bg-warning text-dark">${totalPending}</span>` : ''}
-                ${!hasTasks ? '<span class="badge bg-light text-muted">idle</span>' : ''}
+                ${!hasTasks && !isUnhealthy ? '<span class="badge bg-light text-muted">idle</span>' : ''}
             </div>
         </div>
-        <div id="queue-${qid}" class="collapse ${hasTasks ? 'show' : ''}">
+        <div id="queue-${qid}" class="collapse ${hasTasks && !isUnhealthy ? 'show' : ''}">
             <div class="queue-body">
+                ${isUnhealthy ? statusMessage : ''}
                 ${queue.tasks.length > 0 ? `
-                <table class="table table-sm task-table mb-0">
-                    <tbody>
-                        ${queue.tasks.map(taskRow).join('')}
-                    </tbody>
-                </table>
-                ` : `<div class="p-2 text-muted small">Queue is idle</div>`}
+                <div class="task-list">
+                    ${queue.tasks.map(taskRow).join('')}
+                </div>
+                ` : `<div class="p-2 text-muted small">${isUnhealthy ? '' : 'Queue is idle'}</div>`}
             </div>
         </div>
     </div>`;
@@ -156,9 +183,11 @@ export function view() {
     // Initial load
     refreshQueues();
     
-    // Use SSE instead of polling — refresh on any task update
-    sseHandler = () => refreshQueues();
-    sse.on('task_update', sseHandler);
+    // Use SSE for live updates - register AFTER router has finished clearing listeners
+    setTimeout(() => {
+        sseHandler = () => refreshQueues();
+        sse.on('task_update', sseHandler);
+    }, 0);
 }
 
 // Register as window function for router
