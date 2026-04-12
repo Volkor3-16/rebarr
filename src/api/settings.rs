@@ -19,14 +19,10 @@ pub struct SettingsResponse {
     pub browser_worker_count: u64,
     /// BCP 47 language code to prefer when selecting a provider (e.g. "en"). `null` = accept any.
     pub preferred_language: Option<String>,
-    /// Comma-separated list of language codes to filter from synonym searches
-    pub synonym_filter_languages: String,
     /// Whether the first-run setup wizard has been completed.
     pub wizard_completed: bool,
     /// Whether newly-added manga should be monitored by default.
     pub default_monitored: bool,
-    /// Minimum scanlator tier to consider when downloading (1=Official only, 4=all sources).
-    pub min_tier: u64,
     /// Whether AniList-completed series should be unmonitored on add/refresh.
     pub auto_unmonitor_completed: bool,
     /// Whether already-downloaded chapters should be preserved as canonical winners.
@@ -42,12 +38,8 @@ pub struct UpdateSettingsRequest {
     pub browser_worker_count: Option<u64>,
     /// Set to a BCP 47 code (e.g. "en") to filter downloads to that language, or "" to clear.
     pub preferred_language: Option<String>,
-    /// Comma-separated list of language codes to filter from synonym searches (e.g. "zh,vi,ru")
-    pub synonym_filter_languages: Option<String>,
     pub wizard_completed: Option<bool>,
     pub default_monitored: Option<bool>,
-    /// 1–4: minimum scanlator tier.
-    pub min_tier: Option<u64>,
     pub auto_unmonitor_completed: Option<bool>,
     pub disable_chapter_upgrades: Option<bool>,
     /// "best_only" or "must_have".
@@ -85,10 +77,6 @@ pub async fn get_settings(pool: &State<sqlx::SqlitePool>) -> ApiResult<SettingsR
     } else {
         Some(lang_raw)
     };
-    // Default to empty - user must explicitly configure filters
-    let filter_langs = db::settings::get(pool.inner(), "synonym_filter_languages", "")
-        .await
-        .map_err(internal)?;
     // Absence of wizard_completed key means the wizard has not been run.
     let wizard_completed = db::settings::get(pool.inner(), "wizard_completed", "false")
         .await
@@ -98,12 +86,6 @@ pub async fn get_settings(pool: &State<sqlx::SqlitePool>) -> ApiResult<SettingsR
         .await
         .unwrap_or_else(|_| "true".to_string())
         != "false";
-    let min_tier = db::settings::get(pool.inner(), "min_tier", "4")
-        .await
-        .unwrap_or_else(|_| "4".to_string())
-        .parse::<u64>()
-        .unwrap_or(4)
-        .clamp(1, 4);
     let auto_unmonitor_completed =
         db::settings::get(pool.inner(), "auto_unmonitor_completed", "false")
             .await
@@ -127,10 +109,8 @@ pub async fn get_settings(pool: &State<sqlx::SqlitePool>) -> ApiResult<SettingsR
         queue_paused,
         browser_worker_count,
         preferred_language,
-        synonym_filter_languages: filter_langs,
         wizard_completed,
         default_monitored,
-        min_tier,
         auto_unmonitor_completed,
         disable_chapter_upgrades,
         download_mode,
@@ -180,11 +160,6 @@ pub async fn update_settings(
             .await
             .map_err(internal)?;
     }
-    if let Some(ref langs) = body.synonym_filter_languages {
-        db::settings::set(pool.inner(), "synonym_filter_languages", langs.trim())
-            .await
-            .map_err(internal)?;
-    }
     if let Some(completed) = body.wizard_completed {
         db::settings::set(
             pool.inner(),
@@ -202,14 +177,6 @@ pub async fn update_settings(
         )
         .await
         .map_err(internal)?;
-    }
-    if let Some(tier) = body.min_tier {
-        if !(1..=4).contains(&tier) {
-            return Err(bad_request("min_tier must be 1–4"));
-        }
-        db::settings::set(pool.inner(), "min_tier", &tier.to_string())
-            .await
-            .map_err(internal)?;
     }
     if let Some(enabled) = body.auto_unmonitor_completed {
         db::settings::set(

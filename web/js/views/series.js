@@ -816,10 +816,10 @@ function chapterRow(mangaId, ch, {
     <td>${scoreHtml}</td>
     <td>${sourceHtml}</td>
     <td>
-      <div class="ch-status-cell">
-        ${statusBadge(status)}${fileSizeHtml}
-        ${quickDlBtn}
-      </div>
+       <div class="ch-status-cell">
+         ${statusBadge(status, ch.downloaded_at)}${fileSizeHtml}
+         ${quickDlBtn}
+       </div>
     </td>
     <td><small>${relTime(ch.released_at)}</small></td>
     <td><small>${relTime(ch.scraped_at)}</small></td>

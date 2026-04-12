@@ -502,11 +502,13 @@ async fn cmd_test(
         .unwrap_or_else(|e| exit_with_trace(&debug_ctx, &format!("pages() failed: {e}")));
 
     println!("Found {} pages:", pages.len());
-    for p in pages.iter().take(5) {
-        println!("  Page {} — {}", p.index, p.url);
+    // In verbose mode show all URLs; otherwise show first 5 + a count.
+    let preview_limit = if verbose { pages.len() } else { 5 };
+    for p in pages.iter().take(preview_limit) {
+        println!("  Page {:>3} — {}", p.index, p.url);
     }
-    if pages.len() > 5 {
-        println!("  ... and {} more", pages.len() - 5);
+    if !verbose && pages.len() > 5 {
+        println!("  ... and {} more (pass -v to show all)", pages.len() - 5);
     }
     if pages.is_empty() {
         exit_with_trace(
@@ -529,6 +531,11 @@ async fn cmd_test(
         pages.len(),
         out_dir.display()
     );
+    println!("  chapter URL (Referer): {chapter_url}");
+    println!("  first image URL:       {}", pages.first().map(|p| p.url.as_str()).unwrap_or("—"));
+    if pages.len() > 1 {
+        println!("  last  image URL:       {}", pages.last().map(|p| p.url.as_str()).unwrap_or("—"));
+    }
 
     let cancel = tokio_util::sync::CancellationToken::new();
     let image_data = rebarr::scraper::downloader::download_pages_via_browser(

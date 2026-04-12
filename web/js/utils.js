@@ -34,9 +34,10 @@ export function statusBadgeClass(s) {
 /**
  * Render status badge HTML with icon
  * @param {string} s - Status string
+ * @param {number|null} downloadedAt - Unix timestamp when chapter was downloaded (optional)
  * @returns {string} HTML span element
  */
-export function statusBadge(s) {
+export function statusBadge(s, downloadedAt = null) {
   const icons = {
     'Missing': 'mdi:book-remove',
     'Queued': 'mdi:book-clock',
@@ -46,7 +47,14 @@ export function statusBadge(s) {
   };
   const icon = icons[s] || 'mdi:book-remove';
   const cls = statusBadgeClass(s);
-  return `<span class="status-icon ${cls.replace('st-', '')}" title="${escape(s)}"><iconify-icon icon="${icon}" width="20" height="20"></iconify-icon></span>`;
+  
+  let title = s;
+  if (s === 'Downloaded' && downloadedAt) {
+    const dlDate = new Date(downloadedAt * 1000);
+    title = `${s}\nDownloaded: ${dlDate.toLocaleString()}`;
+  }
+  
+  return `<span class="status-icon ${cls.replace('st-', '')}" title="${escape(title)}"><iconify-icon icon="${icon}" width="20" height="20"></iconify-icon></span>`;
 }
 
 /**

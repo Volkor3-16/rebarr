@@ -2,7 +2,7 @@
 
 This a informal changelog so i can keep track of what im doing.
 
-## 2026-04-07 to 2026-04-10
+## 2026-04-07 to 2026-04-12
 
 Now that I'm actually /using/ rebarr properly, and i've been sick at home doing nothing...
 
@@ -27,6 +27,11 @@ Now that I'm actually /using/ rebarr properly, and i've been sick at home doing 
     - You can now delete just the cbz file, or both the cbz and chapter entry.
 - Improved error handling
     - We now check if a provider gives us fake images, no images, or duplicate images, or if some of the chapters fail.
+- Setup Wizard Revamp
+    - Added a bunch of explainers / tutorials
+    - Exposed more settings in the setup wizard
+    - hopefully it explains the crazy mess of systems and strange things we have to do to get a usable scraper
+- Better naming and metadata for manga reading apps. (scanlator and provider listed in translator, fallback to official translator name) (also removed title)
 
 ## 2026-04-06
 

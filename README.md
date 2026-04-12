@@ -13,17 +13,16 @@ I'll remove this when I've got the first public release out, this is just a quic
 
 ### Backend
 
-- [ ] Upgrade Policy (when do we replace existing chapters with a new (better?) copy?)
-    - Never (Downloaded chapters will never be replaced)
-    - Always (New & better chapters will replace older ones) - default, and what we have now
-- [ ] Importing is flakey
+- [ ] live-in-app log stream+history?
+    - save as file?
+    - keep in memory?
+    - last `n` events?
+    - ????
 
 ### Frontend
 
 - [ ] Update frontend to use daisyui components as much as possible https://daisyui.com/components/
     - The site looks nice as it is, and the import is half broken, this'd be a lot of work... polishing up a poop.
-- [ ] Include the downloaded_at in task queue page and series.
-- [ ] Have a 'Downloads' Page, where it shows pretty much a condensed version of the queue, where stuff is grouped by series (sequential chapters?)
 - [ ] Let users re-order the queue
 - [ ] Setup Wizard: Adding 49 series to library… should have some logging or progress.
 
@@ -53,7 +52,12 @@ I'll remove this when I've got the first public release out, this is just a quic
     - Automatic updates and all that nice stuff
     - Add more providers
     - The separate repo should also have a nice CI Pipeline that runs tests for each provider, using text_fixtures, to find broken providers, and alert of new broken ones & a nice 'auto updating' list of what providers work
-- [ ] Fix AllManga again... yay
+- [ ] Downloader is broken again
+    - WeebCentral no worky
+        - Tried no-cors, tried cors, tried direct page access, idk man
+        - but it works with a normal ass curl request???!?!
+    - AllManga no worky
+    - Need to test others
 
 ## Features
 

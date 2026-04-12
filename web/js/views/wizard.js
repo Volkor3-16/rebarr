@@ -1,9 +1,9 @@
 // First-run setup wizard — full-page version at /setup
 
-import { importApi, libraries, providers, search, settings, providerSettings } from '../api.js';
+import { importApi, libraries, providers, search, settings, providerSettings, qualityRules as qualityRulesApi } from '../api.js';
 import { escape } from '../utils.js';
 
-const TOTAL_STEPS = 3;
+const TOTAL_STEPS = 6;
 
 // ---------------------------------------------------------------------------
 // Module-level series import state
@@ -38,6 +38,7 @@ let _step4Libraries = [];
 let _onComplete = null;
 let _pickerFolderIdx = -1;
 let _pickerResults = [];
+let _qualityRules = null;
 
 // ---------------------------------------------------------------------------
 // viewSetup — entry point from router
@@ -53,14 +54,25 @@ export function viewSetup(onComplete) {
   const headerContainer = document.querySelector('.header-container');
   if (headerContainer) headerContainer.style.display = 'none';
 
-  checkExistingLibraries().then(() => render());
-}
-
-async function checkExistingLibraries() {
-  try {
-    const libs = await libraries.list();
-    if (libs.length > 0) _libraryCreated = true;
-  } catch (_) {}
+  _pendingSettings = {};
+  _providerChanges = {};
+  _qualityRules = null;
+  _providerSettingsLoaded = false;
+  Promise.all([
+    libraries.list().then(libs => { if (libs.length > 0) _libraryCreated = true; }).catch(() => {}),
+    settings.get().then(s => {
+      _pendingSettings = {
+        default_monitored:        s.default_monitored,
+        auto_unmonitor_completed: s.auto_unmonitor_completed,
+        scan_interval_hours:      s.scan_interval_hours,
+        browser_worker_count:     s.browser_worker_count,
+        preferred_language:       s.preferred_language ?? '',
+        disable_chapter_upgrades: s.disable_chapter_upgrades,
+        download_mode:            s.download_mode,
+      };
+    }).catch(() => {}),
+    providers.list().then(p => { _providerList = p; }).catch(() => {}),
+  ]).then(() => render());
 }
 
 // ---------------------------------------------------------------------------
@@ -88,11 +100,13 @@ function render() {
   `;
 
   wireHandlers();
-  if (_currentStep === 2 && _seriesSubstep === 'intro') loadStep4Libraries();
+  if (_currentStep === 4 && _seriesSubstep === 'intro') loadStep4Libraries();
+  if (_currentStep === 3) ensureProviderSettingsLoaded();
+  if (_currentStep === 5 && !_qualityRules) loadQualityRules();
 }
 
 function stepsIndicatorHtml() {
-  const labels = ['Library', 'Import', 'Ready'];
+  const labels = ['Library', 'Settings', 'Providers', 'Import', 'Quality', 'Ready'];
   const items = labels.map((label, i) => {
     const n = i + 1;
     const active = n === _currentStep;
@@ -108,10 +122,10 @@ function stepsIndicatorHtml() {
 function navHtml() {
   const isFirst = _currentStep === 1;
   const isLast = _currentStep === TOTAL_STEPS;
-  const hideNext = _currentStep === 2 &&
+  const hideNext = _currentStep === 4 &&
     (_seriesSubstep === 'matching' || _seriesSubstep === 'chapter_import' || _seriesSubstep === 'done');
   let nextLabel = 'Next';
-  if (_currentStep === 2 && _seriesSubstep === 'intro') nextLabel = 'Skip';
+  if (_currentStep === 4 && _seriesSubstep === 'intro') nextLabel = 'Skip';
 
   return `
     <div class="setup-nav">
@@ -129,7 +143,7 @@ function navHtml() {
 
 function wireHandlers() {
   document.getElementById('wizard-back-btn')?.addEventListener('click', () => {
-    if (_currentStep === 2 && _seriesSubstep !== 'intro') {
+    if (_currentStep === 4 && _seriesSubstep !== 'intro') {
       _seriesSubstep = 'intro';
       _series.matchQueue = [];
       _series.matchRunning = false;
@@ -148,25 +162,32 @@ function wireHandlers() {
   document.getElementById('wizard-auto-unmonitor-completed')?.addEventListener('change', e => {
     _pendingSettings.auto_unmonitor_completed = e.target.checked;
   });
-  document.querySelectorAll('input[name="wizard-min-tier"]').forEach(radio => {
-    radio.addEventListener('change', e => {
-      _pendingSettings.min_tier = parseInt(e.target.value, 10);
-      highlightRadioGroup('input[name="wizard-min-tier"]', e.target.value);
+  // Step 2: Settings controls
+  document.getElementById('wizard-scan-interval')?.addEventListener('input', e => {
+    _pendingSettings.scan_interval_hours = parseInt(e.target.value, 10) || 6;
+  });
+  document.getElementById('wizard-browser-workers')?.addEventListener('input', e => {
+    _pendingSettings.browser_worker_count = parseInt(e.target.value, 10) || 3;
+  });
+  document.getElementById('wizard-preferred-language')?.addEventListener('input', e => {
+    _pendingSettings.preferred_language = e.target.value.trim();
+  });
+  document.getElementById('wizard-disable-upgrades')?.addEventListener('change', e => {
+    _pendingSettings.disable_chapter_upgrades = e.target.checked;
+  });
+  document.getElementById('wizard-download-mode')?.addEventListener('change', e => {
+    _pendingSettings.download_mode = e.target.value;
+  });
+  // Step 3: Provider toggles
+  document.querySelectorAll('.wiz-provider-enabled').forEach(el => {
+    el.addEventListener('change', () => {
+      _providerChanges[el.dataset.p] = { enabled: el.checked };
     });
   });
   document.getElementById('wiz-series-scan-btn')?.addEventListener('click', startSeriesScan);
   document.getElementById('wiz-series-done-next')?.addEventListener('click', () => { _currentStep++; render(); });
 }
 
-function highlightRadioGroup(selector, selectedValue) {
-  document.querySelectorAll(selector).forEach(radio => {
-    const label = radio.closest('label');
-    if (!label) return;
-    const sel = radio.value === selectedValue;
-    label.style.borderColor = sel ? 'var(--p)' : 'var(--b3, #374151)';
-    label.style.background = sel ? 'var(--b2)' : 'transparent';
-  });
-}
 
 async function advanceStep() {
   if (_currentStep === 1 && !_libraryCreated) {
@@ -174,8 +195,14 @@ async function advanceStep() {
     if (status) { status.textContent = 'Create a library to continue.'; status.style.color = 'var(--er)'; }
     return;
   }
-  if (_currentStep === 2 && _seriesSubstep === 'intro') { _seriesSubstep = 'skip'; render(); return; }
-  if (_currentStep === 2 && _seriesSubstep !== 'skip') return;
+  if (_currentStep === 2) {
+    try { await settings.update(_pendingSettings); } catch (_) {}
+  }
+  if (_currentStep === 3) {
+    try { await saveProviders(); } catch (_) {}
+  }
+  if (_currentStep === 4 && _seriesSubstep === 'intro') { _seriesSubstep = 'skip'; render(); return; }
+  if (_currentStep === 4 && _seriesSubstep !== 'skip') return;
   if (_currentStep < TOTAL_STEPS) { _currentStep++; render(); }
 }
 
@@ -204,8 +231,11 @@ async function finishWizard() {
 function stepBodyHtml(step) {
   switch (step) {
     case 1: return step1Html();
-    case 2: return step4Html();
-    case 3: return step5Html();
+    case 2: return step2Html();
+    case 3: return step3Html();
+    case 4: return step4Html();
+    case 5: return step5Html();
+    case 6: return step6Html();
     default: return '';
   }
 }
@@ -264,69 +294,118 @@ async function createLibrary() {
 }
 
 // ---------------------------------------------------------------------------
-// Step 2: Provider Configuration
+// Step 2: Scheduler & Download Settings
 // ---------------------------------------------------------------------------
 
-function step2LoadingHtml() {
-  return `<div class="flex items-center gap-2 mb-4"><iconify-icon icon="mdi:server-outline" width="24" class="text-primary"></iconify-icon><h3 class="text-lg font-semibold m-0">Provider Configuration</h3></div><div class="flex items-center gap-2 opacity-60"><span class="loading loading-spinner loading-sm"></span><span>Loading providers…</span></div>`;
+function step2Html() {
+  const s = _pendingSettings;
+  const interval = s.scan_interval_hours ?? 6;
+  const workers = s.browser_worker_count ?? 3;
+  const lang = s.preferred_language ?? '';
+  const disableUpgrades = s.disable_chapter_upgrades ?? false;
+  const dlMode = s.download_mode ?? 'must_have';
+  return `
+    <div class="flex items-center gap-2 mb-4">
+      <iconify-icon icon="mdi:cog-outline" width="24" class="text-primary"></iconify-icon>
+      <h3 class="text-lg font-semibold m-0">Scheduler & Downloads</h3>
+    </div>
+    <p class="text-sm opacity-70 mb-5">These can be changed at any time from Settings.</p>
+    <div class="flex flex-col gap-4">
+      <label class="form-control w-full max-w-xs">
+        <div class="label"><span class="label-text font-medium">Scan interval (hours)</span></div>
+        <input type="number" id="wizard-scan-interval" class="input input-bordered input-sm" value="${interval}" min="1" max="168">
+        <div class="label"><span class="label-text-alt opacity-60">How often to check for new chapters.</span></div>
+      </label>
+      <label class="form-control w-full max-w-xs">
+        <div class="label"><span class="label-text font-medium">Browser workers</span></div>
+        <input type="number" id="wizard-browser-workers" class="input input-bordered input-sm" value="${workers}" min="1" max="16">
+        <div class="label"><span class="label-text-alt opacity-60">Concurrent headless browser instances for scraping. Higher = faster but more RAM.</span></div>
+      </label>
+      <label class="form-control w-full max-w-xs">
+        <div class="label"><span class="label-text font-medium">Preferred language</span></div>
+        <input type="text" id="wizard-preferred-language" class="input input-bordered input-sm" value="${escape(lang)}" placeholder="en (BCP 47, leave blank for any)">
+        <div class="label"><span class="label-text-alt opacity-60">Prefer chapters in this language when multiple are available.</span></div>
+      </label>
+      <div class="divider my-1"></div>
+      <label class="flex gap-3 items-start cursor-pointer">
+        <input type="checkbox" id="wizard-disable-upgrades" class="checkbox checkbox-primary checkbox-sm mt-0.5" ${disableUpgrades ? 'checked' : ''}>
+        <div>
+          <span class="text-sm font-medium">Disable chapter upgrades</span>
+          <p class="text-xs opacity-60 mt-0.5">When enabled, already-downloaded chapters won't be replaced even if a better version is found.</p>
+        </div>
+      </label>
+      <div>
+        <div class="label px-0"><span class="label-text font-medium">Download mode</span></div>
+        <select id="wizard-download-mode" class="select select-bordered select-sm w-full max-w-xs">
+          <option value="must_have" ${dlMode === 'must_have' ? 'selected' : ''}>Must Have — try best, fall back on failure</option>
+          <option value="best_only" ${dlMode === 'best_only' ? 'selected' : ''}>Best Only — try best, skip on failure</option>
+        </select>
+      </div>
+    </div>
+  `;
 }
 
-async function loadProviders() {
+// ---------------------------------------------------------------------------
+// Step 3: Provider Configuration
+// ---------------------------------------------------------------------------
+
+let _providerSettingsLoaded = false;
+
+async function ensureProviderSettingsLoaded() {
+  if (_providerSettingsLoaded) return;
+  _providerSettingsLoaded = true;
   try {
-    _providerList = await providers.list();
-    const scoreResults = await Promise.allSettled(_providerList.map(p => providerSettings.getGlobal(p.name).then(s => ({ name: p.name, ...s }))));
-    for (const r of scoreResults) {
+    const results = await Promise.allSettled(
+      _providerList.map(p => providerSettings.getGlobal(p.name).then(s => ({ name: p.name, enabled: s.enabled ?? true })))
+    );
+    for (const r of results) {
       if (r.status === 'fulfilled') {
-        const { name, score, enabled } = r.value;
-        _providerChanges[name] ??= { score: score ?? 0, enabled: enabled ?? true };
+        const { name, enabled } = r.value;
+        _providerChanges[name] ??= { enabled };
       }
     }
-    const rows = _providerList.map(p => {
-      const state = _providerChanges[p.name] ?? { score: 0, enabled: true };
-      return `<tr><td class="font-medium">${escape(p.name)}</td><td><input type="number" class="input input-bordered input-xs w-20 wiz-score" data-p="${escape(p.name)}" value="${state.score}" min="-100" max="100"></td><td><input type="checkbox" class="checkbox checkbox-sm checkbox-primary wiz-enabled" data-p="${escape(p.name)}" ${state.enabled ? 'checked' : ''}></td></tr>`;
-    }).join('');
-    const body = document.querySelector('.setup-card .card-body');
-    if (!body) return;
-    body.innerHTML = `<div class="flex items-center gap-2 mb-4"><iconify-icon icon="mdi:server-outline" width="24" class="text-primary"></iconify-icon><h3 class="text-lg font-semibold m-0">Provider Configuration</h3></div><p class="text-sm opacity-70 mb-4">Providers are the sources Rebarr searches for chapters. Higher scores are preferred within the same tier.</p>${_providerList.length === 0 ? '<p class="text-sm opacity-60">No providers loaded.</p>' : `<div class="overflow-x-auto"><table class="table table-sm"><thead><tr><th>Provider</th><th>Score</th><th>Enabled</th></tr></thead><tbody>${rows}</tbody></table></div><p class="text-xs opacity-50 mt-2">Disabled providers won't be searched.</p>`}${navHtml()}`;
-    wireHandlers();
-    document.querySelectorAll('.wiz-score, .wiz-enabled').forEach(el => {
-      el.addEventListener('change', () => syncProviderState(el.dataset.p));
-      el.addEventListener('input', () => syncProviderState(el.dataset.p));
-    });
-  } catch (e) {
-    const body = document.querySelector('.setup-card .card-body');
-    if (body) body.innerHTML = `<div class="alert alert-error alert-soft"><iconify-icon icon="mdi:alert-circle" width="18"></iconify-icon><span>Failed to load providers: ${escape(e.message)}</span></div>`;
-  }
+  } catch (_) {}
+  if (_currentStep === 3) render();
 }
 
-function syncProviderState(name) {
-  const scoreEl = document.querySelector(`.wiz-score[data-p="${CSS.escape(name)}"]`);
-  const enabledEl = document.querySelector(`.wiz-enabled[data-p="${CSS.escape(name)}"]`);
-  _providerChanges[name] = { score: scoreEl ? (parseInt(scoreEl.value, 10) || 0) : 0, enabled: enabledEl ? enabledEl.checked : true };
+function step3Html() {
+  if (_providerList.length === 0) {
+    return `
+      <div class="flex items-center gap-2 mb-4">
+        <iconify-icon icon="mdi:server-outline" width="24" class="text-primary"></iconify-icon>
+        <h3 class="text-lg font-semibold m-0">Providers</h3>
+      </div>
+      <p class="text-sm opacity-60">No providers loaded. Add YAML files to the <code>providers/</code> directory.</p>
+    `;
+  }
+  const rows = _providerList.map(p => {
+    const state = _providerChanges[p.name];
+    const enabled = state !== undefined ? state.enabled : true;
+    return `<tr>
+      <td class="font-medium">${escape(p.name)}</td>
+      <td>${p.needs_browser ? '<iconify-icon icon="mdi:google-chrome" width="16" title="Requires browser"></iconify-icon>' : '—'}</td>
+      <td><input type="checkbox" class="checkbox checkbox-sm checkbox-primary wiz-provider-enabled" data-p="${escape(p.name)}" ${enabled ? 'checked' : ''}></td>
+    </tr>`;
+  }).join('');
+  return `
+    <div class="flex items-center gap-2 mb-4">
+      <iconify-icon icon="mdi:server-outline" width="24" class="text-primary"></iconify-icon>
+      <h3 class="text-lg font-semibold m-0">Providers</h3>
+    </div>
+    <p class="text-sm opacity-70 mb-4">Enable or disable chapter sources globally. Disabled providers won't be searched for any series. Per-series overrides can be set from the series page.</p>
+    <div class="overflow-x-auto">
+      <table class="table table-sm">
+        <thead><tr><th>Provider</th><th>Browser</th><th>Enabled</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
 }
 
 async function saveProviders() {
-  document.querySelectorAll('.wiz-score').forEach(el => syncProviderState(el.dataset.p));
-  await Promise.allSettled(Object.entries(_providerChanges).map(([name, { score, enabled }]) => providerSettings.setGlobal(name, enabled, score)));
-}
-
-// ---------------------------------------------------------------------------
-// Step 3: Download Priority
-// ---------------------------------------------------------------------------
-
-function step3Html() {
-  const tier = _pendingSettings.min_tier ?? 4;
-  const options = [
-    { value: 1, label: 'Official only (Tier 1)', desc: 'Only official publisher releases.' },
-    { value: 2, label: 'Trusted groups+ (Tier 1–2)', desc: 'Official releases and named trusted scanlation groups.' },
-    { value: 3, label: 'Known groups+ (Tier 1–3)', desc: 'Official, trusted, and unverified scanlation groups.' },
-    { value: 4, label: 'All sources (Tier 1–4)', desc: 'Includes aggregator sites. Broadest coverage.' },
-  ];
-  const radios = options.map(opt => {
-    const sel = tier == opt.value;
-    return `<label class="flex gap-3 items-start cursor-pointer p-3 rounded-lg border ${sel ? 'border-primary bg-base-200' : 'border-base-300'}"><input type="radio" name="wizard-min-tier" class="radio radio-sm radio-primary mt-1" value="${opt.value}" ${sel ? 'checked' : ''}><div><div class="font-medium text-sm">${opt.label}</div><div class="text-xs opacity-60">${opt.desc}</div></div></label>`;
-  }).join('');
-  return `<div class="flex items-center gap-2 mb-4"><iconify-icon icon="mdi:sort-descending" width="24" class="text-primary"></iconify-icon><h3 class="text-lg font-semibold m-0">Download Priority</h3></div><p class="text-sm opacity-70 mb-4">Choose the minimum scanlation tier Rebarr will consider when selecting chapters.</p><div class="flex flex-col gap-2 mb-4">${radios}</div><p class="text-xs opacity-50">Trusted scanlation groups (Tier 2) are managed on the Settings page.</p>`;
+  await Promise.allSettled(
+    Object.entries(_providerChanges).map(([name, { enabled }]) => providerSettings.setGlobal(name, enabled))
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -653,15 +732,101 @@ function step4SkipHtml() {
 }
 
 // ---------------------------------------------------------------------------
-// Step 5: Quick Tutorial
+// Step 5: Quality Rules & Concepts
 // ---------------------------------------------------------------------------
 
+async function loadQualityRules() {
+  try {
+    _qualityRules = await qualityRulesApi.list();
+  } catch (_) {
+    _qualityRules = [];
+  }
+  if (_currentStep === 5) render();
+}
+
 function step5Html() {
+  const rulesSection = (() => {
+    if (!_qualityRules) {
+      return `<div class="flex items-center gap-2 opacity-60 py-3"><span class="loading loading-spinner loading-sm"></span><span>Loading quality rules…</span></div>`;
+    }
+    if (_qualityRules.length === 0) {
+      return `<p class="text-sm opacity-60">No quality rules configured yet. You can add them from Settings.</p>`;
+    }
+    const rows = _qualityRules.map(r => {
+      const condSummary = r.conditions.length === 0
+        ? '<span class="opacity-40">—</span>'
+        : r.conditions.map(c => {
+            const neg = c.negate ? 'NOT ' : '';
+            const val = c.value ? ` "${escape(c.value)}"` : '';
+            return `<code class="text-xs">${neg}${escape(c.field)} ${escape(c.op)}${val}</code>`;
+          }).join(', ');
+      const scoreColour = r.score > 0 ? 'text-success' : r.score < 0 ? 'text-error' : '';
+      return `<tr>
+        <td class="font-medium text-sm">${escape(r.name)}</td>
+        <td class="font-mono ${scoreColour}">${r.score > 0 ? '+' : ''}${r.score}</td>
+        <td class="text-xs">${condSummary}</td>
+      </tr>`;
+    }).join('');
+    return `
+      <div class="overflow-x-auto">
+        <table class="table table-sm">
+          <thead><tr><th>Rule</th><th>Score</th><th>Conditions</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+  })();
+
+  return `
+    <div class="flex items-center gap-2 mb-4">
+      <iconify-icon icon="mdi:star-cog-outline" width="24" class="text-primary"></iconify-icon>
+      <h3 class="text-lg font-semibold m-0">Quality & Concepts</h3>
+    </div>
+
+    <div class="mb-5">
+      <h4 class="font-semibold text-sm mb-1">Quality Rules</h4>
+      <p class="text-sm opacity-70 mb-3">When multiple versions of a chapter are available, Rebarr scores each one using these rules. The highest-scoring version becomes the <strong>canonical chapter</strong> — the one that gets downloaded. Rules can be customised from Settings → Quality Rules.</p>
+      ${rulesSection}
+    </div>
+
+    <div class="divider my-3"></div>
+
+    <div class="flex flex-col gap-4">
+      <div class="flex gap-3 items-start">
+        <iconify-icon icon="mdi:google-chrome" width="20" class="text-primary shrink-0 mt-0.5"></iconify-icon>
+        <div>
+          <div class="font-medium text-sm">Browser Workers</div>
+          <div class="text-xs opacity-70">Rebarr drives headless browser instances to scrape chapter pages. The worker count controls how many run concurrently — more workers means faster downloads, but higher RAM usage.</div>
+        </div>
+      </div>
+      <div class="flex gap-3 items-start">
+        <iconify-icon icon="mdi:clock-outline" width="20" class="text-primary shrink-0 mt-0.5"></iconify-icon>
+        <div>
+          <div class="font-medium text-sm">Task Queue</div>
+          <div class="text-xs opacity-70">All scans, metadata refreshes, and downloads run as background tasks. You can see what's running, pause the queue, or cancel individual tasks from the <strong>Queue</strong> page.</div>
+        </div>
+      </div>
+      <div class="flex gap-3 items-start">
+        <iconify-icon icon="mdi:crown-outline" width="20" class="text-primary shrink-0 mt-0.5"></iconify-icon>
+        <div>
+          <div class="font-medium text-sm">Canonical Chapters</div>
+          <div class="text-xs opacity-70">For each chapter number, Rebarr picks one "canonical" version to download based on quality scores. If a better version appears later (e.g. an official release replaces a fan translation), Rebarr can upgrade it automatically — unless you've turned off chapter upgrades.</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ---------------------------------------------------------------------------
+// Step 6: You're All Set
+// ---------------------------------------------------------------------------
+
+function step6Html() {
   const items = [
     { icon: 'mdi:magnify', title: 'Search & Add Manga', desc: 'Use the <strong>Search</strong> page to find titles on AniList and add them to your library.' },
     { icon: 'mdi:book-multiple-outline', title: 'Series Page', desc: 'Click any series to see its chapters. Use <strong>Check New Chapters</strong> to find updates and <strong>Download All Missing</strong> to fetch them.' },
     { icon: 'mdi:clock-outline', title: 'Task Queue', desc: 'All downloads and scans run in the background. Monitor progress from the <strong>Queue</strong> page.' },
-    { icon: 'mdi:cog-outline', title: 'Settings', desc: 'Adjust scan intervals, manage trusted scanlation groups, and configure providers.' },
+    { icon: 'mdi:cog-outline', title: 'Settings', desc: 'Adjust scan intervals, configure providers, and manage quality rules.' },
   ];
   return `<div class="flex items-center gap-2 mb-4"><iconify-icon icon="mdi:check-decagram-outline" width="24" class="text-success"></iconify-icon><h3 class="text-lg font-semibold m-0">You're all set!</h3></div><p class="text-sm opacity-70 mb-4">Here's a quick overview of Rebarr's main features.</p><div class="flex flex-col gap-4 mb-4">${items.map(item => `<div class="flex gap-3 items-start"><iconify-icon icon="${item.icon}" width="22" class="text-primary shrink-0 mt-0.5"></iconify-icon><div><div class="font-medium text-sm">${item.title}</div><div class="text-xs opacity-70">${item.desc}</div></div></div>`).join('')}</div><div id="wizard-finish-error" class="text-error text-sm mt-2"></div>`;
 }

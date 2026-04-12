@@ -19,9 +19,6 @@ pub fn chapter_base_name(chapter: &Chapter) -> String {
     if let Some(title) = chapter.title.as_deref().filter(|s| !s.is_empty()) {
         name.push_str(&format!(" - {title}"));
     }
-    if let Some(group) = chapter.scanlator_group.as_deref().filter(|s| !s.is_empty()) {
-        name.push_str(&format!(" [{group}]"));
-    }
     sanitize_chapter_filename(&name)
 }
 

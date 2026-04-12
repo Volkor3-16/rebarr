@@ -264,6 +264,7 @@ pub async fn download_chapter(
                     chapter.number_sort(),
                     provider.name()
                 );
+                db_chapter::set_status(pool, entry.id, DownloadStatus::Failed, None).await?;
                 if best_only {
                     break;
                 }
@@ -276,6 +277,7 @@ pub async fn download_chapter(
             Err(e) => {
                 warn!("[dl] pages() failed on {}: {e}", provider.name());
                 last_err = e.to_string();
+                db_chapter::set_status(pool, entry.id, DownloadStatus::Failed, None).await?;
                 if best_only {
                     break;
                 }
@@ -290,6 +292,7 @@ pub async fn download_chapter(
                 chapter.number_sort()
             );
             last_err = format!("0 pages returned by {}", provider.name());
+            db_chapter::set_status(pool, entry.id, DownloadStatus::Failed, None).await?;
             if best_only {
                 break;
             }
@@ -329,41 +332,84 @@ pub async fn download_chapter(
         .await
         {
             Ok(image_data) => {
+                // File is always named after the canonical chapter's sort number.
                 let cbz_path =
                     files::chapter_cbz_path(&files::series_dir(lib_root, manga), chapter);
 
-                if let Err(e) = write_cbz(&cbz_path, manga, chapter, image_data).await {
+                // Use the entry that actually served the content for ComicInfo metadata.
+                let cbz_chapter = if entry.id == chapter.id { chapter } else { entry };
+
+                if let Err(e) = write_cbz(&cbz_path, manga, cbz_chapter, image_data).await {
                     warn!("[dl] CBZ write failed: {e}");
                     last_err = e.to_string();
+                    db_chapter::set_status(pool, entry.id, DownloadStatus::Failed, None).await?;
                     if best_only {
                         break;
                     }
                     continue;
                 }
 
-                db_chapter::set_status(
-                    pool,
-                    chapter.id,
-                    DownloadStatus::Downloaded,
-                    Some(Utc::now()),
-                )
-                .await?;
+                if entry.id == chapter.id {
+                    // Canonical chapter downloaded successfully — normal path.
+                    db_chapter::set_status(
+                        pool,
+                        chapter.id,
+                        DownloadStatus::Downloaded,
+                        Some(Utc::now()),
+                    )
+                    .await?;
 
-                // Record file size (best-effort; ignore errors)
-                if let Ok(meta) = tokio::fs::metadata(&cbz_path).await {
-                    let _ = db_chapter::set_file_size(pool, chapter.id, meta.len() as i64).await;
+                    if let Ok(meta) = tokio::fs::metadata(&cbz_path).await {
+                        let _ =
+                            db_chapter::set_file_size(pool, chapter.id, meta.len() as i64).await;
+                    }
+
+                    cleanup_superseded_downloads(pool, manga, chapter, lib_root, &quality_rules)
+                        .await;
+                } else {
+                    // A fallback provider succeeded — the originally-requested canonical failed.
+                    // Mark the canonical as Failed and promote the fallback to Downloaded + canonical.
+                    db_chapter::set_status(pool, chapter.id, DownloadStatus::Failed, None).await?;
+                    db_chapter::set_status(
+                        pool,
+                        entry.id,
+                        DownloadStatus::Downloaded,
+                        Some(Utc::now()),
+                    )
+                    .await?;
+
+                    if let Ok(meta) = tokio::fs::metadata(&cbz_path).await {
+                        let _ =
+                            db_chapter::set_file_size(pool, entry.id, meta.len() as i64).await;
+                    }
+
+                    if let Err(e) = db_chapter::set_canonical_override(
+                        pool,
+                        manga.id,
+                        entry.chapter_base,
+                        entry.chapter_variant,
+                        entry.id,
+                    )
+                    .await
+                    {
+                        warn!(
+                            "[dl] Failed to update canonical to fallback {}: {e}",
+                            entry.id
+                        );
+                    }
+
+                    cleanup_superseded_downloads(pool, manga, entry, lib_root, &quality_rules)
+                        .await;
                 }
-
-                // Remove any previously-downloaded lower-scored variants for this chapter slot.
-                cleanup_superseded_downloads(pool, manga, chapter, lib_root, &quality_rules).await;
 
                 db_chapter::update_manga_counts(pool, manga.id).await?;
 
                 info!(
-                    "[dl] Chapter {} of '{}' saved to {}",
+                    "[dl] Chapter {} of '{}' saved to {} (provider: {})",
                     chapter.number_sort(),
                     manga.metadata.title,
-                    cbz_path.display()
+                    cbz_path.display(),
+                    cbz_chapter.provider_name.as_deref().unwrap_or("unknown"),
                 );
                 return Ok(());
             }
@@ -374,6 +420,7 @@ pub async fn download_chapter(
             Err(e) => {
                 warn!("[dl] Image download failed on {}: {e}", provider.name());
                 last_err = e.to_string();
+                db_chapter::set_status(pool, entry.id, DownloadStatus::Failed, None).await?;
                 if best_only {
                     break;
                 }
@@ -382,7 +429,18 @@ pub async fn download_chapter(
         }
     }
 
-    db_chapter::set_status(pool, chapter.id, DownloadStatus::Failed, None).await?;
+    // If the canonical itself was never tried (all entries were skipped due to unloaded providers),
+    // ensure it ends up as Failed rather than stuck in Downloading.
+    let canonical_still_downloading = db_chapter::get_by_id(pool, chapter.id)
+        .await
+        .ok()
+        .flatten()
+        .map(|ch| ch.download_status == DownloadStatus::Downloading)
+        .unwrap_or(false);
+    if canonical_still_downloading {
+        db_chapter::set_status(pool, chapter.id, DownloadStatus::Failed, None).await?;
+    }
+
     Err(DownloadError::AllProvidersFailed(last_err))
 }
 
@@ -483,14 +541,132 @@ pub async fn download_pages_via_browser(
             .await
             .map_err(|e| std::io::Error::other(e.to_string()))?;
 
-        // Navigate to the chapter page once to establish a trusted origin with
-        // valid session cookies. JS fetch() calls from this context won't be
-        // blocked by Chrome's ERR_BLOCKED_BY_CLIENT (unlike direct image URL navigation).
+        // Navigate to the chapter page first to establish session cookies and any
+        // JavaScript-driven auth state the provider may need for image access.
         if let Err(e) = page.goto(chapter_url).await {
             warn!("[dl] could not navigate to chapter URL {chapter_url}: {e}");
         } else {
             page.wait_for_network_idle(500, 10_000).await.ok();
         }
+
+        // Log Chrome UA and current page context so failures can be correlated
+        // with a specific browser version or redirect destination.
+        #[derive(serde::Deserialize)]
+        struct PageCtx {
+            ua: String,
+            url: String,
+            cookies: u32,
+            sw_scope: Option<String>,
+        }
+        match page
+            .evaluate::<PageCtx>(
+                r#"(async () => {
+                    let sw_scope = null;
+                    try {
+                        const reg = await navigator.serviceWorker.getRegistration();
+                        if (reg) sw_scope = reg.scope;
+                    } catch (_) {}
+                    return {
+                        ua: navigator.userAgent,
+                        url: document.URL,
+                        cookies: document.cookie.split(';').filter(Boolean).length,
+                        sw_scope,
+                    };
+                })()"#,
+            )
+            .await
+        {
+            Ok(ctx) => {
+                info!(
+                    "[dl] browser context — UA: {} | page: {} | cookies: {} | sw: {}",
+                    ctx.ua,
+                    ctx.url,
+                    ctx.cookies,
+                    ctx.sw_scope.as_deref().unwrap_or("none"),
+                );
+                // A Service Worker intercepts cross-origin image fetches and can
+                // return its offline fallback instead of the real image. Unregister
+                // it now so subsequent fetch() calls go directly to the network.
+                if ctx.sw_scope.is_some() {
+                    match page
+                        .evaluate::<bool>(
+                            r#"(async () => {
+                                const reg = await navigator.serviceWorker.getRegistration();
+                                return reg ? reg.unregister() : false;
+                            })()"#,
+                        )
+                        .await
+                    {
+                        Ok(true) => info!("[dl] service worker unregistered"),
+                        Ok(false) => warn!("[dl] service worker unregister() returned false"),
+                        Err(e) => warn!("[dl] service worker unregister failed: {e}"),
+                    }
+                    // Unregistering doesn't stop the SW controlling the current page —
+                    // it keeps controlling all open clients until they navigate away.
+                    // Navigate to about:blank to shed SW control before fetching images.
+                    // CDP extra headers (Referer) persist across in-page navigations.
+                    if let Err(e) = page.goto("about:blank").await {
+                        warn!("[dl] could not navigate to about:blank to shed SW: {e}");
+                    } else {
+                        info!("[dl] navigated to about:blank — SW no longer controls this tab");
+                    }
+                }
+            }
+            Err(e) => warn!("[dl] could not read browser context: {e}"),
+        }
+
+        // CDP types for Network.loadNetworkResource + IO.read.
+        // These go through Chrome's browser-process network stack, bypassing
+        // both the page's Service Worker and the renderer-level content filter
+        // (which blocks certain CDN domains via ERR_BLOCKED_BY_CLIENT).
+        #[derive(serde::Serialize)]
+        struct LnrOptions {
+            #[serde(rename = "disableCache")]
+            disable_cache: bool,
+            #[serde(rename = "includeCredentials")]
+            include_credentials: bool,
+        }
+        #[derive(serde::Serialize)]
+        struct LnrParams {
+            url: String,
+            options: LnrOptions,
+            #[serde(rename = "frameId", skip_serializing_if = "str::is_empty")]
+            frame_id: String,
+        }
+        #[derive(serde::Deserialize, Debug)]
+        struct LnrResult {
+            success: bool,
+            #[serde(default, rename = "netErrorName")]
+            net_error_name: Option<String>,
+            #[serde(default, rename = "httpStatusCode")]
+            http_status_code: Option<f64>,
+            #[serde(default)]
+            stream: Option<String>,
+        }
+        #[derive(serde::Deserialize, Debug)]
+        struct LnrReturns {
+            resource: LnrResult,
+        }
+        #[derive(serde::Serialize)]
+        struct IoReadParams {
+            handle: String,
+        }
+        #[derive(serde::Deserialize)]
+        struct IoReadResult {
+            #[serde(default, rename = "base64Encoded")]
+            base64_encoded: Option<bool>,
+            data: String,
+            eof: bool,
+        }
+
+        // Get the frame ID once — used by loadNetworkResource to scope credential access.
+        let frame_id = page
+            .session()
+            .get_frame_tree()
+            .await
+            .map(|ft| ft.frame.id)
+            .unwrap_or_default();
+        debug!("[dl] frame_id for loadNetworkResource: {frame_id}");
 
         let total_pages = pages.len() as i64;
 
@@ -499,7 +675,7 @@ pub async fn download_pages_via_browser(
                 return Err(DownloadError::Cancelled);
             }
             let url = &page_url.url;
-            tracing::trace!(page = idx + 1, total = pages.len(), %url, "downloading page");
+            info!("[dl] page {}/{} → {url}", idx + 1, pages.len());
 
             if let (Some(pool), Some(task_id)) = (pool, task_id) {
                 let _ = db_task::set_progress(
@@ -519,70 +695,80 @@ pub async fn download_pages_via_browser(
                 .await;
             }
 
-            // JS fetch() from the chapter page context.
-            // Subrequests are not subject to ERR_BLOCKED_BY_CLIENT. CDP extra headers
-            // inject the Referer automatically. Works for CDNs with CORS headers.
-            let escaped_url = url.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r");
-            let js = format!(
-                r#"(async () => {{
-                    try {{
-                        const r = await fetch("{escaped_url}", {{
-                            cache: 'reload',
-                            mode: 'cors',
-                            credentials: 'include',
-                            referrerPolicy: 'strict-origin-when-cross-origin'
-                        }});
-                        if (!r.ok) {{
-                            return {{ error: `HTTP ${{r.status}}: ${{r.statusText}}`, status: r.status }};
-                        }}
-                        const buf = await r.arrayBuffer();
-                        const bytes = new Uint8Array(buf);
-                        let binary = "";
-                        for (let i = 0; i < bytes.length; i += 8192) {{
-                            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
-                        }}
-                        return {{ ok: btoa(binary) }};
-                    }} catch (err) {{
-                            let reason = err.toString();
-                            if (err.name) reason = `${{err.name}}: ${{err.message}}`;
-                            if (err.cause) reason += ` (cause: ${{err.cause}})`;
-                            return {{ error: reason, name: err.name, message: err.message }};
-                    }}
-                }})()"#
-            );
-
-            #[derive(serde::Deserialize, Debug)]
-            struct JsFetchResponse {
-                ok: Option<String>,
-                error: Option<String>,
-            }
-
-            let image_data = match page.evaluate::<JsFetchResponse>(&js).await {
-                Ok(resp) if resp.ok.is_some() => match BASE64.decode(resp.ok.unwrap().trim()) {
-                    Ok(data) if !data.is_empty() => data,
-                    Ok(_) => {
-                        warn!("[dl] empty bytes for {url}");
-                        continue;
-                    }
-                    Err(e) => {
-                        warn!("[dl] base64 decode failed for {url}: {e}");
-                        continue;
-                    }
-                },
-                Ok(resp) if resp.error.is_some() => {
-                    let err = resp.error.unwrap();
-                    warn!("[dl] fetch failed for {url}: {err}");
-                    return Err(DownloadError::Io(std::io::Error::other(format!("fetch failed: {err}"))));
-                },
-                Ok(_) => {
-                    warn!("[dl] invalid response from fetch script for {url}");
-                    continue;
-                }
+            // Fetch via CDP Network.loadNetworkResource — runs in Chrome's browser
+            // process, bypassing renderer-level SW interception and content filters.
+            let lnr_params = LnrParams {
+                url: url.clone(),
+                options: LnrOptions { disable_cache: true, include_credentials: true },
+                frame_id: frame_id.clone(),
+            };
+            let lnr: LnrReturns = match page
+                .session()
+                .send("Network.loadNetworkResource", &lnr_params)
+                .await
+                .map_err(|e| std::io::Error::other(e.to_string()))
+            {
+                Ok(r) => r,
                 Err(e) => {
-                    warn!("[dl] fetch eval error for {url}: {e}");
-                    return Err(DownloadError::Io(std::io::Error::other(format!("CDP eval error: {e}"))));
+                    warn!("[dl] page {}/{} — loadNetworkResource CDP error: {e}", idx + 1, pages.len());
+                    return Err(DownloadError::Io(e));
                 }
             };
+
+            if !lnr.resource.success {
+                warn!(
+                    "[dl] page {}/{} — loadNetworkResource failed: netError={} HTTP={:?}",
+                    idx + 1,
+                    pages.len(),
+                    lnr.resource.net_error_name.as_deref().unwrap_or("—"),
+                    lnr.resource.http_status_code,
+                );
+                return Err(DownloadError::Io(std::io::Error::other(format!(
+                    "loadNetworkResource failed: {}",
+                    lnr.resource.net_error_name.as_deref().unwrap_or("unknown")
+                ))));
+            }
+
+            let stream_handle = match lnr.resource.stream {
+                Some(h) => h,
+                None => {
+                    warn!("[dl] page {}/{} — loadNetworkResource returned no stream", idx + 1, pages.len());
+                    return Err(DownloadError::Io(std::io::Error::other("loadNetworkResource: no stream handle")));
+                }
+            };
+
+            // Read the stream in chunks until EOF.
+            let mut image_data: Vec<u8> = Vec::new();
+            loop {
+                let read_result: IoReadResult = match page
+                    .session()
+                    .send("IO.read", &IoReadParams { handle: stream_handle.clone() })
+                    .await
+                    .map_err(|e| std::io::Error::other(e.to_string()))
+                {
+                    Ok(r) => r,
+                    Err(e) => {
+                        warn!("[dl] page {}/{} — IO.read error: {e}", idx + 1, pages.len());
+                        return Err(DownloadError::Io(e));
+                    }
+                };
+                if read_result.base64_encoded == Some(true) {
+                    match BASE64.decode(read_result.data.trim()) {
+                        Ok(bytes) => image_data.extend(bytes),
+                        Err(e) => {
+                            warn!("[dl] page {}/{} — IO.read base64 decode error: {e}", idx + 1, pages.len());
+                            return Err(DownloadError::Io(std::io::Error::other(format!("IO.read base64 decode: {e}"))));
+                        }
+                    }
+                } else {
+                    image_data.extend(read_result.data.as_bytes());
+                }
+                if read_result.eof {
+                    break;
+                }
+            }
+
+            let image_data = image_data;
 
             // Validate that the downloaded data is actually an image
             if !is_valid_image(&image_data) {
@@ -592,6 +778,12 @@ pub async fn download_pages_via_browser(
                     provider_name.unwrap_or("unknown"),
                     image_data.len(),
                     &image_data[..image_data.len().min(16)]
+                );
+                debug!(
+                    "[dl] Invalid image full data for page {} (url: {}):\n{}",
+                    page_url.index,
+                    url,
+                    String::from_utf8_lossy(&image_data)
                 );
                 // Fail the entire chapter from this provider - don't create incomplete CBZ
                 return Err(DownloadError::InvalidImage);
@@ -780,14 +972,15 @@ async fn write_cbz(
 }
 
 /// Returns true if the data appears to be a valid image format.
-/// Checks magic bytes for JPEG, PNG, GIF, and WebP.
+/// Checks magic bytes for JPEG, PNG, GIF, WebP and AVIF.
 pub fn is_valid_image(data: &[u8]) -> bool {
     matches!(
         data,
         d if d.starts_with(b"\xFF\xD8\xFF") ||  // JPEG
              d.starts_with(b"\x89PNG") ||        // PNG
              d.starts_with(b"GIF8") ||           // GIF
-             (d.starts_with(b"RIFF") && d.len() >= 12 && &d[8..12] == b"WEBP") // WebP
+             (d.starts_with(b"RIFF") && d.len() >= 12 && &d[8..12] == b"WEBP") || // WebP
+             (d.len() >= 12 && &d[4..12] == b"ftypavif") // AVIF
     )
 }
 
@@ -798,6 +991,7 @@ pub fn image_ext(data: &[u8]) -> &'static str {
         d if d.starts_with(b"\x89PNG") => "png",
         d if d.starts_with(b"GIF8") => "gif",
         d if d.starts_with(b"RIFF") && d.len() >= 12 && &d[8..12] == b"WEBP" => "webp",
+        d if d.len() >= 12 && &d[4..12] == b"ftypavif" => "avif",
         _ => "jpg",
     }
 }

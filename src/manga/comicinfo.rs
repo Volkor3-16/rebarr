@@ -466,7 +466,6 @@ fn generate_common_metadata_xml(manga: &Manga, xml: &mut String) {
     xml.push_str(&opt_vec_elem("Colorist", m.colorist.as_deref()));
     xml.push_str(&opt_vec_elem("Letterer", m.letterer.as_deref()));
     xml.push_str(&opt_vec_elem("Editor", m.editor.as_deref()));
-    xml.push_str(&opt_vec_elem("Translator", m.translator.as_deref()));
 
     // Tags (AniList tags)
     let tags_str = if m.tags.is_empty() {
@@ -489,6 +488,41 @@ fn generate_common_metadata_xml(manga: &Manga, xml: &mut String) {
     xml.push_str(&opt_int_rating_elem("CommunityRating", m.community_rating));
 }
 
+fn is_official_group(group: &str) -> bool {
+    group.trim_end_matches(['.', '!', '?']).eq_ignore_ascii_case("official")
+}
+
+fn chapter_translator(manga: &Manga, chapter: &Chapter, provider_name: Option<&str>) -> Option<String> {
+    let provider = provider_name.filter(|s| !s.is_empty());
+    let is_official = chapter
+        .scanlator_group
+        .as_deref()
+        .map(|g| is_official_group(g))
+        .unwrap_or(false);
+
+    if is_official {
+        let al = manga
+            .metadata
+            .translator
+            .as_deref()
+            .filter(|t| !t.is_empty())
+            .map(|t| t.join("; "));
+        match (al.as_deref(), provider) {
+            (Some(t), Some(p)) => Some(format!("{t} @ {p} (official)")),
+            (Some(t), None) => Some(format!("{t} (official)")),
+            (None, Some(p)) => Some(format!("{p} (official)")),
+            (None, None) => None,
+        }
+    } else if let Some(group) = chapter.scanlator_group.as_deref().filter(|s| !s.is_empty()) {
+        match provider {
+            Some(p) => Some(format!("{group} @ {p}")),
+            None => Some(group.to_string()),
+        }
+    } else {
+        provider.map(str::to_string)
+    }
+}
+
 /// Generate a series-level ComicInfo.xml string from manga metadata.
 ///
 /// This file is placed at `{series_dir}/ComicInfo.xml` and lets comic
@@ -504,8 +538,11 @@ pub fn generate_series_xml(manga: &Manga) -> String {
     // Generate common metadata
     generate_common_metadata_xml(manga, &mut xml);
 
-    // Series-specific date fields
+    // Series-level translator (from AniList)
     let m = &manga.metadata;
+    xml.push_str(&opt_vec_elem("Translator", m.translator.as_deref()));
+
+    // Series-specific date fields
     xml.push_str(&opt_int_elem("Year", m.start_year));
     xml.push_str(&opt_int_elem("Month", m.start_month));
     xml.push_str(&opt_int_elem("Day", m.start_day));
@@ -542,6 +579,10 @@ pub fn generate_chapter_xml(
 
     // Generate common metadata
     generate_common_metadata_xml(manga, &mut xml);
+
+    // Chapter-level translator: scanlator group @ provider, or official path
+    let translator = chapter_translator(manga, chapter, provider_name);
+    xml.push_str(&opt_str_elem("Translator", translator.as_deref()));
 
     // Chapter release date (if available)
     if let Some(released_at) = chapter.released_at {
