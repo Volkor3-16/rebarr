@@ -497,7 +497,7 @@ fn chapter_translator(manga: &Manga, chapter: &Chapter, provider_name: Option<&s
     let is_official = chapter
         .scanlator_group
         .as_deref()
-        .map(|g| is_official_group(g))
+        .map(is_official_group)
         .unwrap_or(false);
 
     if is_official {

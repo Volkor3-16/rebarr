@@ -14,7 +14,7 @@ use std::{
 use tracing::{info, warn};
 
 use browser::BrowserPool;
-use def::{ProviderDef, ProviderTag};
+use def::{DownloadMethod, ProviderDef, ProviderTag};
 use engine::YamlProvider;
 use error::ScraperError;
 use executor::ProviderExecutor;
@@ -246,6 +246,12 @@ pub trait Provider: Send + Sync + Any {
     /// Quality / characteristic tags declared for this provider.
     fn tags(&self) -> &[ProviderTag] {
         &[]
+    }
+
+    /// How image bytes should be fetched when downloading chapter pages.
+    /// Defaults to `Auto` (try reqwest first, fall back to CDP).
+    fn pages_download_method(&self) -> DownloadMethod {
+        DownloadMethod::Auto
     }
 
     /// Search for a manga by title. Returns ranked candidates.

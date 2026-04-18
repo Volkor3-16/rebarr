@@ -1,0 +1,347 @@
+# Rebarr Provider Example Configuration
+# -----------------------------------------------------------------------------
+# This is a complete annotated example of a Rebarr provider definition.
+# Copy this file and modify it to create new providers for your favourite sites.
+#
+# Place completed provider files in the `providers/` directory.
+# -----------------------------------------------------------------------------
+
+
+# -----------------------------------------------------------------------------
+# Core Provider Information
+# -----------------------------------------------------------------------------
+
+# Human-readable display name for this provider. Shown in UI, settings, logs.
+name: Example Manga Provider
+
+# Root base URL for the site. This is automatically available as {base_url} template variable.
+# All relative paths in open/fetch steps will be prefixed with this URL.
+base_url: https://example-manga.com
+
+# Optional provider version string. Useful for tracking compatibility when site changes.
+# Purely informational, not used for logic.
+version: "1.0"
+
+# Default quality score for this provider. This will be automatically added as a quality rule
+# when no matching rule exists. Higher = better priority.
+# Recommended range: -100 (terrible) → +100 (excellent)
+default_score: 75
+
+# -----------------------------------------------------------------------------
+# Provider Tags
+#
+# Well-known tags describing provider characteristics. These are shown in the UI
+# and used for filtering/warnings. All tags are optional.
+# -----------------------------------------------------------------------------
+tags:
+  - high_quality_scans    # Excellent scan quality
+  # - low_quality_scans   # Poor quality, watermarks, low resolution
+  # - cloudflare          # Behind Cloudflare, can break sometimes.
+  # - bad_metadata        # Chapter numbers/dates are often wrong
+  # - nsfw                # Contains adult content
+  # - slow                # Consistently slow responses
+  # - official            # Official / licensed content
+  # - aggregator          # Aggregates from multiple upstream sources
+  # - hub                 # Large fan-translation hub
+  # - scanlator_site      # Single scanlator group website
+  # - multi_language      # Offers multiple languages
+  # - unstable            # Frequently goes down
+
+# -----------------------------------------------------------------------------
+# Rate Limiting & Concurrency
+# -----------------------------------------------------------------------------
+
+# Per-provider rate limiting. Default: 30 requests per minute
+rate_limit:
+  requests_per_minute: 30
+
+# Maximum concurrent worker threads for this provider. Default: 1
+# Increase only if the site is very fast and handles concurrent connections well.
+concurrency:
+  workers: 1
+
+
+# -----------------------------------------------------------------------------
+# ACTION: SEARCH
+#
+# Steps executed when searching for manga by title.
+# Input template variable available: {query} (url-encoded search string)
+# Required output fields: title, url
+# Optional output fields: cover
+# This example just serves to show all the possible steps, most of the time you just fetch a one endpoint and parse the json.
+# -----------------------------------------------------------------------------
+search:
+  steps:
+    # 1. Open the search page
+    - open: "/search"
+
+    # 2. Wait for the search input to be available
+    - wait_for: "#search-input"
+
+    # 3. Type the search query into the input field
+    - type:
+        selector: "#search-input"
+        value: "{query}"
+
+    # 4. Click the search button
+    - click: "#search-button"
+
+    # 5. Wait for results to load
+    - wait_for: ".search-result"
+
+    # 6. Optional: Scroll to load all results
+    - scroll: "bottom"
+
+    # 7. Extract results from DOM elements
+    - foreach:
+        # CSS selector for each individual result item
+        selector: ".search-result"
+
+        # Map of output fields → extraction rules
+        extract:
+          # Manga title
+          title:
+            selector: ".title"
+            content: text
+
+          # Manga series URL
+          url:
+            selector: "a"
+            content: attr
+            attr_name: href
+            prefix: "{base_url}"   # Automatically prepend base URL to relative paths
+
+          # Optional cover image URL
+          cover:
+            selector: "img"
+            content: attr
+            attr_name: src
+
+
+# -----------------------------------------------------------------------------
+# ACTION: CHAPTER LIST
+#
+# Steps executed when fetching the chapter list for a manga.
+# Input template variable available: {manga_url}
+# Required output fields: number_raw, url
+# Optional output fields: title, scanlator_group, volume, date, language
+# -----------------------------------------------------------------------------
+chapters:
+  steps:
+    # 1. Open the manga series page
+    - open: "{manga_url}"
+
+    # 2. Wait for chapter list container
+    - wait_for: "#chapter-list"
+
+    # 3. Scroll to load all chapters
+    - scroll: "bottom"
+
+    # 4. Extract chapter entries
+    - foreach:
+        selector: ".chapter-item"
+        extract:
+          # Chapter number (raw string, will be parsed automatically)
+          number_raw:
+            selector: ".chapter-number"
+            content: text
+            regex: "Chapter (\\d+)"   # Optional regex to extract just the number
+
+          # Chapter URL
+          url:
+            selector: "a"
+            content: attr
+            attr_name: href
+            prefix: "{base_url}"
+
+          # Optional chapter title
+          title:
+            selector: ".chapter-title"
+            content: text
+
+          # Optional scanlator group name
+          scanlator_group:
+            selector: ".group"
+            content: text
+
+          # Optional volume number
+          volume:
+            selector: ".volume"
+            content: text
+
+          # Optional upload date
+          date:
+            selector: ".upload-date"
+            content: text
+            date_format: "relative"   # Special value for "3 days ago" style dates
+            # date_format: "%Y-%m-%d"  # Or use standard strftime format
+
+
+# -----------------------------------------------------------------------------
+# ACTION: PAGES
+#
+# Steps executed when fetching page images for a single chapter.
+# Input template variable available: {chapter_url}
+# Required output: list of image URLs
+# -----------------------------------------------------------------------------
+pages:
+  # Optional download method override. Default: auto
+  # auto = try direct download first, fall back to browser
+  # browser = always use browser network stack for images (use for cloudflare/blocked/problematic sites)
+  download_method: auto
+
+  steps:
+    # 1. Open the chapter reader page
+    - open: "{chapter_url}"
+
+    # 2. Wait for reader to load
+    - wait_for: ".page-container"
+
+    # 3. Scroll to load all images
+    - scroll: "bottom"
+
+    # 4. Extract all page image URLs
+    - foreach:
+        selector: ".page-container img"
+        extract:
+          url:
+            selector: ""
+            content: attr
+            attr_name: src
+
+
+# -----------------------------------------------------------------------------
+# ADVANCED STEP EXAMPLES
+#
+# Below are examples of more advanced step types you can use.
+# Uncomment and adapt these as needed for complex sites.
+# -----------------------------------------------------------------------------
+
+# ================================
+# Intercepting API Requests
+# ================================
+# Intercept fetch/XHR requests that the page makes automatically:
+#
+# chapters:
+#   steps:
+#     - intercept:
+#         url_contains: "/api/chapters"  # Match URLs containing this string
+#         var: chapter_data              # Store response in this variable
+#         json_path: "data.chapters"     # Optional JSON path to extract
+#     - open: "{manga_url}"
+#     - from_json:
+#         var: chapter_data
+#         extract:
+#           number_raw: "chapter_number"
+#           url: "id"
+#         prefix:
+#           url: "{base_url}/chapter/"
+
+# ================================
+# Direct Fetch / API Requests
+# ================================
+# Make direct HTTP requests via the browser:
+#
+# search:
+#   steps:
+#     - fetch:
+#         url: "https://api.example.com/search?q={query}"
+#         var: search_results
+#         json_path: "data.results"
+#     - from_json:
+#         var: search_results
+#         extract:
+#           title: "title"
+#           url: "slug"
+#           cover: "cover_url"
+#         prefix:
+#           url: "{base_url}/manga/"
+
+# ================================
+# GraphQL Requests
+# ================================
+# Built-in sugar for GraphQL endpoints:
+#
+# search:
+#   steps:
+#     - graphql:
+#         url: "https://api.example.com/graphql"
+#         query: |
+#           query Search($query: String!) {
+#             search(query: $query) {
+#               title
+#               slug
+#               cover
+#             }
+#           }
+#         variables:
+#           query: "{query}"
+#         var: search_results
+#         json_path: "data.search"
+#     - from_json:
+#         var: search_results
+#         extract:
+#           title: "title"
+#           url: "slug"
+#           cover: "cover"
+
+# ================================
+# JavaScript Extraction
+# ================================
+# Run arbitrary JS in the page context:
+#
+# steps:
+#   - extract_js:
+#       var: manga_id
+#       script: "window.__MANGA_DATA__.id"
+#
+#   - script: |
+#       // Run arbitrary JS for side effects
+#       document.querySelector('.show-all-chapters').click();
+
+# ================================
+# Return Direct Value
+# ================================
+# Return a variable directly instead of foreach results:
+#
+# pages:
+#   steps:
+#     - open: "{chapter_url}"
+#     - extract_js:
+#         var: pages
+#         script: "JSON.stringify(window.__PAGE_IMAGES__)"
+#     - return: "{pages}"
+
+# -----------------------------------------------------------------------------
+# TEMPLATE VARIABLES REFERENCE
+# -----------------------------------------------------------------------------
+# Available variables depending on context:
+#
+# All actions:
+#   {base_url}      - Provider base URL
+#
+# search action:
+#   {query}         - URL encoded search query
+#
+# chapters action:
+#   {manga_url}     - Full URL to the manga series page
+#
+# pages action:
+#   {chapter_url}   - Full URL to the chapter reader page
+#
+# All contexts also have access to any variables created with `extract_js`,
+# `intercept`, `fetch` or `graphql` steps.
+
+# -----------------------------------------------------------------------------
+# FIELD EXTRACTOR REFERENCE
+# -----------------------------------------------------------------------------
+# Each field in `foreach` supports these options:
+#
+# selector:       CSS selector relative to the parent element
+# content:        What to extract: text, own_text, attr
+# attr_name:      For content: attr → name of the attribute to read
+# prefix:         String to prepend to extracted value
+# regex:          Regex pattern to extract or clean value
+# static_value:   Hard-coded constant value (skips extraction)
+# date_format:    Parse date string: "relative" or strftime format
+# value_map:      Map raw values → display labels

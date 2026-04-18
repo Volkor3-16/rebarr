@@ -44,6 +44,7 @@ I'll remove this when I've got the first public release out, this is just a quic
 
 - Use `setBlockedResourceTypes` to block useless requests (some images, CSS, fonts, media, whatever)
 - Add adblock to chromium?
+    - Some investigation: We'd have to fork eoka to allow extra_args to add `--load-extension` to the args
 - Clownflare challenge polling loop parses the full html every 0.5s, we can clean this up a bit.
 - [ ] Comix can't handle titles with "The Girl From the Other Side: Siúil, a Rún". The show as "danke-Empire" (is that the uploader? scanlator? the scanlator group is "Official?" so idk.)
 - [ ] Provider repo download system
@@ -52,12 +53,7 @@ I'll remove this when I've got the first public release out, this is just a quic
     - Automatic updates and all that nice stuff
     - Add more providers
     - The separate repo should also have a nice CI Pipeline that runs tests for each provider, using text_fixtures, to find broken providers, and alert of new broken ones & a nice 'auto updating' list of what providers work
-- [ ] Downloader is broken again
-    - WeebCentral no worky
-        - Tried no-cors, tried cors, tried direct page access, idk man
-        - but it works with a normal ass curl request???!?!
-    - AllManga no worky
-    - Need to test others
+- [ ] MangaKakalot 403's, both reqwest and browser
 
 ## Features
 

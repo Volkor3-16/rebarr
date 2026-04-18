@@ -1,21 +1,20 @@
 name: MangaKakalot
 base_url: https://www.mangakakalot.gg # These guys run Manganato.gg (and a bunch of others) (not the original manganato though)
 default_score: -20 # Low image quality, but large library, good backup.
+tags:
+  - aggregator
+  - cloudflare
+  - low_quality_scans
+  - slow
 rate_limit:
   requests_per_minute: 30
 
-# This provider is broken: They use strict cloudflare checks :(
-
 search:
   steps:
-    - open: "{base_url}"
-    - fetch:
-        url: "{base_url}/home/search/json?searchword={query}"
-        method: GET
-        headers:
-          X-Requested-With: XMLHttpRequest
-          Referer: "{base_url}/"
+    - open: "{base_url}/home/search/json?searchword={query_raw|strip_colons|spaces_to_underscores|lowercase}"
+    - extract_js:
         var: search_results
+        script: "document.body.innerText"
     - from_json:
         var: search_results
         extract:
@@ -27,7 +26,7 @@ chapters:
   steps:
     - open: "{base_url}"
     - fetch:
-        url: "{base_url}/api/manga/{manga_url|basename}/chapters"
+        url: "{base_url}/api/manga/{manga_url|basename}/chapters?limit=50"
         method: GET
         headers:
           Referer: "{manga_url}"
@@ -35,9 +34,9 @@ chapters:
         json_path: data.chapters
         pagination:
           meta_path: "data.pagination"
-          current_page_field: "current_page"
           last_page_field: "last_page"
           page_param: "offset"
+          page_step: 50
           start_page: 0
           max_pages: 20
     - from_json:
@@ -50,12 +49,15 @@ chapters:
           url: "{manga_url}/"
 
 pages:
+  # download_method: browser
   steps:
     - open: "{chapter_url}"
     - foreach:
-        selector: ".container-chapter-reader img"
+        selector: ".container-chapter-reader > img"
         extract:
           url:
             selector: ""
             content: attr
             attr_name: src
+          referrer:
+            static_value: "{base_url}/"

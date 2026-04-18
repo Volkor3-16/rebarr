@@ -2877,3 +2877,196 @@ body.bulk-bar-active { padding-bottom: 60px; }
   color: var(--text-muted);
   word-break: break-word;
 }
+
+/* ===== Logs View ===== */
+
+.logs-layout {
+  display: flex;
+  gap: 1rem;
+  height: calc(100vh - 120px);
+  min-height: 400px;
+}
+
+.log-sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem;
+  font-size: 0.8rem;
+}
+
+.log-sidebar-section {
+  margin-bottom: 1rem;
+}
+
+.log-sidebar-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 0.4rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.log-all-btn {
+  font-size: 0.65rem;
+  padding: 0 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+  line-height: 1.4;
+}
+
+.log-all-btn:hover {
+  background: var(--bg-tertiary);
+}
+
+.log-level-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.log-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+  user-select: none;
+  padding: 0.1rem 0;
+}
+
+.log-filter-row input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+.log-group {
+  margin-bottom: 0.5rem;
+}
+
+.log-group-header {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.log-group-name {
+  color: var(--text-secondary);
+}
+
+.log-group-children {
+  padding-left: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.log-source-name {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+
+/* Main logs area */
+
+.logs-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.logs-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0;
+  font-size: 0.82rem;
+  flex-shrink: 0;
+}
+
+.logs-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  cursor: pointer;
+  user-select: none;
+  color: var(--text-secondary);
+}
+
+.logs-toolbar button {
+  margin-left: auto;
+  font-size: 0.78rem;
+  padding: 0.2rem 0.6rem;
+}
+
+.log-list {
+  flex: 1;
+  overflow-y: auto;
+  font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+  padding: 0.25rem 0;
+}
+
+.log-entry {
+  display: grid;
+  grid-template-columns: 14ch 5ch 26ch 1fr;
+  gap: 0.6rem;
+  padding: 0.1rem 0.6rem;
+  border-bottom: 1px solid transparent;
+}
+
+.log-entry:hover {
+  background: var(--bg-secondary);
+}
+
+.log-ts {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.log-level {
+  font-weight: 700;
+  text-align: center;
+}
+
+.log-target {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-msg {
+  color: var(--text);
+  word-break: break-word;
+}
+
+/* Level colours */
+.log-error .log-level { color: var(--error, #cc3333); }
+.log-error .log-msg   { color: var(--error, #cc3333); }
+.log-warn  .log-level { color: var(--warning, #cc7700); }
+.log-warn  .log-msg   { color: var(--warning, #cc7700); }
+.log-info  .log-level { color: var(--text-secondary); }
+.log-debug .log-level { color: var(--text-muted); opacity: 0.7; }
+.log-debug .log-msg   { opacity: 0.7; }
+.log-trace .log-level { color: var(--text-muted); opacity: 0.5; }
+.log-trace .log-msg   { opacity: 0.5; }

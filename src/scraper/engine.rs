@@ -128,6 +128,9 @@ impl YamlProvider {
                             .map(|i| result[i + 1..].to_string())
                             .unwrap_or(result),
                         "js_escape" => js_escape(&result),
+                        "strip_colons" => result.replace(':', ""),
+                        "spaces_to_underscores" => result.replace(' ', "_"),
+                        "lowercase" => result.to_lowercase(),
                         mod_name if mod_name.starts_with("slice:") => {
                             let parts: Vec<&str> = mod_name.split(':').collect();
                             if parts.len() >= 3 {
@@ -199,9 +202,10 @@ impl YamlProvider {
         &self,
         element: &ElementRef,
         field: &FieldDef,
+        vars: &HashMap<String, String>,
     ) -> Result<String, ScraperError> {
         if let Some(ref v) = field.static_value {
-            return Ok(v.clone());
+            return Ok(self.expand(v, vars));
         }
 
         let child = if field.selector.is_empty() {
@@ -352,6 +356,7 @@ impl YamlProvider {
                             .new_blank_page()
                             .await
                             .map_err(|e| ScraperError::Browser(e.to_string()))?;
+                        ctx.browser.register_page(new_page.target_id());
                         new_page
                             .goto(url.as_str())
                             .await
@@ -475,6 +480,9 @@ impl YamlProvider {
                             }
                         }
                     }
+
+                    // Close any popup/ad tabs the page may have spawned.
+                    ctx.browser.close_popup_tabs(browser.as_ref(), p).await;
 
                     // Resolve all pending intercept captures (post-navigation).
                     let intercepts = std::mem::take(&mut pending_intercepts);
@@ -716,7 +724,7 @@ impl YamlProvider {
                         .content()
                         .await
                         .map_err(|e| ScraperError::Browser(e.to_string()))?;
-                    let stats = self.collect_foreach_results(&html, foreach_def, &mut results)?;
+                    let stats = self.collect_foreach_results(&html, foreach_def, &mut results, &vars)?;
                     debug!(
                         "[step] foreach → {} elements matched '{}'",
                         stats.element_count, foreach_def.selector
@@ -817,8 +825,10 @@ impl YamlProvider {
                     if let Some(ref pagination) = fetch_def.pagination {
                         // Handle paginated fetch
                         let mut all_items: Vec<serde_json::Value> = Vec::new();
-                        let mut current_page = pagination.start_page;
-                        let mut last_page = pagination.max_pages;
+                        let mut current_page = pagination.start_page; // actual param value sent in URL
+                        let mut pages_fetched = 0u32; // how many pages retrieved so far
+                        let mut total_pages = pagination.max_pages; // total pages available (from response or max cap)
+                        let page_step = pagination.page_step;
 
                         for _ in 0..pagination.max_pages {
                             let mut url = self.expand(&fetch_def.url, &vars);
@@ -937,13 +947,13 @@ impl YamlProvider {
                                         .and_then(|v| v.as_u64())
                                         .unwrap_or(100);
                                     if limit > 0 {
-                                        last_page = total.div_ceil(limit) as u32;
+                                        total_pages = total.div_ceil(limit) as u32;
                                     }
                                 } else if let Some(last_page_val) =
                                     meta.get(&pagination.last_page_field)
                                 {
                                     if let Some(lp) = last_page_val.as_u64() {
-                                        last_page = lp as u32;
+                                        total_pages = lp as u32;
                                     }
                                 }
                             }
@@ -1001,22 +1011,23 @@ impl YamlProvider {
 
                             let items_count = items.len();
                             all_items.extend(items);
+                            pages_fetched += 1;
                             debug!(
-                                "[step] fetch (page {current_page}) → {items_count} items (total: {})",
+                                "[step] fetch (page {current_page}, {pages_fetched}/{total_pages}) → {items_count} items (total: {})",
                                 all_items.len()
                             );
                             self.trace_step_detail(
                                 ctx,
-                                format!("page {current_page} produced {items_count} items"),
+                                format!("page {current_page} ({pages_fetched}/{total_pages}) produced {items_count} items"),
                             );
 
-                            // Check if we've reached the last page
-                            if current_page >= last_page {
-                                debug!("[step] fetch → reached last page ({last_page}), stopping");
+                            // Check if we've fetched all available pages
+                            if pages_fetched >= total_pages {
+                                debug!("[step] fetch → fetched all {total_pages} pages, stopping");
                                 break;
                             }
 
-                            current_page += 1;
+                            current_page += page_step;
                         }
 
                         // Store accumulated results
@@ -1524,6 +1535,7 @@ impl YamlProvider {
 
         // Always close the Chrome tab before dropping the Rust Page handle.
         if let Some(ref p) = page {
+            ctx.browser.unregister_page(p.target_id());
             close_page_tab(browser.as_ref(), p).await;
         }
         drop(page);
@@ -1536,6 +1548,7 @@ impl YamlProvider {
         html: &str,
         foreach_def: &ForeachDef,
         results: &mut Vec<HashMap<String, String>>,
+        vars: &HashMap<String, String>,
     ) -> Result<ForeachStats, ScraperError> {
         let doc = Html::parse_document(html);
         let sel = Selector::parse(&foreach_def.selector)
@@ -1556,7 +1569,7 @@ impl YamlProvider {
             element_count += 1;
             let mut record: HashMap<String, String> = HashMap::new();
             for (name, field_def) in &foreach_def.extract {
-                match self.extract_field(&element, field_def) {
+                match self.extract_field(&element, field_def, vars) {
                     Ok(val) => {
                         record.insert(name.clone(), val);
                         if let Some(c) = field_counts.iter_mut().find(|c| c.0 == *name) {
@@ -1614,6 +1627,14 @@ impl Provider for YamlProvider {
 
     fn tags(&self) -> &[crate::scraper::def::ProviderTag] {
         &self.def.tags
+    }
+
+    fn pages_download_method(&self) -> crate::scraper::def::DownloadMethod {
+        self.def
+            .pages
+            .as_ref()
+            .map(|p| p.download_method.clone())
+            .unwrap_or_default()
     }
 
     #[tracing::instrument(skip(self, ctx), fields(provider = %self.def.name))]
@@ -1928,7 +1949,7 @@ fn result_to_pages(result: ActionResult) -> Result<Vec<PageUrl>, ScraperError> {
 // ---------------------------------------------------------------------------
 
 /// Return true when the page HTML looks like a Cloudflare challenge/IUAM page.
-fn is_cf_challenge(html: &str) -> bool {
+pub fn is_cf_challenge(html: &str) -> bool {
     html.contains("cf-browser-verification")
         || html.contains("__cf_chl")
         || (html.contains("Just a moment") && html.contains("cloudflare"))
@@ -1940,7 +1961,7 @@ fn is_cf_challenge(html: &str) -> bool {
 /// it. We click at the screen coordinates where the checkbox visually appears,
 /// using a human-like mouse sequence (move → press → release with varied delays)
 /// so CF's behavioural scoring doesn't flag the interaction as synthetic.
-async fn try_cf_checkbox_click(page: &eoka::Page) -> bool {
+pub async fn try_cf_checkbox_click(page: &eoka::Page) -> bool {
     // Layout on 1366×768: widget is horizontally centred (~300px wide),
     // left edge ≈ 533px, checkbox icon ≈ 25px from left edge → target x ≈ 558.
     // Widget appears roughly vertically centred, typically 300–430px from top.
@@ -2020,6 +2041,8 @@ fn is_transport_error(e: &ScraperError) -> bool {
         || msg.contains("WebSocket")
         || msg.contains("connection reset")
         || msg.contains("broken pipe")
+        || msg.contains("Failed to open a new tab") // Chrome -32000: target creation failed
+        || msg.contains("code -32000") // catch-all for other -32000 CDP errors
 }
 
 // ---------------------------------------------------------------------------

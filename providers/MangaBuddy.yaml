@@ -33,43 +33,57 @@ chapters:
   steps:
     - open: "{manga_url}"
     - extract_js:
-        var: _injected
+        var: manga_id
         script: |
-          (function () {
+          document.querySelector('#comment-form[data-mg-id]').getAttribute('data-mg-id')
+    - extract_js:
+        var: _chapters_injected
+        script: |
+          (async function() {
+            const resp = await fetch('/api/manga/{manga_id}/chapters?source=detail');
+            const html = await resp.text();
+            const parser = new DOMParser();
+            const doc = parser.parseFromString('<ul>' + html + '</ul>', 'text/html');
+            const items = Array.from(doc.querySelectorAll('li'));
+
+            // Normalise dates in-place before injecting
             const now = Date.now();
-
-            function parseRelative(text) {
-              text = text.trim().toLowerCase();
-              const num = parseInt(text, 10) || 0;
-              if (text.includes("minute")) return now - num * 60 * 1000;
-              if (text.includes("hour"))   return now - num * 60 * 60 * 1000;
-              if (text.includes("day"))    return now - num * 24 * 60 * 60 * 1000;
-              if (text.includes("week"))   return now - num * 7 * 24 * 60 * 60 * 1000;
-              if (text.includes("month"))  return now - num * 30 * 24 * 60 * 60 * 1000;
-              if (text.includes("year"))   return now - num * 365 * 24 * 60 * 60 * 1000;
-              if (text.includes("just now")) return now;
-              return null;
-            }
-
-            document.querySelectorAll("ul.chapter-list li").forEach(li => {
-              const dateEl = li.querySelector("time.chapter-update");
-              if (dateEl) {
-                const raw = dateEl.textContent.trim();
-                let ts = null;
-                if (/ago|minute|hour|day|week|month|year|just now/i.test(raw)) {
-                  ts = parseRelative(raw);
-                } else {
-                  const d = new Date(raw);
-                  if (!isNaN(d)) ts = d.getTime();
-                }
-                if (ts) dateEl.textContent = Math.floor(ts / 1000);
+            items.forEach(li => {
+              const timeEl = li.querySelector('time.chapter-update');
+              if (!timeEl) return;
+              const raw = timeEl.textContent.trim();
+              let ts = null;
+              if (/ago|minute|hour|day|week|month|year|just now/i.test(raw)) {
+                const num = parseInt(raw, 10) || 0;
+                const lo = raw.toLowerCase();
+                if (lo.includes('minute')) ts = now - num * 60 * 1000;
+                else if (lo.includes('hour'))  ts = now - num * 3600 * 1000;
+                else if (lo.includes('day'))   ts = now - num * 86400 * 1000;
+                else if (lo.includes('week'))  ts = now - num * 604800 * 1000;
+                else if (lo.includes('month')) ts = now - num * 2592000 * 1000;
+                else if (lo.includes('year'))  ts = now - num * 31536000 * 1000;
+                else if (lo.includes('just now')) ts = now;
+              } else {
+                const d = new Date(raw);
+                if (!isNaN(d)) ts = d.getTime();
               }
+              if (ts !== null) timeEl.textContent = Math.floor(ts / 1000);
             });
 
-            return true;
-          })();
+            // Inject into a hidden container so foreach can collect them
+            let container = document.getElementById('_rebarr_chapters');
+            if (!container) {
+              container = document.createElement('ul');
+              container.id = '_rebarr_chapters';
+              container.style.display = 'none';
+              document.body.appendChild(container);
+            }
+            container.innerHTML = '';
+            items.forEach(li => container.appendChild(li.cloneNode(true)));
+            return container.children.length;
+          })()
     - foreach:
-        selector: "ul.chapter-list li"
+        selector: "#_rebarr_chapters li"
         extract:
           number_raw:
             selector: "strong.chapter-title"
@@ -87,10 +101,27 @@ chapters:
 pages:
   steps:
     - open: "{chapter_url}"
-    - foreach:
-        selector: "div.chapter-image img"
-        extract:
-          url:
-            selector: ""
-            content: attr
-            attr_name: src
+    - extract_js:
+        var: page_urls
+        script: |
+          (async function() {
+            // Scroll through the page incrementally to trigger lazy loading
+            for (let y = 0; y < document.body.scrollHeight; y += 400) {
+              window.scrollTo(0, y);
+              await new Promise(r => setTimeout(r, 50));
+            }
+            window.scrollTo(0, document.body.scrollHeight);
+            await new Promise(r => setTimeout(r, 500));
+
+            // Wait up to 10s for loading.svg placeholders to be replaced
+            for (let i = 0; i < 20; i++) {
+              const imgs = Array.from(document.querySelectorAll("div.chapter-image img"));
+              const loading = imgs.filter(img => (img.getAttribute("src") || "").includes("loading.svg"));
+              if (loading.length === 0) break;
+              await new Promise(r => setTimeout(r, 500));
+            }
+
+            const imgs = Array.from(document.querySelectorAll("div.chapter-image img"));
+            return JSON.stringify(imgs.map(img => img.getAttribute("data-src") || img.getAttribute("src")));
+          })();
+    - return: "{page_urls}"

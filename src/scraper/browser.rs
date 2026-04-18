@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex as StdMutex};
 
 use eoka::{Browser, Page, StealthConfig};
 use tokio::sync::Mutex;
@@ -16,12 +17,75 @@ use crate::scraper::error::ScraperError;
 #[derive(Clone)]
 pub struct BrowserPool {
     inner: Arc<Mutex<Option<Arc<Browser>>>>,
+    /// Target IDs of every tab we deliberately opened. Any "page" tab NOT in
+    /// this set is an ad/popup spawned by site JS and should be closed.
+    known_targets: Arc<StdMutex<HashSet<String>>>,
 }
 
 impl BrowserPool {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(Mutex::new(None)),
+            known_targets: Arc::new(StdMutex::new(HashSet::new())),
+        }
+    }
+
+    /// Mark a tab as intentionally opened by us so it won't be swept as a popup.
+    pub fn register_page(&self, target_id: &str) {
+        self.known_targets.lock().unwrap().insert(target_id.to_owned());
+    }
+
+    /// Remove a tab from the registry when we close it ourselves.
+    pub fn unregister_page(&self, target_id: &str) {
+        self.known_targets.lock().unwrap().remove(target_id);
+    }
+
+    /// Close every browser tab that is NOT in our registry.
+    ///
+    /// Call this after any navigation that could trigger JS `window.open()`
+    /// popups (e.g. after loading a chapter page). Safe to call concurrently
+    /// from multiple workers — the registry snapshot is taken under a lock.
+    pub async fn close_popup_tabs(&self, browser: &Browser, page: &Page) {
+        #[derive(serde::Deserialize)]
+        struct TargetInfo {
+            #[serde(rename = "targetId")]
+            target_id: String,
+            #[serde(rename = "type")]
+            target_type: String,
+        }
+        #[derive(serde::Deserialize)]
+        struct GetTargetsResult {
+            #[serde(rename = "targetInfos")]
+            target_infos: Vec<TargetInfo>,
+        }
+
+        let result: Result<GetTargetsResult, _> = page
+            .session()
+            .send("Target.getTargets", &serde_json::json!({}))
+            .await;
+
+        let targets = match result {
+            Ok(r) => r.target_infos,
+            Err(e) => {
+                tracing::warn!("[browser] close_popup_tabs: Target.getTargets failed: {e}");
+                return;
+            }
+        };
+
+        let known = self.known_targets.lock().unwrap().clone();
+        let mut closed = 0u32;
+        for target in targets {
+            if target.target_type == "page" && !known.contains(&target.target_id) {
+                tracing::debug!("[browser] closing popup tab {}", target.target_id);
+                if let Err(e) = browser.close_tab(&target.target_id).await {
+                    tracing::warn!("[browser] failed to close popup tab {}: {e}", target.target_id);
+                } else {
+                    closed += 1;
+                }
+            }
+        }
+        if closed > 0 {
+            tracing::info!("[browser] swept {closed} popup tab(s)");
         }
     }
 

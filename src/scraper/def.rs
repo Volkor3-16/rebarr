@@ -128,8 +128,25 @@ fn default_provider_workers() -> u32 {
 // Action (sequence of steps)
 // ---------------------------------------------------------------------------
 
+/// How page images should be downloaded once URLs are resolved.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DownloadMethod {
+    /// Try reqwest (with browser cookies) first; fall back to CDP `Network.loadNetworkResource`.
+    #[default]
+    Auto,
+    /// Always use CDP `Network.loadNetworkResource` (browser-process network stack).
+    /// Use this for providers where reqwest is consistently blocked even with cookies.
+    Browser,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct ActionDef {
+    /// For the `pages` action only: controls how image bytes are fetched.
+    /// Ignored for `search` and `chapters`.
+    #[serde(default)]
+    pub download_method: DownloadMethod,
+
     pub steps: Vec<StepDef>,
 }
 
@@ -459,6 +476,11 @@ pub struct PaginationDef {
     /// Used when API returns total items instead of total pages.
     #[serde(default)]
     pub calculate_last_page: bool,
+    /// How much to increment the page parameter each request (default: 1).
+    /// Use for offset-based APIs where the param is a chapter/item offset, not a page number.
+    /// E.g., `page_step: 50` with `page_param: "offset"` sends ?offset=0, ?offset=50, ?offset=100, ...
+    #[serde(default = "default_page_step")]
+    pub page_step: u32,
 }
 
 impl Default for PaginationDef {
@@ -473,6 +495,7 @@ impl Default for PaginationDef {
             start_page: default_start_page(),
             max_pages: default_max_pages(),
             calculate_last_page: false,
+            page_step: default_page_step(),
         }
     }
 }
@@ -503,4 +526,8 @@ fn default_start_page() -> u32 {
 
 fn default_max_pages() -> u32 {
     20
+}
+
+fn default_page_step() -> u32 {
+    1
 }

@@ -13,8 +13,8 @@ use strsim::jaro_winkler;
 use tracing::{error, info, warn};
 
 use rebarr::scraper::{
-    ProviderRegistry, ProviderSearchResult, ScraperCtx, ScraperDebugLevel, browser::BrowserPool,
-    executor::ProviderExecutor,
+    ProviderRegistry, ProviderSearchResult, ScraperCtx, ScraperDebugLevel,
+    browser::BrowserPool, executor::ProviderExecutor,
 };
 
 // ─── CLI definition ──────────────────────────────────────────────────────────
@@ -545,6 +545,7 @@ async fn cmd_test(
         Some(provider.name()),
         &pages,
         chapter_url,
+        provider.pages_download_method(),
         cancel,
     )
     .await
@@ -844,6 +845,7 @@ async fn cmd_download(
         Some(provider.name()),
         &pages,
         chapter_url,
+        provider.pages_download_method(),
         cancel,
     )
     .await

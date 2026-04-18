@@ -32,6 +32,8 @@ Now that I'm actually /using/ rebarr properly, and i've been sick at home doing 
     - Exposed more settings in the setup wizard
     - hopefully it explains the crazy mess of systems and strange things we have to do to get a usable scraper
 - Better naming and metadata for manga reading apps. (scanlator and provider listed in translator, fallback to official translator name) (also removed title)
+- Improved downloader
+    - We now pass the page downloads to reqwest first, and then a browser if that breaks.
 
 ## 2026-04-06
 
