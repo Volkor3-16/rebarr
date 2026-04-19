@@ -29,9 +29,13 @@ pub struct TaskUpdate {
     pub id: String,
     pub task_type: String,
     pub status: String,
+    pub manga_id: Option<String>,
+    pub chapter_id: Option<String>,
     pub manga_title: Option<String>,
     pub chapter_number_raw: Option<String>,
     pub last_error: Option<String>,
+    pub progress: Option<crate::db::task::TaskProgress>,
+    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Emit a task update event.  Call this from the DB layer or worker whenever a

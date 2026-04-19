@@ -146,7 +146,11 @@ pub fn merge_synonyms(
         merged.push(syn);
     }
 
-    if merged.is_empty() { None } else { Some(merged) }
+    if merged.is_empty() {
+        None
+    } else {
+        Some(merged)
+    }
 }
 
 #[cfg(test)]

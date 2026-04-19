@@ -13,8 +13,8 @@ use strsim::jaro_winkler;
 use tracing::{error, info, warn};
 
 use rebarr::scraper::{
-    ProviderRegistry, ProviderSearchResult, ScraperCtx, ScraperDebugLevel,
-    browser::BrowserPool, executor::ProviderExecutor,
+    ProviderRegistry, ProviderSearchResult, ScraperCtx, ScraperDebugLevel, browser::BrowserPool,
+    executor::ProviderExecutor,
 };
 
 // ─── CLI definition ──────────────────────────────────────────────────────────
@@ -343,10 +343,7 @@ fn cmd_providers(registry: &ProviderRegistry) {
         println!("No providers loaded (check ./providers/ directory).");
         return;
     }
-    println!(
-        "{:<22} {:>5}  {:<8}  Tags",
-        "Name", "RPM", "Version"
-    );
+    println!("{:<22} {:>5}  {:<8}  Tags", "Name", "RPM", "Version");
     println!("{}", "-".repeat(60));
     for p in &all {
         let tags: Vec<String> = p.tags().iter().map(|t| format!("{t:?}")).collect();
@@ -532,9 +529,15 @@ async fn cmd_test(
         out_dir.display()
     );
     println!("  chapter URL (Referer): {chapter_url}");
-    println!("  first image URL:       {}", pages.first().map(|p| p.url.as_str()).unwrap_or("—"));
+    println!(
+        "  first image URL:       {}",
+        pages.first().map(|p| p.url.as_str()).unwrap_or("—")
+    );
     if pages.len() > 1 {
-        println!("  last  image URL:       {}", pages.last().map(|p| p.url.as_str()).unwrap_or("—"));
+        println!(
+            "  last  image URL:       {}",
+            pages.last().map(|p| p.url.as_str()).unwrap_or("—")
+        );
     }
 
     let cancel = tokio_util::sync::CancellationToken::new();

@@ -1,8 +1,4 @@
-use anilist_moe::{
-    AniListClient, AniListError,
-    enums::media::MediaFormat,
-    objects::media::Media,
-};
+use anilist_moe::{AniListClient, AniListError, enums::media::MediaFormat, objects::media::Media};
 use tracing::debug;
 
 use crate::manga::core::Manga;
@@ -124,9 +120,11 @@ mod tests {
         println!(
             "AniList raw media summary: id={:?} title={:?} relations={} recommendations={}",
             media.id,
-            media.title
+            media.title.as_ref().and_then(|t| t
+                .english
                 .as_ref()
-                .and_then(|t| t.english.as_ref().or(t.romaji.as_ref()).or(t.user_preferred.as_ref())),
+                .or(t.romaji.as_ref())
+                .or(t.user_preferred.as_ref())),
             relation_count,
             recommendation_count
         );

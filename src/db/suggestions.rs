@@ -388,7 +388,9 @@ pub async fn set_hidden(
 mod tests {
     use super::*;
     use crate::db;
-    use crate::manga::core::{Library, Manga, MangaMetadata, MangaSource, MangaType, PublishingStatus};
+    use crate::manga::core::{
+        Library, Manga, MangaMetadata, MangaSource, MangaType, PublishingStatus,
+    };
     use std::path::PathBuf;
 
     async fn test_pool() -> SqlitePool {
@@ -401,11 +403,18 @@ mod tests {
             r#type: MangaType::Manga,
             root_path: PathBuf::from(root),
         };
-        db::library::insert(pool, &lib).await.expect("insert library");
+        db::library::insert(pool, &lib)
+            .await
+            .expect("insert library");
         lib
     }
 
-    async fn insert_manga(pool: &SqlitePool, library_id: Uuid, title: &str, anilist_id: u32) -> Manga {
+    async fn insert_manga(
+        pool: &SqlitePool,
+        library_id: Uuid,
+        title: &str,
+        anilist_id: u32,
+    ) -> Manga {
         let manga = Manga {
             id: Uuid::new_v4(),
             library_id,
@@ -478,14 +487,22 @@ mod tests {
             context: None,
             rating: Some(50),
         };
-        replace_library_suggestions(&pool, lib_a.uuid, std::slice::from_ref(&candidate), std::slice::from_ref(&source))
-            .await
-            .expect("replace a");
+        replace_library_suggestions(
+            &pool,
+            lib_a.uuid,
+            std::slice::from_ref(&candidate),
+            std::slice::from_ref(&source),
+        )
+        .await
+        .expect("replace a");
         replace_library_suggestions(
             &pool,
             lib_b.uuid,
             std::slice::from_ref(&candidate),
-            &[UpsertSuggestionSource { source_manga_id: source_b.id, ..source.clone() }],
+            &[UpsertSuggestionSource {
+                source_manga_id: source_b.id,
+                ..source.clone()
+            }],
         )
         .await
         .expect("replace b");
@@ -499,7 +516,10 @@ mod tests {
             &pool,
             lib_b.uuid,
             &[candidate],
-            &[UpsertSuggestionSource { source_manga_id: source_b.id, ..source }],
+            &[UpsertSuggestionSource {
+                source_manga_id: source_b.id,
+                ..source
+            }],
         )
         .await
         .expect("replace b again");

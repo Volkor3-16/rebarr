@@ -106,6 +106,10 @@ export const tasks = {
     const query = new URLSearchParams(params).toString();
     return get(`/api/tasks${query ? '?' + query : ''}`);
   },
+  listQueue: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return get(`/api/tasks/queue${query ? '?' + query : ''}`);
+  },
   cancel: (id) => post(`/api/tasks/${id}/cancel`, null),
   listGrouped: () => get('/api/tasks/grouped'),
 };

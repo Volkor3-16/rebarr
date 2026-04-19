@@ -1,6 +1,6 @@
 use sqlx::SqlitePool;
-use uuid::Uuid;
 use std::collections::HashMap;
+use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
 // Global (provider-wide) enable/disable
@@ -103,13 +103,11 @@ pub async fn delete_series_setting(
     name: &str,
     manga_id: Uuid,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "DELETE FROM ProviderSettings WHERE provider_name = ? AND manga_id = ?",
-    )
-    .bind(name)
-    .bind(manga_id.to_string())
-    .execute(pool)
-    .await?;
+    sqlx::query("DELETE FROM ProviderSettings WHERE provider_name = ? AND manga_id = ?")
+        .bind(name)
+        .bind(manga_id.to_string())
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -118,11 +116,10 @@ pub async fn get_all_series_overrides(
     pool: &SqlitePool,
     manga_id: Uuid,
 ) -> Result<HashMap<String, bool>, sqlx::Error> {
-    let rows: Vec<(String, bool)> = sqlx::query_as(
-        "SELECT provider_name, enabled FROM ProviderSettings WHERE manga_id = ?",
-    )
-    .bind(manga_id.to_string())
-    .fetch_all(pool)
-    .await?;
+    let rows: Vec<(String, bool)> =
+        sqlx::query_as("SELECT provider_name, enabled FROM ProviderSettings WHERE manga_id = ?")
+            .bind(manga_id.to_string())
+            .fetch_all(pool)
+            .await?;
     Ok(rows.into_iter().collect())
 }

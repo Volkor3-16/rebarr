@@ -182,14 +182,18 @@ pub async fn delete_rule(pool: &State<SqlitePool>, id: &str) -> ApiResult<()> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn validate_field(field: &str) -> Result<(), (rocket::http::Status, Json<super::errors::ApiError>)> {
+fn validate_field(
+    field: &str,
+) -> Result<(), (rocket::http::Status, Json<super::errors::ApiError>)> {
     match field {
         "title" | "scanlator_group" => Ok(()),
         _ => Err(bad_request("field must be 'title' or 'scanlator_group'")),
     }
 }
 
-fn validate_action(action: &str) -> Result<(), (rocket::http::Status, Json<super::errors::ApiError>)> {
+fn validate_action(
+    action: &str,
+) -> Result<(), (rocket::http::Status, Json<super::errors::ApiError>)> {
     match action {
         "clear" | "set" | "replace" => Ok(()),
         _ => Err(bad_request("action must be 'clear', 'set', or 'replace'")),

@@ -13,6 +13,8 @@ I'll remove this when I've got the first public release out, this is just a quic
 
 ### Backend
 
+- Add a Cancel All tasks button, I don't like needing to click select all and then cancel, watching it do one by one.
+
 ### Frontend
 
 - [ ] Update frontend to use daisyui components as much as possible https://daisyui.com/components/

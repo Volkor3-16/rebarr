@@ -56,7 +56,10 @@ pub struct SuggestionMediaDetails {
 
 fn is_supported_media_type(media_type: Option<MediaType>, format: Option<MediaFormat>) -> bool {
     matches!(media_type, Some(MediaType::Manga))
-        && matches!(format, Some(MediaFormat::Manga) | Some(MediaFormat::OneShot))
+        && matches!(
+            format,
+            Some(MediaFormat::Manga) | Some(MediaFormat::OneShot)
+        )
 }
 
 fn format_to_string(format: MediaFormat) -> String {
@@ -96,7 +99,12 @@ fn title_from_media_title(title: &MediaTitle) -> Option<String> {
 }
 
 fn cover_from_media_cover(cover: Option<&MediaCoverImage>) -> Option<String> {
-    cover.and_then(|c| c.large.clone().or(c.medium.clone()).or(c.extra_large.clone()))
+    cover.and_then(|c| {
+        c.large
+            .clone()
+            .or(c.medium.clone())
+            .or(c.extra_large.clone())
+    })
 }
 
 fn suggestion_media_from_media(node: &Media) -> Option<SuggestionMedia> {
@@ -108,7 +116,10 @@ fn suggestion_media_from_media(node: &Media) -> Option<SuggestionMedia> {
     let mut tags = node.genres.clone().unwrap_or_default();
     if let Some(extra_tags) = &node.tags {
         for tag in extra_tags.iter().filter_map(|t| t.name.clone()) {
-            if !tags.iter().any(|existing| existing.eq_ignore_ascii_case(&tag)) {
+            if !tags
+                .iter()
+                .any(|existing| existing.eq_ignore_ascii_case(&tag))
+            {
                 tags.push(tag);
             }
         }
@@ -120,7 +131,10 @@ fn suggestion_media_from_media(node: &Media) -> Option<SuggestionMedia> {
         anilist_id,
         title,
         cover_url: cover_from_media_cover(node.cover_image.as_ref()),
-        synopsis: node.description.as_deref().map(crate::manga::core::strip_html),
+        synopsis: node
+            .description
+            .as_deref()
+            .map(crate::manga::core::strip_html),
         media_format: node.format.map(format_to_string),
         publishing_status: node.status.map(status_to_string),
         tags,
@@ -136,7 +150,8 @@ pub fn suggestion_bundle_from_media(media: &Media) -> AniListSuggestionBundle {
         .as_ref()
         .and_then(|r| r.nodes.as_ref())
         .map(|nodes| {
-            nodes.iter()
+            nodes
+                .iter()
                 .filter_map(|rec| {
                     let target = suggestion_media_from_media(rec.media_recommendation.as_ref()?)?;
                     Some(RecommendationSuggestion {
@@ -153,7 +168,8 @@ pub fn suggestion_bundle_from_media(media: &Media) -> AniListSuggestionBundle {
         .as_ref()
         .and_then(|r| r.edges.as_ref())
         .map(|edges| {
-            edges.iter()
+            edges
+                .iter()
                 .filter_map(|edge| {
                     let relation_type = edge.relation_type?;
                     let target = suggestion_media_from_media(edge.node.as_ref()?)?;
@@ -384,7 +400,10 @@ impl AniListMetadata {
     }
 
     /// Fetch relation and recommendation candidates for a manga.
-    pub async fn fetch_suggestions(&self, id: i32) -> Result<AniListSuggestionBundle, AniListError> {
+    pub async fn fetch_suggestions(
+        &self,
+        id: i32,
+    ) -> Result<AniListSuggestionBundle, AniListError> {
         let media = self.grab_raw_media(id).await?;
         Ok(suggestion_bundle_from_media(&media))
     }
@@ -395,7 +414,10 @@ impl AniListMetadata {
     ) -> Result<SuggestionMediaDetails, AniListError> {
         let media = self.grab_raw_media(id).await?;
         Ok(SuggestionMediaDetails {
-            synopsis: media.description.as_deref().map(crate::manga::core::strip_html),
+            synopsis: media
+                .description
+                .as_deref()
+                .map(crate::manga::core::strip_html),
             community_rating: media.average_score,
             popularity: media.popularity,
             favourites: media.favourites,

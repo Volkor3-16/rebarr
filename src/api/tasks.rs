@@ -1,4 +1,5 @@
-use rocket::{State, get, http::Status, post, serde::json::Json};
+use chrono::{DateTime, Utc};
+use rocket::{FromForm, State, get, http::Status, post, serde::json::Json};
 use rocket_okapi::openapi;
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -11,24 +12,101 @@ use crate::{db, db::task::RecentTask, scheduler::worker::CancelMap, scraper::Pro
 
 use super::errors::{ApiError, ApiResult, bad_request, internal};
 
+#[derive(Debug, FromForm, JsonSchema)]
+pub struct TaskListQuery {
+    manga_id: Option<String>,
+    limit: Option<i64>,
+    before: Option<String>,
+    status: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct QueueTasksResponse {
+    pub tasks: Vec<RecentTask>,
+    pub terminal_limit: i64,
+    pub has_more_history: bool,
+    pub next_before: Option<DateTime<Utc>>,
+}
+
+fn parse_manga_id(raw: Option<&str>) -> Result<Option<Uuid>, (Status, Json<ApiError>)> {
+    raw.map(|id| Uuid::parse_str(id).map_err(|_| bad_request("invalid manga_id")))
+        .transpose()
+}
+
+fn parse_before(raw: Option<&str>) -> Result<Option<DateTime<Utc>>, (Status, Json<ApiError>)> {
+    raw.map(|value| {
+        DateTime::parse_from_rfc3339(value)
+            .map(|ts| ts.with_timezone(&Utc))
+            .map_err(|_| bad_request("invalid before timestamp"))
+    })
+    .transpose()
+}
+
+fn parse_status_filters(values: &[String]) -> Result<Vec<String>, (Status, Json<ApiError>)> {
+    let mut result = Vec::new();
+    for value in values {
+        for raw in value.split(',') {
+            let status = raw.trim();
+            if status.is_empty() {
+                continue;
+            }
+            match status {
+                "Pending" | "Running" | "Completed" | "Failed" | "Cancelled" => {
+                    result.push(status.to_string());
+                }
+                _ => return Err(bad_request("invalid status filter")),
+            }
+        }
+    }
+    Ok(result)
+}
+
 // ---------------------------------------------------------------------------
 // GET /api/tasks
 // ---------------------------------------------------------------------------
 
 /// List recent tasks with optional filtering by manga.
 #[openapi(tag = "Tasks")]
-#[get("/api/tasks?<manga_id>&<limit>")]
+#[get("/api/tasks?<query..>")]
 pub async fn list_tasks(
     pool: &State<SqlitePool>,
-    manga_id: Option<&str>,
-    limit: Option<i64>,
+    query: TaskListQuery,
 ) -> ApiResult<Vec<RecentTask>> {
-    let mid = manga_id.and_then(|s| Uuid::parse_str(s).ok());
-    let effective_limit = limit.unwrap_or(0);
-    db::task::get_recent(pool.inner(), mid, effective_limit)
+    let recent_query = db::task::RecentTaskQuery {
+        manga_id: parse_manga_id(query.manga_id.as_deref())?,
+        limit: query.limit.filter(|limit| *limit > 0),
+        before: parse_before(query.before.as_deref())?,
+        statuses: parse_status_filters(&query.status)?,
+    };
+
+    db::task::list_recent(pool.inner(), &recent_query)
         .await
         .map(Json)
         .map_err(internal)
+}
+
+/// List tasks for the queue page: all active tasks plus a bounded recent history.
+#[openapi(tag = "Tasks")]
+#[get("/api/tasks/queue?<manga_id>&<terminal_limit>")]
+pub async fn list_queue_tasks(
+    pool: &State<SqlitePool>,
+    manga_id: Option<&str>,
+    terminal_limit: Option<i64>,
+) -> ApiResult<QueueTasksResponse> {
+    let snapshot = db::task::get_queue_snapshot(
+        pool.inner(),
+        parse_manga_id(manga_id)?,
+        terminal_limit.unwrap_or(db::task::DEFAULT_QUEUE_TERMINAL_LIMIT),
+    )
+    .await
+    .map_err(internal)?;
+
+    Ok(Json(QueueTasksResponse {
+        tasks: snapshot.tasks,
+        terminal_limit: snapshot.terminal_limit,
+        has_more_history: snapshot.has_more_history,
+        next_before: snapshot.next_before,
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -249,5 +327,184 @@ pub async fn cancel_task(
 // ---------------------------------------------------------------------------
 
 pub fn routes() -> Vec<rocket::Route> {
-    rocket::routes![list_tasks, list_tasks_grouped, cancel_task]
+    rocket::routes![
+        list_tasks,
+        list_queue_tasks,
+        list_tasks_grouped,
+        cancel_task
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rocket::local::asynchronous::Client;
+    use serde_json::Value;
+
+    async fn test_client() -> Client {
+        let pool = crate::db::init("sqlite::memory:").await.expect("init db");
+        let rocket = rocket::build()
+            .manage(pool)
+            .mount("/", rocket::routes![list_tasks, list_queue_tasks]);
+        Client::tracked(rocket).await.expect("client")
+    }
+
+    async fn insert_task(
+        pool: &SqlitePool,
+        task_type: db::task::TaskType,
+        status: &str,
+        created_at: DateTime<Utc>,
+    ) -> String {
+        let id = db::task::enqueue(pool, task_type, None, None, 0)
+            .await
+            .expect("enqueue task");
+        let payload = serde_json::to_string(&db::task::TaskProgress {
+            current: Some(1),
+            total: Some(10),
+            unit: Some("page".to_string()),
+            ..Default::default()
+        })
+        .expect("progress");
+        sqlx::query(
+            "UPDATE Task
+             SET status = ?, payload = ?, created_at = ?, updated_at = ?
+             WHERE uuid = ?",
+        )
+        .bind(status)
+        .bind(payload)
+        .bind(created_at)
+        .bind(created_at)
+        .bind(id.to_string())
+        .execute(pool)
+        .await
+        .expect("update task");
+        id.to_string()
+    }
+
+    #[rocket::async_test]
+    async fn queue_endpoint_returns_active_tasks_plus_bounded_terminal_history() {
+        let client = test_client().await;
+        let pool = client.rocket().state::<SqlitePool>().expect("pool");
+        let now = Utc::now();
+
+        insert_task(pool, db::task::TaskType::DownloadChapter, "Pending", now).await;
+        insert_task(
+            pool,
+            db::task::TaskType::RefreshMetadata,
+            "Running",
+            now - chrono::Duration::seconds(1),
+        )
+        .await;
+        insert_task(
+            pool,
+            db::task::TaskType::Backup,
+            "Completed",
+            now - chrono::Duration::seconds(2),
+        )
+        .await;
+        insert_task(
+            pool,
+            db::task::TaskType::ScanDisk,
+            "Failed",
+            now - chrono::Duration::seconds(3),
+        )
+        .await;
+        insert_task(
+            pool,
+            db::task::TaskType::OptimiseChapter,
+            "Cancelled",
+            now - chrono::Duration::seconds(4),
+        )
+        .await;
+
+        let response = client
+            .get("/api/tasks/queue?terminal_limit=2")
+            .dispatch()
+            .await;
+        assert_eq!(response.status(), Status::Ok);
+
+        let json: Value = response.into_json().await.expect("json body");
+        let tasks = json["tasks"].as_array().expect("tasks array");
+        assert_eq!(tasks.len(), 4);
+        assert_eq!(json["terminal_limit"].as_i64(), Some(2));
+        assert_eq!(json["has_more_history"].as_bool(), Some(true));
+
+        let statuses: Vec<&str> = tasks
+            .iter()
+            .map(|task| task["status"].as_str().expect("status"))
+            .collect();
+        assert_eq!(statuses, vec!["Pending", "Running", "Completed", "Failed"]);
+        assert!(tasks.iter().all(|task| {
+            task.get("progress")
+                .and_then(|value| value.as_object())
+                .is_some()
+        }));
+    }
+
+    #[rocket::async_test]
+    async fn list_tasks_supports_status_filter_and_before_cursor() {
+        let client = test_client().await;
+        let pool = client.rocket().state::<SqlitePool>().expect("pool");
+        let now = Utc::now();
+
+        insert_task(
+            pool,
+            db::task::TaskType::Backup,
+            "Completed",
+            now - chrono::Duration::seconds(1),
+        )
+        .await;
+        insert_task(
+            pool,
+            db::task::TaskType::ScanDisk,
+            "Failed",
+            now - chrono::Duration::seconds(2),
+        )
+        .await;
+        insert_task(
+            pool,
+            db::task::TaskType::RefreshMetadata,
+            "Pending",
+            now - chrono::Duration::seconds(3),
+        )
+        .await;
+
+        let before =
+            urlencoding::encode(&(now - chrono::Duration::milliseconds(1500)).to_rfc3339())
+                .into_owned();
+        let response = client
+            .get(format!(
+                "/api/tasks?status=Completed,Failed&before={before}&limit=5"
+            ))
+            .dispatch()
+            .await;
+        assert_eq!(response.status(), Status::Ok);
+
+        let json: Value = response.into_json().await.expect("json body");
+        let tasks = json.as_array().expect("array");
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0]["status"].as_str(), Some("Failed"));
+    }
+
+    #[rocket::async_test]
+    async fn list_tasks_limit_zero_keeps_explicit_all_history_behavior() {
+        let client = test_client().await;
+        let pool = client.rocket().state::<SqlitePool>().expect("pool");
+        let now = Utc::now();
+
+        insert_task(pool, db::task::TaskType::Backup, "Completed", now).await;
+        insert_task(
+            pool,
+            db::task::TaskType::ScanDisk,
+            "Failed",
+            now - chrono::Duration::seconds(1),
+        )
+        .await;
+
+        let response = client.get("/api/tasks?limit=0").dispatch().await;
+        assert_eq!(response.status(), Status::Ok);
+
+        let json: Value = response.into_json().await.expect("json body");
+        assert_eq!(json.as_array().expect("array").len(), 2);
+    }
 }

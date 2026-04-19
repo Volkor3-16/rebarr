@@ -2,6 +2,7 @@ use chrono::{DateTime, Duration, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
+use sqlx::{QueryBuilder, Sqlite};
 use uuid::Uuid;
 
 use crate::api::events::{self, TaskUpdate};
@@ -70,6 +71,24 @@ pub struct TaskProgress {
     pub current: Option<i64>,
     pub total: Option<i64>,
     pub unit: Option<String>,
+}
+
+pub const DEFAULT_QUEUE_TERMINAL_LIMIT: i64 = 200;
+
+#[derive(Debug, Clone, Default)]
+pub struct RecentTaskQuery {
+    pub manga_id: Option<Uuid>,
+    pub limit: Option<i64>,
+    pub before: Option<DateTime<Utc>>,
+    pub statuses: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct QueueTaskSnapshot {
+    pub tasks: Vec<RecentTask>,
+    pub terminal_limit: i64,
+    pub has_more_history: bool,
+    pub next_before: Option<DateTime<Utc>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -177,6 +196,91 @@ fn task_from_row(row: TaskRow) -> Result<Task, sqlx::Error> {
     })
 }
 
+fn progress_from_payload(payload: Option<&str>) -> Option<TaskProgress> {
+    payload.and_then(|json| serde_json::from_str::<TaskProgress>(json).ok())
+}
+
+fn chapter_number_raw(base: Option<i64>, variant: Option<i64>) -> Option<String> {
+    base.map(|base| {
+        let variant = variant.unwrap_or(0);
+        if variant == 0 {
+            base.to_string()
+        } else {
+            format!("{base}.{variant}")
+        }
+    })
+}
+
+fn recent_task_from_row(row: RecentTaskRow) -> RecentTask {
+    RecentTask {
+        id: row.uuid,
+        task_type: row.task_type,
+        status: row.status,
+        manga_id: row.manga_id,
+        chapter_id: row.chapter_id,
+        priority: row.priority,
+        attempt: row.attempt,
+        max_attempts: row.max_attempts,
+        last_error: row.last_error,
+        progress: progress_from_payload(row.payload.as_deref()),
+        manga_title: row.manga_title,
+        chapter_number_raw: chapter_number_raw(row.chapter_base, row.chapter_variant),
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+    }
+}
+
+fn apply_recent_task_filters<'a>(
+    mut qb: QueryBuilder<'a, Sqlite>,
+    query: &'a RecentTaskQuery,
+) -> QueryBuilder<'a, Sqlite> {
+    let mut has_where = false;
+    if let Some(manga_id) = query.manga_id {
+        qb.push(" WHERE t.manga_id = ")
+            .push_bind(manga_id.to_string());
+        has_where = true;
+    }
+    if let Some(before) = query.before {
+        qb.push(if has_where { " AND " } else { " WHERE " });
+        qb.push("t.created_at < ").push_bind(before);
+        has_where = true;
+    }
+    if !query.statuses.is_empty() {
+        qb.push(if has_where { " AND " } else { " WHERE " });
+        qb.push("t.status IN (");
+        {
+            let mut separated = qb.separated(", ");
+            for status in &query.statuses {
+                separated.push_bind(status);
+            }
+        }
+        qb.push(")");
+    }
+    qb
+}
+
+async fn fetch_recent_task_rows(
+    pool: &SqlitePool,
+    query: &RecentTaskQuery,
+) -> Result<Vec<RecentTaskRow>, sqlx::Error> {
+    let mut qb = QueryBuilder::<Sqlite>::new(
+        "SELECT t.uuid, t.task_type, t.status, t.manga_id, t.chapter_id,
+                t.priority, t.attempt, t.max_attempts, t.last_error, t.payload,
+                t.created_at, t.updated_at,
+                m.title AS manga_title,
+                c.chapter_base, c.chapter_variant
+         FROM Task t
+         LEFT JOIN Manga m ON t.manga_id = m.uuid
+         LEFT JOIN Chapters c ON t.chapter_id = c.uuid",
+    );
+    qb = apply_recent_task_filters(qb, query);
+    qb.push(" ORDER BY t.created_at DESC");
+    if let Some(limit) = query.limit.filter(|limit| *limit > 0) {
+        qb.push(" LIMIT ").push_bind(limit);
+    }
+    qb.build_query_as::<RecentTaskRow>().fetch_all(pool).await
+}
+
 // ---------------------------------------------------------------------------
 // Queue helpers
 // ---------------------------------------------------------------------------
@@ -189,8 +293,16 @@ async fn task_event_details(
     status: &str,
     last_error: Option<String>,
 ) -> TaskUpdate {
-    let (manga_title, chapter_number_raw): (Option<String>, Option<String>) = sqlx::query_as(
-        "SELECT m.title, c.chapter_base, c.chapter_variant
+    let details: Option<(
+        Option<String>,
+        Option<String>,
+        Option<TaskProgress>,
+        DateTime<Utc>,
+        Option<String>,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT t.manga_id, t.chapter_id, t.payload, t.updated_at,
+                m.title, c.chapter_base, c.chapter_variant
              FROM Task t
              LEFT JOIN Manga m ON t.manga_id = m.uuid
              LEFT JOIN Chapters c ON t.chapter_id = c.uuid
@@ -202,27 +314,47 @@ async fn task_event_details(
     .ok()
     .flatten()
     .map(
-        |(title, base, variant): (Option<String>, Option<i64>, Option<i64>)| {
-            let chapter = base.map(|b| {
-                let v = variant.unwrap_or(0);
-                if v == 0 {
-                    b.to_string()
-                } else {
-                    format!("{b}.{v}")
-                }
-            });
-            (title, chapter)
+        |(manga_id, chapter_id, payload, updated_at, title, base, variant): (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            DateTime<Utc>,
+            Option<String>,
+            Option<i64>,
+            Option<i64>,
+        )| {
+            (
+                manga_id,
+                chapter_id,
+                progress_from_payload(payload.as_deref()),
+                updated_at,
+                title,
+                chapter_number_raw(base, variant),
+            )
         },
-    )
-    .unwrap_or((None, None));
+    );
 
     TaskUpdate {
         id: task_id.to_string(),
         task_type: task_type.to_string(),
         status: status.to_string(),
-        manga_title,
-        chapter_number_raw,
+        manga_id: details
+            .as_ref()
+            .and_then(|(manga_id, _, _, _, _, _)| manga_id.clone()),
+        chapter_id: details
+            .as_ref()
+            .and_then(|(_, chapter_id, _, _, _, _)| chapter_id.clone()),
+        manga_title: details
+            .as_ref()
+            .and_then(|(_, _, _, _, title, _)| title.clone()),
+        chapter_number_raw: details
+            .as_ref()
+            .and_then(|(_, _, _, _, _, chapter)| chapter.clone()),
         last_error,
+        progress: details
+            .as_ref()
+            .and_then(|(_, _, progress, _, _, _)| progress.clone()),
+        updated_at: details.map(|(_, _, _, updated_at, _, _)| updated_at),
     }
 }
 
@@ -600,9 +732,13 @@ pub async fn cancel_by_chapter(pool: &SqlitePool, chapter_id: Uuid) -> Result<()
                 id: id.clone(),
                 task_type: task_type.clone(),
                 status: "Cancelled".to_string(),
+                manga_id: None,
+                chapter_id: None,
                 manga_title: None,
                 chapter_number_raw: None,
                 last_error: None,
+                progress: None,
+                updated_at: None,
             });
         }
     }
@@ -711,14 +847,7 @@ pub async fn enqueue_with_payload(
     payload: Option<String>,
 ) -> Result<Uuid, sqlx::Error> {
     enqueue_full(
-        pool,
-        task_type,
-        None,
-        manga_id,
-        chapter_id,
-        priority,
-        queue,
-        payload,
+        pool, task_type, None, manga_id, chapter_id, priority, queue, payload,
     )
     .await
 }
@@ -793,58 +922,66 @@ pub async fn get_recent(
     manga_id: Option<Uuid>,
     limit: i64,
 ) -> Result<Vec<RecentTask>, sqlx::Error> {
-    let effective_limit = if limit <= 0 { i64::MAX } else { limit };
-    let manga_id_str = manga_id.map(|v| v.to_string());
-    sqlx::query_as::<_, RecentTaskRow>(
-        "SELECT t.uuid, t.task_type, t.status, t.manga_id, t.chapter_id,
-                t.priority, t.attempt, t.max_attempts, t.last_error, t.payload,
-                t.created_at, t.updated_at,
-                m.title AS manga_title,
-                c.chapter_base, c.chapter_variant
-         FROM Task t
-         LEFT JOIN Manga m ON t.manga_id = m.uuid
-         LEFT JOIN Chapters c ON t.chapter_id = c.uuid
-         WHERE (? IS NULL OR t.manga_id = ?)
-         ORDER BY t.created_at DESC
-         LIMIT ?",
-    )
-    .bind(&manga_id_str)
-    .bind(&manga_id_str)
-    .bind(effective_limit)
-    .fetch_all(pool)
-    .await
-    .map(|rows| {
-        rows.into_iter()
-            .map(|r| {
-                // Build a display string like "27" or "27.5" from base + variant
-                let chapter_number_raw = r.chapter_base.map(|base| {
-                    let variant = r.chapter_variant.unwrap_or(0);
-                    if variant == 0 {
-                        base.to_string()
-                    } else {
-                        format!("{base}.{variant}")
-                    }
-                });
-                RecentTask {
-                    id: r.uuid,
-                    task_type: r.task_type,
-                    status: r.status,
-                    manga_id: r.manga_id,
-                    chapter_id: r.chapter_id,
-                    priority: r.priority,
-                    attempt: r.attempt,
-                    max_attempts: r.max_attempts,
-                    last_error: r.last_error,
-                    progress: r
-                        .payload
-                        .as_deref()
-                        .and_then(|json| serde_json::from_str::<TaskProgress>(json).ok()),
-                    manga_title: r.manga_title,
-                    chapter_number_raw,
-                    created_at: r.created_at,
-                    updated_at: r.updated_at,
-                }
-            })
-            .collect()
+    let query = RecentTaskQuery {
+        manga_id,
+        limit: (limit > 0).then_some(limit),
+        before: None,
+        statuses: Vec::new(),
+    };
+    list_recent(pool, &query).await
+}
+
+pub async fn list_recent(
+    pool: &SqlitePool,
+    query: &RecentTaskQuery,
+) -> Result<Vec<RecentTask>, sqlx::Error> {
+    fetch_recent_task_rows(pool, query)
+        .await
+        .map(|rows| rows.into_iter().map(recent_task_from_row).collect())
+}
+
+pub async fn get_queue_snapshot(
+    pool: &SqlitePool,
+    manga_id: Option<Uuid>,
+    terminal_limit: i64,
+) -> Result<QueueTaskSnapshot, sqlx::Error> {
+    let terminal_limit = terminal_limit.max(1);
+    let active_query = RecentTaskQuery {
+        manga_id,
+        limit: None,
+        before: None,
+        statuses: vec!["Pending".to_string(), "Running".to_string()],
+    };
+    let terminal_query = RecentTaskQuery {
+        manga_id,
+        limit: Some(terminal_limit + 1),
+        before: None,
+        statuses: vec![
+            "Completed".to_string(),
+            "Failed".to_string(),
+            "Cancelled".to_string(),
+        ],
+    };
+
+    let active_rows = fetch_recent_task_rows(pool, &active_query).await?;
+    let mut terminal_rows = fetch_recent_task_rows(pool, &terminal_query).await?;
+    let has_more_history = terminal_rows.len() as i64 > terminal_limit;
+    if has_more_history {
+        terminal_rows.truncate(terminal_limit as usize);
+    }
+    let next_before = terminal_rows.last().map(|task| task.created_at);
+
+    let mut tasks: Vec<RecentTask> = active_rows
+        .into_iter()
+        .chain(terminal_rows)
+        .map(recent_task_from_row)
+        .collect();
+    tasks.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
+    Ok(QueueTaskSnapshot {
+        tasks,
+        terminal_limit,
+        has_more_history,
+        next_before,
     })
 }

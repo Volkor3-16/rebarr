@@ -197,4 +197,3 @@ pub async fn has_url(
     .await?;
     Ok(count > 0)
 }
-

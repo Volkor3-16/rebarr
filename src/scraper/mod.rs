@@ -215,7 +215,10 @@ use std::any::Any;
 #[async_trait]
 pub trait Provider: Send + Sync + Any {
     /// Returns self as Any for downcasting.
-    fn as_any(&self) -> &dyn Any where Self: Sized {
+    fn as_any(&self) -> &dyn Any
+    where
+        Self: Sized,
+    {
         self
     }
     /// Human-readable provider name (e.g. "MangaFire").
@@ -325,7 +328,11 @@ impl ProviderRegistry {
                     defs.push(def);
                 }
                 Err(e) => {
-                    warn!("Skipping invalid provider config '{}': {}", path.display(), e);
+                    warn!(
+                        "Skipping invalid provider config '{}': {}",
+                        path.display(),
+                        e
+                    );
                 }
             }
         }
@@ -350,7 +357,10 @@ impl ProviderRegistry {
     }
 
     pub fn from_providers_for_tests(providers: Vec<Arc<dyn Provider>>) -> Self {
-        Self { providers, defs: Vec::new() }
+        Self {
+            providers,
+            defs: Vec::new(),
+        }
     }
 
     /// Get all ProviderDef instances for loaded YAML providers.

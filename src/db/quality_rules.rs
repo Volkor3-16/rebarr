@@ -202,11 +202,18 @@ pub async fn ensure_default_provider_rules(
         // Insert with sort_order 0 (lowest priority, runs last)
         match insert(pool, &rule_name, score, 0, &conditions).await {
             Ok(_) => {
-                info!("Added default quality rule for provider '{}' with score {}", provider.name, score);
+                info!(
+                    "Added default quality rule for provider '{}' with score {}",
+                    provider.name, score
+                );
                 added_count += 1;
             }
             Err(e) => {
-                tracing::warn!("Failed to add default quality rule for provider '{}': {}", provider.name, e);
+                tracing::warn!(
+                    "Failed to add default quality rule for provider '{}': {}",
+                    provider.name,
+                    e
+                );
             }
         }
     }

@@ -32,7 +32,10 @@ impl BrowserPool {
 
     /// Mark a tab as intentionally opened by us so it won't be swept as a popup.
     pub fn register_page(&self, target_id: &str) {
-        self.known_targets.lock().unwrap().insert(target_id.to_owned());
+        self.known_targets
+            .lock()
+            .unwrap()
+            .insert(target_id.to_owned());
     }
 
     /// Remove a tab from the registry when we close it ourselves.
@@ -78,7 +81,10 @@ impl BrowserPool {
             if target.target_type == "page" && !known.contains(&target.target_id) {
                 tracing::debug!("[browser] closing popup tab {}", target.target_id);
                 if let Err(e) = browser.close_tab(&target.target_id).await {
-                    tracing::warn!("[browser] failed to close popup tab {}: {e}", target.target_id);
+                    tracing::warn!(
+                        "[browser] failed to close popup tab {}: {e}",
+                        target.target_id
+                    );
                 } else {
                     closed += 1;
                 }

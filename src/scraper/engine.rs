@@ -134,7 +134,9 @@ impl YamlProvider {
                         mod_name if mod_name.starts_with("slice:") => {
                             let parts: Vec<&str> = mod_name.split(':').collect();
                             if parts.len() >= 3 {
-                                if let (Ok(start), Ok(end)) = (parts[1].parse::<usize>(), parts[2].parse::<usize>()) {
+                                if let (Ok(start), Ok(end)) =
+                                    (parts[1].parse::<usize>(), parts[2].parse::<usize>())
+                                {
                                     if start < result.len() && end <= result.len() {
                                         result[start..end].to_string()
                                     } else if start < result.len() {
@@ -148,7 +150,7 @@ impl YamlProvider {
                             } else {
                                 result
                             }
-                        },
+                        }
                         _ => result,
                     };
                 }

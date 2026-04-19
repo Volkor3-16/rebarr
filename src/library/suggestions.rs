@@ -32,7 +32,12 @@ async fn enrich_candidate_details(
     let details = al
         .fetch_suggestion_details(entry.meta.anilist_id as i32)
         .await
-        .map_err(|e| format!("AniList detail fetch failed for {}: {e}", entry.meta.anilist_id))?;
+        .map_err(|e| {
+            format!(
+                "AniList detail fetch failed for {}: {e}",
+                entry.meta.anilist_id
+            )
+        })?;
 
     if entry.meta.synopsis.is_none() {
         entry.meta.synopsis = details.synopsis;
@@ -119,7 +124,9 @@ pub async fn refresh_library_suggestions_with_seed(
 
     let mut aggregate: HashMap<u32, AggregatedCandidate> = HashMap::new();
     let mut source_rows: Vec<UpsertSuggestionSource> = Vec::new();
-    let seeded_by_manga = seeded_bundle.as_ref().map(|(manga_id, bundle)| (*manga_id, bundle));
+    let seeded_by_manga = seeded_bundle
+        .as_ref()
+        .map(|(manga_id, bundle)| (*manga_id, bundle));
 
     for manga in manga_list.into_iter().filter(|m| m.anilist_id.is_some()) {
         let source_anilist_id = manga.anilist_id.expect("filtered");
@@ -127,29 +134,42 @@ pub async fn refresh_library_suggestions_with_seed(
             if seeded_manga_id == manga.id {
                 seeded.clone()
             } else {
-                al.fetch_suggestions(source_anilist_id as i32).await.map_err(|e| {
-                    format!("AniList suggestion fetch failed for '{}': {e}", manga.metadata.title)
-                })?
+                al.fetch_suggestions(source_anilist_id as i32)
+                    .await
+                    .map_err(|e| {
+                        format!(
+                            "AniList suggestion fetch failed for '{}': {e}",
+                            manga.metadata.title
+                        )
+                    })?
             }
         } else {
-            al.fetch_suggestions(source_anilist_id as i32).await.map_err(|e| {
-                format!("AniList suggestion fetch failed for '{}': {e}", manga.metadata.title)
-            })?
+            al.fetch_suggestions(source_anilist_id as i32)
+                .await
+                .map_err(|e| {
+                    format!(
+                        "AniList suggestion fetch failed for '{}': {e}",
+                        manga.metadata.title
+                    )
+                })?
         };
 
         for rec in bundle.recommendations {
-            if rec.target.anilist_id == source_anilist_id || existing_ids.contains(&rec.target.anilist_id) {
+            if rec.target.anilist_id == source_anilist_id
+                || existing_ids.contains(&rec.target.anilist_id)
+            {
                 continue;
             }
-            let entry = aggregate
-                .entry(rec.target.anilist_id)
-                .or_insert_with(|| AggregatedCandidate {
-                    meta: rec.target.clone(),
-                    total_occurrences: 0,
-                    recommendation_occurrences: 0,
-                    relation_occurrences: 0,
-                    weighted_score: 0.0,
-                });
+            let entry =
+                aggregate
+                    .entry(rec.target.anilist_id)
+                    .or_insert_with(|| AggregatedCandidate {
+                        meta: rec.target.clone(),
+                        total_occurrences: 0,
+                        recommendation_occurrences: 0,
+                        relation_occurrences: 0,
+                        weighted_score: 0.0,
+                    });
             entry.total_occurrences += 1;
             entry.recommendation_occurrences += 1;
             entry.weighted_score += 1.0 + (f64::from(rec.rating.unwrap_or(0)) / 1000.0);
@@ -232,7 +252,11 @@ pub async fn refresh_library_suggestions_with_seed(
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| b.total_occurrences.cmp(&a.total_occurrences))
             .then_with(|| b.relation_occurrences.cmp(&a.relation_occurrences))
-            .then_with(|| b.community_rating.unwrap_or(0).cmp(&a.community_rating.unwrap_or(0)))
+            .then_with(|| {
+                b.community_rating
+                    .unwrap_or(0)
+                    .cmp(&a.community_rating.unwrap_or(0))
+            })
             .then_with(|| b.popularity.unwrap_or(0).cmp(&a.popularity.unwrap_or(0)))
             .then_with(|| a.title.cmp(&b.title))
     });
@@ -249,6 +273,9 @@ mod tests {
     #[test]
     fn relation_labels_are_collection_friendly() {
         assert_eq!(relation_label(SuggestionRelationKind::Sequel), "Sequel");
-        assert_eq!(relation_label(SuggestionRelationKind::SideStory), "Side story");
+        assert_eq!(
+            relation_label(SuggestionRelationKind::SideStory),
+            "Side story"
+        );
     }
 }

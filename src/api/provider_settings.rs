@@ -83,7 +83,9 @@ pub async fn set_global_settings(
             .map_err(internal)?;
     }
 
-    Ok(Json(GlobalSettingsResponse { enabled: body.enabled }))
+    Ok(Json(GlobalSettingsResponse {
+        enabled: body.enabled,
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -105,7 +107,10 @@ pub async fn get_series_settings(
     let effective_enabled = provider_settings::get_effective_enabled(pool.inner(), name, manga_id)
         .await
         .map_err(internal)?;
-    Ok(Json(SeriesSettingsResponse { enabled, effective_enabled }))
+    Ok(Json(SeriesSettingsResponse {
+        enabled,
+        effective_enabled,
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -171,11 +176,13 @@ pub async fn delete_series_settings(
         .await
         .map_err(internal)?;
 
-    let effective_enabled =
-        provider_settings::get_effective_enabled(pool.inner(), name, manga_id)
-            .await
-            .map_err(internal)?;
-    Ok(Json(SeriesSettingsResponse { enabled: None, effective_enabled }))
+    let effective_enabled = provider_settings::get_effective_enabled(pool.inner(), name, manga_id)
+        .await
+        .map_err(internal)?;
+    Ok(Json(SeriesSettingsResponse {
+        enabled: None,
+        effective_enabled,
+    }))
 }
 
 // ---------------------------------------------------------------------------

@@ -624,8 +624,7 @@ async fn enqueue_auto_downloads(
 /// since the last download (e.g. official release now available for a chapter we got from
 /// an unknown scanlator). Skips chapters already Queued or Downloading.
 async fn enqueue_upgrades(pool: &SqlitePool, manga: &Manga) {
-    let candidates = match db_chapter::find_upgrade_candidates(pool, manga.id).await
-    {
+    let candidates = match db_chapter::find_upgrade_candidates(pool, manga.id).await {
         Ok(v) if !v.is_empty() => v,
         Ok(_) => return,
         Err(e) => {

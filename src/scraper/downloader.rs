@@ -101,7 +101,11 @@ pub async fn download_chapter(
 
     // Rank: language filter → quality score sort
     let lang_raw = db_settings::get(pool, "preferred_language", "").await?;
-    let lang_filter = if lang_raw.is_empty() { None } else { Some(lang_raw.as_str()) };
+    let lang_filter = if lang_raw.is_empty() {
+        None
+    } else {
+        Some(lang_raw.as_str())
+    };
     let ranked = rank_entries_scored(all_entries, lang_filter, &quality_rules);
 
     // Always try the user-selected canonical chapter first, then fall back to ranked order.
@@ -181,7 +185,11 @@ pub async fn download_chapter(
             .await?;
             let fresh_ranked = rank_entries_scored(
                 fresh_all,
-                if lang_raw.is_empty() { None } else { Some(lang_raw.as_str()) },
+                if lang_raw.is_empty() {
+                    None
+                } else {
+                    Some(lang_raw.as_str())
+                },
                 &quality_rules,
             );
 
@@ -341,7 +349,11 @@ pub async fn download_chapter(
                     files::chapter_cbz_path(&files::series_dir(lib_root, manga), chapter);
 
                 // Use the entry that actually served the content for ComicInfo metadata.
-                let cbz_chapter = if entry.id == chapter.id { chapter } else { entry };
+                let cbz_chapter = if entry.id == chapter.id {
+                    chapter
+                } else {
+                    entry
+                };
 
                 if let Err(e) = write_cbz(&cbz_path, manga, cbz_chapter, image_data).await {
                     warn!("[dl] CBZ write failed: {e}");
@@ -383,8 +395,7 @@ pub async fn download_chapter(
                     .await?;
 
                     if let Ok(meta) = tokio::fs::metadata(&cbz_path).await {
-                        let _ =
-                            db_chapter::set_file_size(pool, entry.id, meta.len() as i64).await;
+                        let _ = db_chapter::set_file_size(pool, entry.id, meta.len() as i64).await;
                     }
 
                     if let Err(e) = db_chapter::set_canonical_override(
@@ -569,9 +580,8 @@ pub async fn download_pages_via_browser(
                 let cf_timeout = Duration::from_secs(30);
                 let poll_interval = Duration::from_millis(500);
                 let start = std::time::Instant::now();
-                let mut last_cf_click: Option<std::time::Instant> = Some(
-                    std::time::Instant::now() - Duration::from_millis(1_000),
-                );
+                let mut last_cf_click: Option<std::time::Instant> =
+                    Some(std::time::Instant::now() - Duration::from_millis(1_000));
                 loop {
                     if start.elapsed() >= cf_timeout {
                         break;
@@ -583,7 +593,10 @@ pub async fn download_pages_via_browser(
                             break;
                         }
                         // Attempt human-like checkbox click every ~2 seconds.
-                        if last_cf_click.map(|t| t.elapsed() >= Duration::from_secs(2)).unwrap_or(true) {
+                        if last_cf_click
+                            .map(|t| t.elapsed() >= Duration::from_secs(2))
+                            .unwrap_or(true)
+                        {
                             try_cf_checkbox_click(&page).await;
                             last_cf_click = Some(std::time::Instant::now());
                         }
@@ -662,7 +675,10 @@ pub async fn download_pages_via_browser(
         // Extract browser cookies so reqwest (Tier 1) can present them on image requests.
         // CDP Network.getCookies returns all cookies visible to the current page URL.
         let browser_cookies = extract_browser_cookies(&page, chapter_url).await;
-        debug!("[dl] extracted {} cookies from browser session", browser_cookies.len());
+        debug!(
+            "[dl] extracted {} cookies from browser session",
+            browser_cookies.len()
+        );
 
         // Build a reqwest client that impersonates the browser session:
         // same User-Agent, Referer, and cookies extracted above.
@@ -670,7 +686,8 @@ pub async fn download_pages_via_browser(
             .first()
             .and_then(|p| p.referrer.as_deref())
             .unwrap_or(chapter_url);
-        let reqwest_client = build_browser_reqwest(&browser_cookies, referer, browser_ua.as_deref());
+        let reqwest_client =
+            build_browser_reqwest(&browser_cookies, referer, browser_ua.as_deref());
 
         // If all pages share a referrer URL, navigate there so loadNetworkResource
         // uses it as the Referer via the frame's document URL (Chrome's default
@@ -761,7 +778,10 @@ pub async fn download_pages_via_browser(
 
         // VALIDATION CHECKS
         if results.is_empty() {
-            warn!("[dl] No valid images downloaded for chapter {}", chapter_url);
+            warn!(
+                "[dl] No valid images downloaded for chapter {}",
+                chapter_url
+            );
             return Err(DownloadError::NoValidImages);
         }
 
@@ -842,7 +862,9 @@ async fn fetch_image_tiered(
                 );
             }
             Err(e) => {
-                warn!("[dl] page {page_num}/{total_pages} — Tier 1 (reqwest) failed: {e}, falling back to CDP");
+                warn!(
+                    "[dl] page {page_num}/{total_pages} — Tier 1 (reqwest) failed: {e}, falling back to CDP"
+                );
             }
         }
     }
@@ -957,7 +979,10 @@ async fn fetch_via_cdp(
 
         let lnr_params = LnrParams {
             url: url.to_owned(),
-            options: LnrOptions { disable_cache: true, include_credentials: true },
+            options: LnrOptions {
+                disable_cache: true,
+                include_credentials: true,
+            },
             frame_id: frame_id.to_owned(),
         };
         let lnr: LnrReturns = match page
@@ -968,7 +993,10 @@ async fn fetch_via_cdp(
         {
             Ok(r) => r,
             Err(e) => {
-                warn!("[dl] page {page_num}/{total_pages} — CDP attempt {}: loadNetworkResource error: {e}", attempt + 1);
+                warn!(
+                    "[dl] page {page_num}/{total_pages} — CDP attempt {}: loadNetworkResource error: {e}",
+                    attempt + 1
+                );
                 last_err = e.to_string();
                 continue;
             }
@@ -980,7 +1008,10 @@ async fn fetch_via_cdp(
                 lnr.resource.net_error_name.as_deref().unwrap_or("—"),
                 lnr.resource.http_status_code,
             );
-            warn!("[dl] page {page_num}/{total_pages} — CDP attempt {}: {msg}", attempt + 1);
+            warn!(
+                "[dl] page {page_num}/{total_pages} — CDP attempt {}: {msg}",
+                attempt + 1
+            );
             last_err = msg;
             continue;
         }
@@ -989,7 +1020,10 @@ async fn fetch_via_cdp(
             Some(h) => h,
             None => {
                 last_err = "loadNetworkResource: no stream handle".to_owned();
-                warn!("[dl] page {page_num}/{total_pages} — CDP attempt {}: {last_err}", attempt + 1);
+                warn!(
+                    "[dl] page {page_num}/{total_pages} — CDP attempt {}: {last_err}",
+                    attempt + 1
+                );
                 continue;
             }
         };
@@ -1000,7 +1034,12 @@ async fn fetch_via_cdp(
         loop {
             let read_result: IoReadResult = match page
                 .session()
-                .send("IO.read", &IoReadParams { handle: stream_handle.clone() })
+                .send(
+                    "IO.read",
+                    &IoReadParams {
+                        handle: stream_handle.clone(),
+                    },
+                )
                 .await
                 .map_err(|e| std::io::Error::other(e.to_string()))
             {
@@ -1016,7 +1055,9 @@ async fn fetch_via_cdp(
                 match BASE64.decode(read_result.data.trim()) {
                     Ok(bytes) => image_data.extend(bytes),
                     Err(e) => {
-                        warn!("[dl] page {page_num}/{total_pages} — IO.read base64 decode error: {e}");
+                        warn!(
+                            "[dl] page {page_num}/{total_pages} — IO.read base64 decode error: {e}"
+                        );
                         last_err = format!("IO.read base64 decode: {e}");
                         read_ok = false;
                         break;
@@ -1031,7 +1072,10 @@ async fn fetch_via_cdp(
         }
 
         if read_ok {
-            debug!("[dl] page {page_num}/{total_pages} — Tier 2 (CDP) succeeded ({} bytes)", image_data.len());
+            debug!(
+                "[dl] page {page_num}/{total_pages} — Tier 2 (CDP) succeeded ({} bytes)",
+                image_data.len()
+            );
             return Ok(image_data);
         }
     }
@@ -1062,7 +1106,9 @@ async fn extract_browser_cookies(page: &eoka::Page, url: &str) -> Vec<(String, S
         cookies: Vec<CookieEntry>,
     }
 
-    let params = GetCookiesParams { urls: vec![url.to_owned()] };
+    let params = GetCookiesParams {
+        urls: vec![url.to_owned()],
+    };
     match page
         .session()
         .send::<GetCookiesParams, GetCookiesResult>("Network.getCookies", &params)
@@ -1080,8 +1126,7 @@ async fn extract_browser_cookies(page: &eoka::Page, url: &str) -> Vec<(String, S
     }
 }
 
-const BROWSER_UA: &str =
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.7680.153 Safari/537.36";
+const BROWSER_UA: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.7680.153 Safari/537.36";
 
 /// Build a reqwest Client configured to look like the browser session:
 /// same User-Agent, a `Cookie` header from extracted browser cookies, and

@@ -13,6 +13,7 @@ const selectedTaskIds = new Set();
 
 let sseHandler = null;
 const QUEUE_FILTER_KEY = 'rebarr_queue_task_filters';
+const QUEUE_REFRESH_DELAY_MS = 250;
 const DEFAULT_VISIBLE_TASKS = ['DownloadChapter'];
 const KNOWN_TASK_TYPES = [
   'ScanLibrary',
@@ -46,6 +47,9 @@ function saveTaskTypeFilters() {
 }
 
 let visibleTaskTypes = loadTaskTypeFilters();
+let refreshInFlight = false;
+let refreshQueued = false;
+let refreshTimer = null;
 
 export async function viewQueue() {
   render(`
@@ -58,15 +62,23 @@ export async function viewQueue() {
   
   await refreshQueue();
   
-  // Use SSE instead of polling — refresh on any task update
-  sseHandler = () => refreshQueue();
+  // Coalesce bursts of task updates into a single bounded refresh.
+  sseHandler = () => scheduleQueueRefresh();
   sse.on('task_update', sseHandler);
 }
 
 async function refreshQueue() {
+  if (refreshInFlight) {
+    refreshQueued = true;
+    return;
+  }
+  refreshInFlight = true;
   const listEl = document.getElementById('queue-list');
   const ctrlEl = document.getElementById('queue-controls');
-  if (!listEl || !ctrlEl) return;
+  if (!listEl || !ctrlEl) {
+    refreshInFlight = false;
+    return;
+  }
   
   // Save current checkbox states before rebuilding
   document.querySelectorAll('.task-cb:checked').forEach(cb => {
@@ -77,10 +89,11 @@ async function refreshQueue() {
   });
   
   try {
-    const [taskList, appSettings] = await Promise.all([
-      tasks.list(),
+    const [queueData, appSettings] = await Promise.all([
+      tasks.listQueue(),
       settings.get(),
     ]);
+    const taskList = queueData.tasks || [];
     
     const paused = appSettings.queue_paused;
     const pauseLabel = paused ? '<span class="iconify" data-icon="mdi-play"></span> Resume Queue' : '<span class="iconify" data-icon="mdi-pause"></span> Pause Queue';
@@ -100,6 +113,7 @@ async function refreshQueue() {
       <button class="btn btn-sm btn-error btn-outline" onclick="cancelSelected()">Cancel Selected</button>
       ${jumpBtn}
       ${paused ? '<span class="badge badge-warning">Queue paused — no new tasks will run.</span>' : ''}
+      ${queueData.has_more_history ? `<span class="badge badge-info">Showing all active tasks + latest ${queueData.terminal_limit} finished tasks.</span>` : ''}
       ${buildTaskTypeFilterBar(availableTaskTypes, taskList)}
     `;
     
@@ -144,7 +158,21 @@ async function refreshQueue() {
     updateSelectAllCheckbox();
   } catch(e) {
     if (listEl) listEl.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
+  } finally {
+    refreshInFlight = false;
+    if (refreshQueued) {
+      refreshQueued = false;
+      scheduleQueueRefresh(0);
+    }
   }
+}
+
+function scheduleQueueRefresh(delay = QUEUE_REFRESH_DELAY_MS) {
+  if (refreshTimer) clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(() => {
+    refreshTimer = null;
+    refreshQueue();
+  }, delay);
 }
 
 function updateSelectAllCheckbox() {
@@ -350,7 +378,7 @@ function buildCompactTaskProgress(progress) {
 window.toggleQueuePause = async function(currentlyPaused) {
   try {
     await settings.update({ queue_paused: !currentlyPaused });
-    refreshQueue();
+    scheduleQueueRefresh(0);
     showToast(currentlyPaused ? 'Queue resumed' : 'Queue paused');
   } catch(e) {
     showToast('Error: ' + e.message, 'error');
@@ -365,19 +393,19 @@ window.toggleQueueTaskType = function(taskType) {
     visibleTaskTypes.add(taskType);
   }
   saveTaskTypeFilters();
-  refreshQueue();
+  scheduleQueueRefresh(0);
 };
 
 window.showAllQueueTaskTypes = function() {
   visibleTaskTypes = new Set(KNOWN_TASK_TYPES);
   saveTaskTypeFilters();
-  refreshQueue();
+  scheduleQueueRefresh(0);
 };
 
 window.showOnlyDownloadTasks = function() {
   visibleTaskTypes = new Set(DEFAULT_VISIBLE_TASKS);
   saveTaskTypeFilters();
-  refreshQueue();
+  scheduleQueueRefresh(0);
 };
 
 window.toggleSelectAllTasks = function(checked) {
@@ -401,7 +429,7 @@ window.cancelSelected = async function() {
     } catch(_) {}
   }
   showToast('Cancelled ' + checked.length + ' task(s)');
-  refreshQueue();
+  scheduleQueueRefresh(0);
 };
 
 window.cancelTask = async function(taskId) {
@@ -409,7 +437,7 @@ window.cancelTask = async function(taskId) {
     await tasks.cancel(taskId);
     selectedTaskIds.delete(taskId);
     showToast('Task cancelled');
-    refreshQueue();
+    scheduleQueueRefresh(0);
   } catch(e) {
     showToast('Cancel failed: ' + e.message, 'error');
   }
@@ -421,7 +449,7 @@ window.toggleCancelledGroup = function(groupIndex) {
   } else {
     expandedGroups.add(groupIndex);
   }
-  refreshQueue();
+  scheduleQueueRefresh(0);
 };
 
 window.jumpToActive = function() {

@@ -9,8 +9,8 @@ pub(crate) mod events;
 pub(crate) mod import;
 pub(crate) mod libraries;
 pub(crate) mod manga;
-pub(crate) mod provider_settings;
 pub(crate) mod metadata_rules;
+pub(crate) mod provider_settings;
 pub(crate) mod quality_rules;
 pub(crate) mod settings;
 pub(crate) mod system;
@@ -27,8 +27,8 @@ pub use frontend::routes as frontend_routes;
 pub use import::routes as import_routes;
 pub use libraries::routes as library_routes;
 pub use manga::routes as manga_routes;
-pub use provider_settings::routes as provider_setting_routes;
 pub use metadata_rules::routes as metadata_rule_routes;
+pub use provider_settings::routes as provider_setting_routes;
 pub use quality_rules::routes as quality_rule_routes;
 pub use settings::routes as settings_routes;
 pub use system::routes as system_routes;
@@ -124,6 +124,7 @@ pub fn openapi_routes() -> Vec<rocket::Route> {
             system::changelog,
             // Tasks
             tasks::list_tasks,
+            tasks::list_queue_tasks,
             tasks::list_tasks_grouped,
             tasks::cancel_task,
             // Metadata Rules

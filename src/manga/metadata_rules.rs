@@ -111,9 +111,7 @@ fn apply_action(
             value.clone()
         }
         "replace" => {
-            if let (Some(pat), Some(replacement), Some(cur)) =
-                (pattern, value, &current)
-            {
+            if let (Some(pat), Some(replacement), Some(cur)) = (pattern, value, &current) {
                 if let Ok(re) = regex::Regex::new(pat) {
                     return Some(re.replace_all(cur, replacement.as_str()).into_owned());
                 }

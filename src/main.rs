@@ -51,7 +51,9 @@ async fn main() -> Result<(), Box<rocket::Error>> {
     );
 
     // Add default quality rules for providers that don't have any rules yet
-    if let Err(e) = db::quality_rules::ensure_default_provider_rules(&pool, registry.all_defs()).await {
+    if let Err(e) =
+        db::quality_rules::ensure_default_provider_rules(&pool, registry.all_defs()).await
+    {
         warn!("Failed to ensure default provider quality rules: {}", e);
     }
     let browser_worker_count = db::settings::get(&pool, "browser_worker_count", "3")

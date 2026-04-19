@@ -32,8 +32,7 @@ async fn assign_slot_id(chapter_base: i32, chapter_variant: i32, all_chapters: &
 
     // Check if this is a standalone decimal chapter
     let has_split_structure = all_chapters.iter().any(|ch| {
-        ch.chapter_base == chapter_base &&
-        ch.chapter_variant >= 1 && ch.chapter_variant <= 4
+        ch.chapter_base == chapter_base && ch.chapter_variant >= 1 && ch.chapter_variant <= 4
     });
 
     if !has_split_structure {
@@ -69,8 +68,14 @@ async fn classify_bundle(pool: &SqlitePool, bundle: &[Chapter]) -> BundleType {
         } else {
             // Check if this is an extra chapter
             let all_chapters = get_all_for_manga(pool, chapter.manga_id).await.unwrap();
-            let is_extra = assign_slot_id(chapter.chapter_base, chapter.chapter_variant, &all_chapters).await != chapter.chapter_base as f64;
-            if is_extra { BundleType::Extra } else { BundleType::Full }
+            let is_extra =
+                assign_slot_id(chapter.chapter_base, chapter.chapter_variant, &all_chapters).await
+                    != chapter.chapter_base as f64;
+            if is_extra {
+                BundleType::Extra
+            } else {
+                BundleType::Full
+            }
         }
     } else {
         BundleType::Split
@@ -615,11 +620,11 @@ pub async fn update_canonical(
             let has_low = chs
                 .iter()
                 .any(|c| c.chapter_variant >= 1 && c.chapter_variant <= 4);
-            
+
             // Get sorted list of all variants for this provider+base
             let mut variants: Vec<i32> = chs.iter().map(|c| c.chapter_variant).collect();
             variants.sort_unstable();
-            
+
             for ch in chs.iter().filter(|c| c.chapter_variant >= 1) {
                 // First check title for explicit extra indicators
                 let title_lower = ch.title.as_deref().unwrap_or_default().to_lowercase();
@@ -629,19 +634,19 @@ pub async fn update_canonical(
                     || title_lower.contains("omake")
                     || title_lower.contains("side")
                     || title_lower.contains("extras");
-                
+
                 if has_extra_title {
                     // Title explicitly says it's extra - always mark as extra
                     set_is_extra(pool, ch.id, true).await?;
                     continue;
                 }
-                
+
                 // For variants >=5, check if they are actually sequential
                 if ch.chapter_variant >= 5 {
                     // Check if all previous numbers exist sequentially
                     let expected = ch.chapter_variant - 1;
                     let has_previous = variants.binary_search(&expected).is_ok();
-                    
+
                     if !has_previous {
                         // Missing previous variant number - this is an extra, not part of split
                         set_is_extra(pool, ch.id, true).await?;
@@ -672,19 +677,26 @@ pub async fn update_canonical(
     // Group by (slot_id, provider_name, is_full) to create Provider Bundles.
     // A full chapter (variant=0) and split parts (variant>0) from the same provider at the
     // same slot are *different logical representations* and must be separate competing bundles.
-    let mut bundles: std::collections::HashMap<(OrderedFloat<f64>, Option<String>, bool), Vec<Chapter>> =
-        std::collections::HashMap::new();
+    let mut bundles: std::collections::HashMap<
+        (OrderedFloat<f64>, Option<String>, bool),
+        Vec<Chapter>,
+    > = std::collections::HashMap::new();
     for ch in &all {
         let slot_id = assign_slot_id(ch.chapter_base, ch.chapter_variant, &all).await;
         let is_full = ch.chapter_variant == 0;
         bundles
-            .entry((ordered_float::OrderedFloat(slot_id), ch.provider_name.clone(), is_full))
+            .entry((
+                ordered_float::OrderedFloat(slot_id),
+                ch.provider_name.clone(),
+                is_full,
+            ))
             .or_default()
             .push(ch.clone());
     }
 
     // Classify bundles and collect all bundles by slot_id
-    let mut bundles_by_slot: std::collections::HashMap<OrderedFloat<f64>, Vec<ProviderBundle>> = std::collections::HashMap::new();
+    let mut bundles_by_slot: std::collections::HashMap<OrderedFloat<f64>, Vec<ProviderBundle>> =
+        std::collections::HashMap::new();
     for ((slot_id, _provider_name, _is_full), entries) in bundles {
         let bundle_type = classify_bundle(pool, &entries).await;
         let coverage = compute_bundle_coverage(pool, &entries).await;
@@ -696,10 +708,7 @@ pub async fn update_canonical(
             coverage,
         };
 
-        bundles_by_slot
-            .entry(slot_id)
-            .or_default()
-            .push(bundle);
+        bundles_by_slot.entry(slot_id).or_default().push(bundle);
     }
 
     let mut canonical_uuids: Vec<String> = Vec::with_capacity(bundles_by_slot.len());
@@ -824,7 +833,8 @@ pub async fn set_canonical_override(
     let all_chapters = get_all_for_manga(pool, manga_id).await?;
 
     // Get the chapter that the user selected
-    let selected_chapter = all_chapters.iter()
+    let selected_chapter = all_chapters
+        .iter()
         .find(|ch| ch.id == new_uuid)
         .ok_or_else(|| sqlx::Error::RowNotFound)?;
 
@@ -838,13 +848,14 @@ pub async fn set_canonical_override(
 
     // Find all split parts from the SAME provider for this chapter base
     // If user picked part 15.1, automatically include 15.2, 15.3 etc from same provider
-    let mut bundle_chapters: Vec<&Chapter> = all_chapters.iter()
+    let mut bundle_chapters: Vec<&Chapter> = all_chapters
+        .iter()
         .filter(|ch| {
             ch.chapter_base == chapter_base
-            && ch.provider_name == selected_chapter.provider_name
-            && ch.chapter_variant >= 1
-            && ch.chapter_variant <= 4
-            && !ch.is_extra
+                && ch.provider_name == selected_chapter.provider_name
+                && ch.chapter_variant >= 1
+                && ch.chapter_variant <= 4
+                && !ch.is_extra
         })
         .collect();
 
@@ -853,7 +864,10 @@ pub async fn set_canonical_override(
 
     if bundle_chapters.len() > 1 {
         // This is a split bundle - add ALL parts
-        debug!("[db] set_canonical_override: detected split bundle with {} parts", bundle_chapters.len());
+        debug!(
+            "[db] set_canonical_override: detected split bundle with {} parts",
+            bundle_chapters.len()
+        );
         for part in bundle_chapters {
             new_uuids.push(part.id.to_string());
         }

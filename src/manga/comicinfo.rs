@@ -489,10 +489,16 @@ fn generate_common_metadata_xml(manga: &Manga, xml: &mut String) {
 }
 
 fn is_official_group(group: &str) -> bool {
-    group.trim_end_matches(['.', '!', '?']).eq_ignore_ascii_case("official")
+    group
+        .trim_end_matches(['.', '!', '?'])
+        .eq_ignore_ascii_case("official")
 }
 
-fn chapter_translator(manga: &Manga, chapter: &Chapter, provider_name: Option<&str>) -> Option<String> {
+fn chapter_translator(
+    manga: &Manga,
+    chapter: &Chapter,
+    provider_name: Option<&str>,
+) -> Option<String> {
     let provider = provider_name.filter(|s| !s.is_empty());
     let is_official = chapter
         .scanlator_group
