@@ -179,7 +179,7 @@ export async function viewSeries(id) {
               <input type="checkbox" id="monitored-cb" ${isMonitored ? 'checked' : ''} onchange="toggleMonitored('${m.id}', this.checked)"> 
               <iconify-icon icon="mdi:${isMonitored ? 'bookmark' : 'bookmark-outline'}" width="24" height="24"></iconify-icon>
             </label>
-            <button class="btn btn-sm btn-danger" onclick='showDeleteSeriesModal("${m.id}", ${JSON.stringify(meta.title ?? "Series")})'>
+            <button class="btn btn-sm btn-danger" data-manga-id="${m.id}" data-title="${escape(meta.title ?? 'Series')}" onclick="showDeleteSeriesModal(this.dataset.mangaId, this.dataset.title)">
               <iconify-icon icon="mdi:delete" width="18" height="18"></iconify-icon>
               Delete Series
             </button>
