@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use rocket::{State, delete, get, post, put, serde::json::Json};
+use rocket::{State, delete, get, patch, post, put, serde::json::Json};
 use rocket_okapi::openapi;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -10,6 +10,9 @@ use uuid::Uuid;
 
 use crate::{
     db,
+    db::suggestions::LibrarySuggestionList,
+    http::metadata::AniListMetadata,
+    library::suggestions as library_suggestions,
     manga::core::{Manga, MangaType},
 };
 
@@ -28,6 +31,11 @@ pub struct NewLibraryRequest {
 #[derive(Deserialize, JsonSchema)]
 pub struct UpdateLibraryRequest {
     pub root_path: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct SuggestionVisibilityRequest {
+    pub hidden: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -120,6 +128,68 @@ pub async fn list_library_manga(pool: &State<SqlitePool>, id: &str) -> ApiResult
         .map_err(internal)
 }
 
+/// Returns cached suggestions for a specific library.
+#[openapi(tag = "Libraries")]
+#[get("/api/libraries/<id>/suggestions")]
+pub async fn list_library_suggestions(
+    pool: &State<SqlitePool>,
+    id: &str,
+) -> ApiResult<LibrarySuggestionList> {
+    let uuid = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    db::library::get_by_id(pool.inner(), uuid)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("library not found"))?;
+    db::suggestions::get_for_library(pool.inner(), uuid)
+        .await
+        .map(Json)
+        .map_err(internal)
+}
+
+/// Enqueue a suggestions refresh for a specific library.
+#[openapi(tag = "Libraries")]
+#[post("/api/libraries/<id>/suggestions/refresh")]
+pub async fn refresh_library_suggestions(
+    pool: &State<SqlitePool>,
+    al: &State<AniListMetadata>,
+    id: &str,
+) -> ApiResult<LibrarySuggestionList> {
+    let uuid = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    db::library::get_by_id(pool.inner(), uuid)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("library not found"))?;
+    library_suggestions::refresh_library_suggestions(pool.inner(), al.inner(), uuid)
+        .await
+        .map_err(internal)?;
+    db::suggestions::get_for_library(pool.inner(), uuid)
+        .await
+        .map(Json)
+        .map_err(internal)
+}
+
+/// Hide or unhide a suggestion for a library.
+#[openapi(tag = "Libraries")]
+#[patch("/api/libraries/<id>/suggestions/<anilist_id>", data = "<body>")]
+pub async fn set_suggestion_visibility(
+    pool: &State<SqlitePool>,
+    id: &str,
+    anilist_id: u32,
+    body: Json<SuggestionVisibilityRequest>,
+) -> ApiResult<LibrarySuggestionList> {
+    let uuid = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    let updated = db::suggestions::set_hidden(pool.inner(), uuid, anilist_id, body.hidden)
+        .await
+        .map_err(internal)?;
+    if !updated {
+        return Err(not_found("suggestion not found"));
+    }
+    db::suggestions::get_for_library(pool.inner(), uuid)
+        .await
+        .map(Json)
+        .map_err(internal)
+}
+
 // ---------------------------------------------------------------------------
 // PUT /api/libraries/<id>
 // ---------------------------------------------------------------------------
@@ -176,5 +246,8 @@ pub fn routes() -> Vec<rocket::Route> {
         update_library,
         delete_library,
         list_library_manga,
+        list_library_suggestions,
+        refresh_library_suggestions,
+        set_suggestion_visibility,
     ]
 }

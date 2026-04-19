@@ -13,12 +13,6 @@ I'll remove this when I've got the first public release out, this is just a quic
 
 ### Backend
 
-- [ ] live-in-app log stream+history?
-    - save as file?
-    - keep in memory?
-    - last `n` events?
-    - ????
-
 ### Frontend
 
 - [ ] Update frontend to use daisyui components as much as possible https://daisyui.com/components/
@@ -43,6 +37,8 @@ I'll remove this when I've got the first public release out, this is just a quic
 ### Providers / Scraper
 
 - Use `setBlockedResourceTypes` to block useless requests (some images, CSS, fonts, media, whatever)
+    - This could work, but you'd have to have a list of stuff TO block, since blocking every 3rd party image would block pages
+    - Honestly best bet could be forcing it to use pihole/dns blocking
 - Add adblock to chromium?
     - Some investigation: We'd have to fork eoka to allow extra_args to add `--load-extension` to the args
 - Clownflare challenge polling loop parses the full html every 0.5s, we can clean this up a bit.
@@ -53,7 +49,6 @@ I'll remove this when I've got the first public release out, this is just a quic
     - Automatic updates and all that nice stuff
     - Add more providers
     - The separate repo should also have a nice CI Pipeline that runs tests for each provider, using text_fixtures, to find broken providers, and alert of new broken ones & a nice 'auto updating' list of what providers work
-- [ ] MangaKakalot 403's, both reqwest and browser
 
 ## Features
 
@@ -97,15 +92,6 @@ I'll remove this when I've got the first public release out, this is just a quic
             - password is just a key to hand out?
     - [ ] Scrobbling to mal/anilist???
 - [ ] Metrics (because i love grafana graphs)
-- [ ] Suggestion system
-    - Saves suggestions from anilist for each series in library
-    - Count occurances over the entire library
-    - Deduplicate against series already in library
-    - Show them all, in order of how often they show up.
-    - Maybe some fancy stuff later, use tags or whatever?
-    - We should show relations (prequels/sequels/whatever), sorta like sonarr/radarrs 'collections' feature
-    - AI slop suggestions?
-    - something else?
 - [ ] Tachiyomi/Mihon backup importer (Add libraries)
 - [ ] Various site list scrape + importer
 - [ ] Fallback mode? use single provider as grand source of metadata?

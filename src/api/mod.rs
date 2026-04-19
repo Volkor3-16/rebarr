@@ -87,6 +87,9 @@ pub fn openapi_routes() -> Vec<rocket::Route> {
             libraries::update_library,
             libraries::delete_library,
             libraries::list_library_manga,
+            libraries::list_library_suggestions,
+            libraries::refresh_library_suggestions,
+            libraries::set_suggestion_visibility,
             // Manga
             manga::search_manga,
             manga::add_manga,

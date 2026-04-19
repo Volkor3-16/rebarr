@@ -28,6 +28,8 @@ pub enum TaskType {
     OptimiseChapter,
     /// Backup database
     Backup,
+    /// Refresh cached library suggestions from AniList
+    RefreshSuggestions,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -106,6 +108,7 @@ pub fn task_type_str(t: &TaskType) -> &'static str {
         TaskType::ScanDisk => "ScanDisk",
         TaskType::OptimiseChapter => "OptimiseChapter",
         TaskType::Backup => "Backup",
+        TaskType::RefreshSuggestions => "RefreshSuggestions",
     }
 }
 
@@ -139,6 +142,7 @@ fn task_from_row(row: TaskRow) -> Result<Task, sqlx::Error> {
         "ScanDisk" => TaskType::ScanDisk,
         "OptimiseChapter" => TaskType::OptimiseChapter,
         "Backup" => TaskType::Backup,
+        "RefreshSuggestions" => TaskType::RefreshSuggestions,
         other => {
             return Err(sqlx::Error::Decode(
                 format!("unknown task_type: {other}").into(),
@@ -233,6 +237,7 @@ pub fn task_queue(task_type: &TaskType) -> &'static str {
         TaskType::ScanDisk => "system",
         TaskType::OptimiseChapter => "system",
         TaskType::Backup => "system",
+        TaskType::RefreshSuggestions => "system",
         // Download tasks - will be assigned to specific provider queues based on the chapter
         TaskType::DownloadChapter => "system", // Will be overridden when we know the provider
     }
@@ -263,6 +268,16 @@ pub async fn enqueue_with_queue(
     queue: Option<String>,
 ) -> Result<Uuid, sqlx::Error> {
     enqueue_with_payload(pool, task_type, manga_id, chapter_id, priority, queue, None).await
+}
+
+/// Insert a new Pending task scoped to a library.
+pub async fn enqueue_for_library(
+    pool: &SqlitePool,
+    task_type: TaskType,
+    library_id: Uuid,
+    priority: i64,
+) -> Result<Uuid, sqlx::Error> {
+    enqueue_library_with_payload(pool, task_type, library_id, priority, None, None).await
 }
 
 /// Claim the next task from a specific queue.
@@ -669,10 +684,71 @@ pub async fn is_pending_in_queue(
     Ok(count > 0)
 }
 
+pub async fn is_pending_for_library(
+    pool: &SqlitePool,
+    library_id: Uuid,
+    task_type: TaskType,
+) -> Result<bool, sqlx::Error> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM Task
+         WHERE library_id = ? AND task_type = ? AND status IN ('Pending', 'Running')",
+    )
+    .bind(library_id.to_string())
+    .bind(task_type_str(&task_type))
+    .fetch_one(pool)
+    .await?;
+    Ok(count > 0)
+}
+
 /// Insert a new Pending task with optional queue and payload.
 pub async fn enqueue_with_payload(
     pool: &SqlitePool,
     task_type: TaskType,
+    manga_id: Option<Uuid>,
+    chapter_id: Option<Uuid>,
+    priority: i64,
+    queue: Option<String>,
+    payload: Option<String>,
+) -> Result<Uuid, sqlx::Error> {
+    enqueue_full(
+        pool,
+        task_type,
+        None,
+        manga_id,
+        chapter_id,
+        priority,
+        queue,
+        payload,
+    )
+    .await
+}
+
+/// Insert a new Pending library task with optional queue and payload.
+pub async fn enqueue_library_with_payload(
+    pool: &SqlitePool,
+    task_type: TaskType,
+    library_id: Uuid,
+    priority: i64,
+    queue: Option<String>,
+    payload: Option<String>,
+) -> Result<Uuid, sqlx::Error> {
+    enqueue_full(
+        pool,
+        task_type,
+        Some(library_id),
+        None,
+        None,
+        priority,
+        queue,
+        payload,
+    )
+    .await
+}
+
+async fn enqueue_full(
+    pool: &SqlitePool,
+    task_type: TaskType,
+    library_id: Option<Uuid>,
     manga_id: Option<Uuid>,
     chapter_id: Option<Uuid>,
     priority: i64,
@@ -685,13 +761,14 @@ pub async fn enqueue_with_payload(
 
     sqlx::query(
         "INSERT INTO Task
-            (uuid, task_type, status, queue, manga_id, chapter_id, priority, payload,
+            (uuid, task_type, status, queue, library_id, manga_id, chapter_id, priority, payload,
              attempt, max_attempts, created_at, updated_at, run_after)
-         VALUES (?, ?, 'Pending', ?, ?, ?, ?, ?, 0, 3, ?, ?, ?)",
+         VALUES (?, ?, 'Pending', ?, ?, ?, ?, ?, ?, 0, 3, ?, ?, ?)",
     )
     .bind(id.to_string())
     .bind(task_type_str(&task_type))
     .bind(queue)
+    .bind(library_id.map(|v| v.to_string()))
     .bind(manga_id.map(|v| v.to_string()))
     .bind(chapter_id.map(|v| v.to_string()))
     .bind(priority)

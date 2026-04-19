@@ -234,6 +234,24 @@ pub async fn add_manga(
     .await
     .map_err(internal)?;
 
+    if !db::task::is_pending_for_library(
+        pool.inner(),
+        library_id,
+        crate::db::task::TaskType::RefreshSuggestions,
+    )
+    .await
+    .map_err(internal)?
+    {
+        db::task::enqueue_for_library(
+            pool.inner(),
+            crate::db::task::TaskType::RefreshSuggestions,
+            library_id,
+            6,
+        )
+        .await
+        .map_err(internal)?;
+    }
+
     Ok(Json(manga))
 }
 

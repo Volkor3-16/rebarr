@@ -45,6 +45,9 @@ export const libraries = {
   update: (uuid, data) => put(`/api/libraries/${uuid}`, data),
   delete: (uuid) => del(`/api/libraries/${uuid}`),
   manga: (uuid) => get(`/api/libraries/${uuid}/manga`),
+  suggestions: (uuid) => get(`/api/libraries/${uuid}/suggestions`),
+  refreshSuggestions: (uuid) => post(`/api/libraries/${uuid}/suggestions/refresh`, null),
+  setSuggestionHidden: (uuid, anilistId, hidden) => patch(`/api/libraries/${uuid}/suggestions/${anilistId}`, { hidden }),
 };
 
 // Manga API

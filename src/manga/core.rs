@@ -80,6 +80,121 @@ impl Synonym {
     }
 }
 
+/// Merge freshly fetched AniList synonyms with the stored synonym state.
+///
+/// Preserves:
+/// - manual synonyms added by the user
+/// - hidden/filter state on existing AniList synonyms
+///
+/// Also includes any newly-fetched AniList synonyms that were not present before.
+pub fn merge_synonyms(
+    existing: Option<Vec<Synonym>>,
+    fresh: Option<Vec<Synonym>>,
+) -> Option<Vec<Synonym>> {
+    let existing = existing.unwrap_or_default();
+    let fresh = fresh.unwrap_or_default();
+
+    if existing.is_empty() && fresh.is_empty() {
+        return None;
+    }
+
+    let mut merged = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    let mut existing_anilist: std::collections::HashMap<String, Synonym> =
+        std::collections::HashMap::new();
+    let mut manual_synonyms = Vec::new();
+
+    for syn in existing {
+        let key = syn.title.trim().to_lowercase();
+        if key.is_empty() {
+            continue;
+        }
+        match syn.source {
+            SynonymSource::Manual => manual_synonyms.push(syn),
+            SynonymSource::AniList => {
+                existing_anilist.insert(key, syn);
+            }
+        }
+    }
+
+    for syn in fresh {
+        let key = syn.title.trim().to_lowercase();
+        if key.is_empty() || !seen.insert(key.clone()) {
+            continue;
+        }
+        if let Some(existing_syn) = existing_anilist.remove(&key) {
+            merged.push(existing_syn);
+        } else {
+            merged.push(syn);
+        }
+    }
+
+    for syn in manual_synonyms {
+        let key = syn.title.trim().to_lowercase();
+        if key.is_empty() || !seen.insert(key) {
+            continue;
+        }
+        merged.push(syn);
+    }
+
+    for syn in existing_anilist.into_values() {
+        let key = syn.title.trim().to_lowercase();
+        if key.is_empty() || !seen.insert(key) {
+            continue;
+        }
+        merged.push(syn);
+    }
+
+    if merged.is_empty() { None } else { Some(merged) }
+}
+
+#[cfg(test)]
+mod synonym_merge_tests {
+    use super::*;
+
+    #[test]
+    fn merge_synonyms_preserves_manual_and_hidden_anilist_state() {
+        let existing = Some(vec![
+            Synonym {
+                title: "Spider Alt".to_owned(),
+                source: SynonymSource::AniList,
+                hidden: true,
+                filter_reason: Some("manual".to_owned()),
+            },
+            Synonym {
+                title: "My Custom Title".to_owned(),
+                source: SynonymSource::Manual,
+                hidden: false,
+                filter_reason: None,
+            },
+        ]);
+
+        let fresh = Some(vec![
+            Synonym::anilist("Spider Alt"),
+            Synonym::anilist("Brand New Alias"),
+        ]);
+
+        let merged = merge_synonyms(existing, fresh).expect("merged synonyms");
+        assert_eq!(merged.len(), 3);
+
+        let spider = merged
+            .iter()
+            .find(|s| s.title == "Spider Alt")
+            .expect("existing anilist synonym");
+        assert!(spider.hidden);
+        assert_eq!(spider.filter_reason.as_deref(), Some("manual"));
+
+        let manual = merged
+            .iter()
+            .find(|s| s.title == "My Custom Title")
+            .expect("manual synonym");
+        assert_eq!(manual.source, SynonymSource::Manual);
+
+        assert!(merged.iter().any(|s| s.title == "Brand New Alias"));
+    }
+}
+
 /// Contains all the scraped metadata about a Manga
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MangaMetadata {
@@ -339,7 +454,7 @@ fn extract_staff_name(staff: &anilist_moe::objects::staff::Staff) -> Option<Stri
 /// Strip HTML tags from AniList synopsis text.
 /// Converts `<br>` variants to newlines, removes all other tags,
 /// decodes common HTML entities, and collapses excessive blank lines.
-fn strip_html(s: &str) -> String {
+pub fn strip_html(s: &str) -> String {
     // Normalise <br> variants to newlines before stripping
     let mut work = s.to_owned();
     for br in &["<br />", "<br/>", "<br>", "<BR />", "<BR/>", "<BR>"] {

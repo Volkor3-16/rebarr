@@ -9,6 +9,7 @@ pub mod provider_failure;
 pub mod provider_settings;
 pub mod quality_rules;
 pub mod settings;
+pub mod suggestions;
 pub mod task;
 pub mod webhook;
 
