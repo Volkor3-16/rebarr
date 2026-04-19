@@ -2,6 +2,16 @@
 
 This a informal changelog so i can keep track of what im doing.
 
+## 2026-04-19 - 2026-04-20
+
+- Added Suggestions Page with working suggestions!
+- Fixed up the task API, so we don't request 18MB/s of json data.
+- Fixed some javascript escaping, so we can delete series with apostrophes in them.
+- Fixed many strange bugs where some chapters would be canonicalised even if their score sucked.
+- Fixed metadata rules to work...
+    - Two bugs stopped it from working at all before
+    - and it only ran on the frontend, instead of being useful for cleaning up some bad providers (comix)
+
 ## 2026-04-07 to 2026-04-12
 
 Now that I'm actually /using/ rebarr properly, and i've been sick at home doing nothing...

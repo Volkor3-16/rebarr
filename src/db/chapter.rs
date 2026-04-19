@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use crate::db::{manga as db_manga, provider_settings, quality_rules};
 use crate::manga::core::{Chapter, DownloadStatus};
+use crate::manga::metadata_rules::{self, MetadataRule};
 use crate::manga::scoring::compute_score;
 use crate::scraper::ProviderChapterInfo;
 
@@ -78,7 +79,19 @@ async fn classify_bundle(pool: &SqlitePool, bundle: &[Chapter]) -> BundleType {
             }
         }
     } else {
-        BundleType::Split
+        // Multiple entries with the SAME chapter_variant are competing releases from different
+        // groups (same provider, same chapter number). select_best_bundle should pick only the
+        // best-scored entry — treat as Full regardless of whether variant is 0 or a decimal.
+        // Multiple entries with DIFFERENT variants are genuine split parts (e.g. 3.1, 3.2, 3.3)
+        // where every part must be canonical.
+        let all_same_variant = bundle
+            .iter()
+            .all(|ch| ch.chapter_variant == bundle[0].chapter_variant);
+        if all_same_variant {
+            BundleType::Full
+        } else {
+            BundleType::Split
+        }
     }
 }
 
@@ -90,6 +103,26 @@ async fn compute_bundle_coverage(pool: &SqlitePool, bundle: &[Chapter]) -> usize
     }
 }
 
+/// Apply metadata rules to a chapter's mutable fields (title, scanlator_group) for scoring.
+/// Returns a cloned Chapter with rules applied — the DB copy is never mutated.
+fn apply_meta_rules(ch: &Chapter, meta_rules: &[MetadataRule]) -> Chapter {
+    Chapter {
+        title: metadata_rules::apply_rules(
+            meta_rules,
+            ch.provider_name.as_deref(),
+            "title",
+            ch.title.as_deref(),
+        ),
+        scanlator_group: metadata_rules::apply_rules(
+            meta_rules,
+            ch.provider_name.as_deref(),
+            "scanlator_group",
+            ch.scanlator_group.as_deref(),
+        ),
+        ..ch.clone()
+    }
+}
+
 // Select the best bundle according to the structured selection rules.
 // Returns all chapters that should be canonical for this slot:
 // - Split bundles → all entries (every part is canonical)
@@ -98,6 +131,7 @@ async fn select_best_bundle(
     bundles: &[ProviderBundle],
     _all_chapters: &[Chapter],
     quality_rules: &[quality_rules::QualityRule],
+    meta_rules: &[MetadataRule],
 ) -> Vec<Chapter> {
     if bundles.is_empty() {
         return vec![];
@@ -112,7 +146,7 @@ async fn select_best_bundle(
         let bundle_score = bundle
             .entries
             .iter()
-            .map(|e| compute_score(e, quality_rules))
+            .map(|e| compute_score(&apply_meta_rules(e, meta_rules), quality_rules))
             .max()
             .unwrap_or(i32::MIN);
 
@@ -147,14 +181,34 @@ async fn select_best_bundle(
     // For split bundles, all parts are canonical. For full/extra, pick the best-scored entry.
     if let Some(selected_bundle) = best_bundles.first() {
         if selected_bundle.bundle_type == BundleType::Split {
-            return selected_bundle.entries.clone();
+            // Split bundles include all parts, but a provider may have multiple competing
+            // releases of the same part (e.g. two groups releasing 3.5 alongside 3.1–3.3).
+            // Deduplicate by (chapter_base, chapter_variant), keeping the best-scored entry.
+            let mut best_by_part: std::collections::HashMap<(i32, i32), (i32, Chapter)> =
+                std::collections::HashMap::new();
+            for entry in &selected_bundle.entries {
+                let key = (entry.chapter_base, entry.chapter_variant);
+                let score = compute_score(&apply_meta_rules(entry, meta_rules), quality_rules);
+                best_by_part
+                    .entry(key)
+                    .and_modify(|(best_score, best_ch)| {
+                        if score > *best_score {
+                            *best_score = score;
+                            *best_ch = entry.clone();
+                        }
+                    })
+                    .or_insert((score, entry.clone()));
+            }
+            let mut parts: Vec<Chapter> = best_by_part.into_values().map(|(_, ch)| ch).collect();
+            parts.sort_by_key(|ch| (ch.chapter_base, ch.chapter_variant));
+            return parts;
         }
 
         // Full or Extra: return the single best-scored entry.
         let best_entry = selected_bundle
             .entries
             .iter()
-            .max_by_key(|e| compute_score(e, quality_rules))
+            .max_by_key(|e| compute_score(&apply_meta_rules(e, meta_rules), quality_rules))
             .unwrap(); // entries is non-empty by construction
         return vec![best_entry.clone()];
     }
@@ -601,6 +655,27 @@ pub async fn update_canonical(
         })
         .collect();
 
+    // Filter to preferred language so non-matching chapters can't win canonical selection
+    // and then be silently hidden in the API. Falls back to all languages when no chapters
+    // match (e.g. a manga that only exists in Japanese).
+    let preferred_language = crate::db::settings::get(pool, "preferred_language", "").await?;
+    let all: Vec<Chapter> = if preferred_language.is_empty() {
+        all
+    } else {
+        let lang_filtered: Vec<Chapter> = all
+            .iter()
+            .filter(|ch| {
+                ch.language.eq_ignore_ascii_case(&preferred_language) || ch.language.is_empty()
+            })
+            .cloned()
+            .collect();
+        if lang_filtered.is_empty() {
+            all // fallback: no chapters at all match preferred language
+        } else {
+            lang_filtered
+        }
+    };
+
     // Auto-classify extras per (provider_name, chapter_base):
     // If a provider releases Ch.1.1–1.7 those are all split parts, even the .5+.
     // Only flag variant>=5 as extra when a provider has NO low-numbered split parts (1–4).
@@ -669,6 +744,9 @@ pub async fn update_canonical(
     // Load quality rules for scoring.
     let quality_rules = quality_rules::get_all(pool).await?;
 
+    // Load metadata rules so scoring sees cleaned-up field values (cleared/replaced titles etc.).
+    let meta_rules = metadata_rules::load(pool).await?;
+
     // Load user-set overrides before re-scoring.
     let overrides = load_canonical_overrides(pool, manga_id).await?;
     let _disable_chapter_upgrades =
@@ -697,10 +775,17 @@ pub async fn update_canonical(
     // Classify bundles and collect all bundles by slot_id
     let mut bundles_by_slot: std::collections::HashMap<OrderedFloat<f64>, Vec<ProviderBundle>> =
         std::collections::HashMap::new();
-    for ((slot_id, _provider_name, _is_full), entries) in bundles {
+    for ((slot_id, provider_name, _is_full), entries) in bundles {
         let bundle_type = classify_bundle(pool, &entries).await;
         let coverage = compute_bundle_coverage(pool, &entries).await;
         let _is_split_chapter = detect_split_chapters(entries[0].chapter_base, &all).await;
+
+        debug!(
+            "[canonical] slot={slot_id:.1} provider={:?} type={:?} coverage={coverage} entries=[{}]",
+            provider_name,
+            bundle_type,
+            entries.iter().map(|e| format!("{}.{} score={}", e.chapter_base, e.chapter_variant, compute_score(&apply_meta_rules(e, &meta_rules), &quality_rules))).collect::<Vec<_>>().join(","),
+        );
 
         let bundle = ProviderBundle {
             entries,
@@ -713,10 +798,17 @@ pub async fn update_canonical(
 
     let mut canonical_uuids: Vec<String> = Vec::with_capacity(bundles_by_slot.len());
 
-    for (_slot_id, bundles) in bundles_by_slot {
+    for (slot_id, bundles) in &bundles_by_slot {
         // Apply deterministic selection priority; splits return all parts.
-        let winners = select_best_bundle(&bundles, &all, &quality_rules).await;
-        for winner in winners {
+        let winners = select_best_bundle(bundles, &all, &quality_rules, &meta_rules).await;
+        for winner in &winners {
+            debug!(
+                "[canonical] slot={slot_id:.1} → winner {}.{} score={} provider={:?} group={:?}",
+                winner.chapter_base, winner.chapter_variant,
+                compute_score(&apply_meta_rules(winner, &meta_rules), &quality_rules),
+                winner.provider_name,
+                winner.scanlator_group,
+            );
             canonical_uuids.push(winner.id.to_string());
         }
     }
@@ -1055,6 +1147,7 @@ pub async fn find_upgrade_candidates(
         .collect();
 
     let rules = quality_rules::get_all(pool).await?;
+    let meta_rules = metadata_rules::load(pool).await?;
 
     // Group by (chapter_base, chapter_variant)
     let mut groups: std::collections::HashMap<(i32, i32), Vec<Chapter>> =
@@ -1078,7 +1171,7 @@ pub async fn find_upgrade_candidates(
             None => continue,
         };
 
-        let canon_score = compute_score(canonical, &rules);
+        let canon_score = compute_score(&apply_meta_rules(canonical, &meta_rules), &rules);
 
         // Find Downloaded entries that have a lower score than the canonical.
         for entry in &entries {
@@ -1088,7 +1181,7 @@ pub async fn find_upgrade_candidates(
             if entry.download_status != DownloadStatus::Downloaded {
                 continue;
             }
-            let entry_score = compute_score(entry, &rules);
+            let entry_score = compute_score(&apply_meta_rules(entry, &meta_rules), &rules);
             if canon_score > entry_score {
                 candidates.push(UpgradeCandidate {
                     chapter_base: base,

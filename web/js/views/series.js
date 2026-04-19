@@ -416,8 +416,8 @@ export async function viewSeries(id) {
   }
 }
 
-function makeSlotKey(base, variant, isExtra) {
-  return `${base}:${variant}:${isExtra ? 'extra' : 'normal'}`;
+function makeSlotKey(base, variant) {
+  return `${base}:${variant}`;
 }
 
 function slotDomId(slotKey) {
@@ -438,13 +438,12 @@ function compareRows(a, b) {
 function buildChapterSlots(chapters) {
   const slotMap = new Map();
   for (const ch of chapters) {
-    const key = makeSlotKey(ch.chapter_base, ch.chapter_variant, !!ch.is_extra);
+    const key = makeSlotKey(ch.chapter_base, ch.chapter_variant);
     if (!slotMap.has(key)) {
       slotMap.set(key, {
         key,
         chapter_base: ch.chapter_base,
         chapter_variant: ch.chapter_variant,
-        is_extra: !!ch.is_extra,
         rows: [],
       });
     }
@@ -453,10 +452,14 @@ function buildChapterSlots(chapters) {
 
   return [...slotMap.values()].map(slot => {
     const rows = [...slot.rows].sort(compareRows);
+    const canonicalRow = rows.find(row => row.is_canonical) || null;
+    // is_extra follows the canonical winner; fall back to the first row if no canonical yet.
+    const is_extra = !!(canonicalRow ?? rows[0])?.is_extra;
     return {
       ...slot,
+      is_extra,
       rows,
-      canonicalRow: rows.find(row => row.is_canonical) || null,
+      canonicalRow,
     };
   });
 }
@@ -653,12 +656,12 @@ function renderChapterOverview() {
   for (const group of visibleChapterGroupsCache) {
     visibleKeys.add(group.mainSlot.key);
     for (const row of group.subRows) {
-      visibleKeys.add(makeSlotKey(row.chapter_base, row.chapter_variant, !!row.is_extra));
+      visibleKeys.add(makeSlotKey(row.chapter_base, row.chapter_variant));
     }
   }
   const visibleCount = visibleChapterGroupsCache.length;
   const dots = canonical.map(ch => {
-    const slotKey = makeSlotKey(ch.chapter_base, ch.chapter_variant, !!ch.is_extra);
+    const slotKey = makeSlotKey(ch.chapter_base, ch.chapter_variant);
     const chNum = ch.chapter_variant === 0 ? `Chapter ${ch.chapter_base}` : `Chapter ${ch.chapter_base}.${ch.chapter_variant}`;
     const titlePart = ch.title ? ` — ${ch.title}` : '';
     const tip = `${chNum}${titlePart} (${ch.download_status})`;
@@ -1091,9 +1094,9 @@ function patchCachedChapter(base, variant, fields) {
   if (idx === -1) return;
 
   const current = chapterDataCache[idx];
-  const oldKey = makeSlotKey(current.chapter_base, current.chapter_variant, !!current.is_extra);
+  const oldKey = makeSlotKey(current.chapter_base, current.chapter_variant);
   const next = { ...current, ...fields };
-  const newKey = makeSlotKey(next.chapter_base, next.chapter_variant, !!next.is_extra);
+  const newKey = makeSlotKey(next.chapter_base, next.chapter_variant);
   chapterDataCache[idx] = next;
 
   if (oldKey !== newKey) {

@@ -198,14 +198,20 @@ async fn build_chapter_list(pool: &SqlitePool, manga_id: Uuid) -> ApiResult<Vec<
                 let slot_key = (ch.chapter_base, ch.chapter_variant);
                 if let Some((merged_title, merged_released)) = slot_meta.get(&slot_key) {
                     (
-                        merged_title.clone().or_else(|| ch.title.clone()),
+                        merged_title.clone(),
                         merged_released.or_else(|| ch.released_at.map(|dt| dt.timestamp())),
                     )
                 } else {
                     (ch.title.clone(), ch.released_at.map(|dt| dt.timestamp()))
                 }
             } else {
-                (ch.title.clone(), ch.released_at.map(|dt| dt.timestamp()))
+                let filtered_title = metadata_rules::apply_rules(
+                    &meta_rules,
+                    ch.provider_name.as_deref(),
+                    "title",
+                    ch.title.as_deref(),
+                );
+                (filtered_title, ch.released_at.map(|dt| dt.timestamp()))
             };
 
             let display_scanlator_group = metadata_rules::apply_rules(
