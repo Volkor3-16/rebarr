@@ -75,6 +75,8 @@ pub struct MangaProviderResponse {
     pub found: bool,
     pub last_synced_at: Option<i64>,
     pub search_attempted_at: Option<i64>,
+    /// The title of the matched series on this provider, if known.
+    pub matched_title: Option<String>,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -90,6 +92,8 @@ pub struct ProviderCandidate {
 pub(crate) struct SetProviderUrlRequest {
     /// Pass `null` to clear the mapping for this provider.
     url: Option<String>,
+    /// The matched series title on the provider (optional).
+    title: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -569,6 +573,7 @@ pub async fn list_manga_providers(
         .into_iter()
         .map(|e| MangaProviderResponse {
             found: e.found(),
+            matched_title: e.provider_data.get("title").cloned(),
             provider_name: e.provider_name,
             provider_url: e.provider_url,
             last_synced_at: e.last_synced_at,
@@ -901,6 +906,19 @@ pub async fn set_provider_url(
         .map_err(internal)?
         .ok_or_else(|| not_found("manga not found"))?;
 
+    let mut provider_data = db::provider::get_for_manga_provider(pool.inner(), manga_id, name)
+        .await
+        .map_err(internal)?
+        .map(|entry| entry.provider_data)
+        .unwrap_or_default();
+
+    if let Some(title) = body.title.clone() {
+        provider_data.insert("title".to_owned(), title);
+    } else if body.url.is_none() {
+        // Clearing the URL — also clear the stored title
+        provider_data.remove("title");
+    }
+
     db::provider::upsert(
         pool.inner(),
         &MangaProvider {
@@ -908,11 +926,7 @@ pub async fn set_provider_url(
             enabled: true,
             provider_name: name.to_owned(),
             provider_url: body.url.clone(),
-            provider_data: db::provider::get_for_manga_provider(pool.inner(), manga_id, name)
-                .await
-                .map_err(internal)?
-                .map(|entry| entry.provider_data)
-                .unwrap_or_default(),
+            provider_data,
             last_synced_at: None,
             search_attempted_at: Some(Utc::now().timestamp()),
         },

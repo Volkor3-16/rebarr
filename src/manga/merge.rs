@@ -200,6 +200,8 @@ pub async fn search_providers(
                     provider.name(),
                     score
                 );
+                let mut provider_data = result.variables.clone();
+                provider_data.insert("title".to_owned(), result.title.clone());
                 db_provider::upsert(
                     pool,
                     &MangaProvider {
@@ -207,7 +209,7 @@ pub async fn search_providers(
                         enabled: true,
                         provider_name: provider.name().to_owned(),
                         provider_url: Some(result.url.clone()),
-                        provider_data: result.variables.clone(),
+                        provider_data,
                         last_synced_at: None,
                         search_attempted_at: Some(Utc::now().timestamp()),
                     },

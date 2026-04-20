@@ -1192,7 +1192,6 @@ export async function loadProviders(mangaId) {
 
     const rows = provList.map((p, i) => {
       const statusClass = p.found ? 'found' : 'not-found';
-      const statusText = p.found ? 'Found' : 'Not found';
       const searched = p.search_attempted_at ? relTime(p.search_attempted_at) : 'never';
       const synced = p.last_synced_at ? relTime(p.last_synced_at) : 'Never';
 
@@ -1200,9 +1199,14 @@ export async function loadProviders(mangaId) {
       const isEnabled = settingsData?.effective_enabled ?? true;
       const hasOverride = settingsData?.enabled != null;
 
-      const linkBtn = p.provider_url
-        ? `<button onclick="window.open('${escape(p.provider_url)}', '_blank')">Open</button>`
-        : '';
+      let matchCell;
+      if (p.found && p.matched_title) {
+        matchCell = `<a href="${escape(p.provider_url)}" target="_blank" rel="noopener">${escape(p.matched_title)}</a>`;
+      } else if (p.found) {
+        matchCell = `<a href="${escape(p.provider_url)}" target="_blank" rel="noopener">Open</a>`;
+      } else {
+        matchCell = `<span class="not-found-text">Not found</span>`;
+      }
 
       const overrideLabel = hasOverride ? '' : ' <small style="opacity:0.6">(global)</small>';
       const enableToggle = `<label title="${isEnabled ? 'Enabled — click to disable for this series' : 'Disabled — click to enable for this series'}">
@@ -1214,26 +1218,25 @@ export async function loadProviders(mangaId) {
         ? `<button class="btn btn-xs btn-ghost" onclick="resetProviderEnabled('${mangaId}', '${escape(p.provider_name)}')" title="Reset to global setting">Reset</button>`
         : '';
 
-      const pickBtn = `<button class="btn btn-xs btn-ghost" onclick="pickProvider('${mangaId}', '${escape(p.provider_name)}')" title="Search this provider and pick the correct match">Pick</button>`;
+      const linkBtn = `<button class="btn btn-xs btn-ghost" onclick="pickProvider('${mangaId}', '${escape(p.provider_name)}')" title="Search this provider and link to the correct series">Link</button>`;
 
       return `<tr>
         <td><span class="provider-bubble">
           <span class="status-dot ${statusClass}"></span>
           ${escape(p.provider_name)}
-          <span class="actions">${linkBtn}</span>
         </span></td>
-        <td>${statusText}</td>
+        <td>${matchCell}</td>
         <td><small>${synced}</small></td>
         <td><small>searched: ${searched}</small></td>
         <td>${enableToggle}${resetBtn}</td>
-        <td>${pickBtn}</td>
+        <td>${linkBtn}</td>
       </tr>`;
     }).join('');
 
     el.innerHTML = `<div class="chapters-table">
       <table>
         <thead>
-          <tr><th>Provider</th><th>Status</th><th>Last Synced</th><th>Searched</th><th>Enabled</th><th></th></tr>
+          <tr><th>Provider</th><th>Match</th><th>Last Synced</th><th>Searched</th><th>Enabled</th><th></th></tr>
         </thead>
         <tbody>${rows}</tbody>
       </table>
@@ -1275,7 +1278,7 @@ window.pickProvider = async function(mangaId, providerName) {
   modal.className = 'modal-overlay';
   modal.innerHTML = `
     <div class="modal-box">
-      <h3 class="modal-title">Pick match for <strong>${escape(providerName)}</strong></h3>
+      <h3 class="modal-title">Link to <strong>${escape(providerName)}</strong></h3>
       <div id="pick-modal-results"><p class="modal-loading">Searching…</p></div>
       <div class="modal-custom-url">
         <label>Custom URL</label>
@@ -1318,7 +1321,7 @@ window.pickProvider = async function(mangaId, providerName) {
           <span class="pick-result-url">${escape(c.url)}</span>
         </div>
         <span class="pick-score ${scoreClass}">${pct}%</span>
-        <button class="btn btn-xs btn-primary" onclick="pickProviderSelect('${escape(mangaId)}', '${escape(providerName)}', '${escape(c.url)}')">Select</button>
+        <button class="btn btn-xs btn-primary" onclick="pickProviderSelect('${escape(mangaId)}', '${escape(providerName)}', '${escape(c.url)}', '${escape(c.title)}')">Select</button>
       </div>`;
     }).join('');
 
@@ -1329,9 +1332,9 @@ window.pickProvider = async function(mangaId, providerName) {
   }
 };
 
-window.pickProviderSelect = async function(mangaId, providerName, url) {
+window.pickProviderSelect = async function(mangaId, providerName, url, title) {
   try {
-    await mangaApi.setProviderUrl(mangaId, providerName, url);
+    await mangaApi.setProviderUrl(mangaId, providerName, url, title || null);
     document.getElementById('pick-provider-modal')?.remove();
     showToast(`${providerName} → matched`);
     loadProviders(mangaId);
