@@ -579,6 +579,44 @@ pub async fn clear_download_artifacts(
     Ok(())
 }
 
+/// Return the expected CBZ filenames (lowercased) for all Downloaded chapters of a manga.
+/// Used to identify orphaned CBZ files on disk.
+pub async fn get_downloaded_cbz_names(
+    pool: &SqlitePool,
+    manga_id: Uuid,
+) -> Result<std::collections::HashSet<String>, sqlx::Error> {
+    let manga_id_str = manga_id.to_string();
+    let rows: Vec<(i32, i32, Option<String>)> = sqlx::query_as(
+        "SELECT chapter_base, chapter_variant, title FROM Chapters WHERE manga_id = ? AND download_status = 'Downloaded'",
+    )
+    .bind(&manga_id_str)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(chapter_base, chapter_variant, title)| {
+            let number_sort = chapter_base as f32 + chapter_variant as f32 * 0.1;
+            let mut name = format!("Chapter {number_sort}");
+            if let Some(t) = title.as_deref().filter(|s| !s.is_empty()) {
+                name.push_str(&format!(" - {t}"));
+            }
+            // Apply the same sanitization as manga::files::sanitize_chapter_filename
+            let sanitized: String = name
+                .chars()
+                .map(|c| {
+                    if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                        '_'
+                    } else {
+                        c
+                    }
+                })
+                .collect();
+            format!("{sanitized}.cbz").to_lowercase()
+        })
+        .collect())
+}
+
 /// Return the UUIDs and provider names of all chapters for a manga that are currently Downloaded.
 pub async fn get_downloaded(
     pool: &SqlitePool,

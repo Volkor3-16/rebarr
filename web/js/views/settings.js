@@ -1,6 +1,6 @@
 // Settings view
 
-import { providers, settings, providerSettings, webhooks, qualityRules as qualityRulesApi, metadataRules as metadataRulesApi } from '../api.js';
+import { providers, settings, providerSettings, webhooks, qualityRules as qualityRulesApi, metadataRules as metadataRulesApi, system } from '../api.js';
 import { render } from '../router.js';
 import { escape, skeleton, showToast } from '../utils.js';
 import { showWizard } from './wizard.js';
@@ -182,6 +182,21 @@ export async function viewSettings() {
           <h3>Libraries</h3>
         </div>
         <p class="settings-card-desc">Manage libraries (add, edit paths, delete) on the <a href="/library" data-path="/library">Libraries page</a>.</p>
+      </div>
+
+      <div class="settings-card" style="border-color:var(--error,#e53e3e)">
+        <div class="settings-card-header">
+          <iconify-icon icon="mdi:alert-outline" width="20" height="20" style="color:var(--error,#e53e3e)"></iconify-icon>
+          <h3 style="color:var(--error,#e53e3e)">Danger Zone</h3>
+        </div>
+        <p class="settings-card-desc">
+          <strong>Purge Orphan CBZs</strong> — Scans every series folder and permanently deletes
+          <code>.cbz</code> files that do not match any Downloaded chapter in the database.
+          This includes files left over from old naming formats and metadata-rule changes.
+          <strong>Deletion is immediate and cannot be undone.</strong>
+        </p>
+        <button class="btn btn-sm btn-error" onclick="purgeOrphanCbz()">Purge Orphan CBZs</button>
+        <div id="purge-orphan-status"></div>
       </div>
     `);
 
@@ -774,5 +789,21 @@ window.deleteMetadataRule = async function(id) {
     loadMetadataRules();
   } catch(e) {
     showToast('Error: ' + e.message, 'error');
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Danger Zone
+// ---------------------------------------------------------------------------
+
+window.purgeOrphanCbz = async function() {
+  const statusEl = document.getElementById('purge-orphan-status');
+  if (!confirm('This will permanently delete all orphaned CBZ files across every series folder.\nThere is no undo.\n\nProceed?')) return;
+  if (statusEl) statusEl.innerHTML = '<small style="color:var(--text-muted)">Scanning…</small>';
+  try {
+    const result = await system.purgeOrphanCbz();
+    if (statusEl) statusEl.innerHTML = `<small style="color:var(--success)">${result?.deleted ?? 0} orphaned file(s) deleted.</small>`;
+  } catch(e) {
+    if (statusEl) statusEl.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
   }
 };

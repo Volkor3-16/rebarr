@@ -315,3 +315,74 @@ pub async fn scan_existing_chapters(
 
     Ok(())
 }
+
+/// Scan every series folder across all libraries and delete CBZ files that do not
+/// match any Downloaded chapter in the database.
+///
+/// A CBZ is considered orphaned if its filename does not match the expected filename
+/// (`Chapter {number_sort}[ - {title}].cbz`) of any chapter currently marked Downloaded
+/// for that manga. Comparison is case-insensitive.
+pub async fn purge_orphan_cbz(pool: &SqlitePool) -> Result<u32, String> {
+    let libraries = db_library::get_all(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut total_deleted: u32 = 0;
+
+    for library in &libraries {
+        let manga_list = db_manga::get_all_for_library(pool, library.uuid)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        for manga in &manga_list {
+            let series_dir = library.root_path.join(&manga.relative_path);
+
+            let entries = match std::fs::read_dir(&series_dir) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+
+            let expected = db_chapter::get_downloaded_cbz_names(pool, manga.id)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            let mut deleted_for_manga: u32 = 0;
+            for entry in entries.flatten() {
+                let fname = entry.file_name();
+                let name_lower = fname.to_string_lossy().to_ascii_lowercase();
+                if !name_lower.ends_with(".cbz") {
+                    continue;
+                }
+                if expected.contains(&name_lower) {
+                    continue;
+                }
+                let path = entry.path();
+                match std::fs::remove_file(&path) {
+                    Ok(()) => {
+                        info!(
+                            "[scanner] Purge orphan: deleted {}",
+                            path.display()
+                        );
+                        deleted_for_manga += 1;
+                        total_deleted += 1;
+                    }
+                    Err(e) => {
+                        warn!(
+                            "[scanner] Purge orphan: failed to delete {}: {e}",
+                            path.display()
+                        );
+                    }
+                }
+            }
+
+            if deleted_for_manga > 0 {
+                info!(
+                    "[scanner] Purge orphan: deleted {deleted_for_manga} orphan(s) from '{}'",
+                    manga.metadata.title
+                );
+            }
+        }
+    }
+
+    Ok(total_deleted)
+}

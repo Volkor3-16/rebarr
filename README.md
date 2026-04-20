@@ -1,6 +1,6 @@
 # Rebarr
 
-WARNING: This is a massively WIP project. Shit will break, the UX will change massively, blah blah no warranties and such.
+WARNING: This is a massively WIP project. Shit will break, the UX will change massively, blah blah no warranties and such. :(
 
 Rebarr is a sonarr-like manager and scraper for manga and comics*.
 
@@ -13,12 +13,11 @@ I'll remove this when I've got the first public release out, this is just a quic
 
 ### Backend
 
-- Add a Cancel All tasks button, I don't like needing to click select all and then cancel, watching it do one by one.
+- Providers should be library specifc -> tag for western, manga,manwha and shit
+    - same with metadata client
 
 ### Frontend
 
-- [ ] Update frontend to use daisyui components as much as possible https://daisyui.com/components/
-    - The site looks nice as it is, and the import is half broken, this'd be a lot of work... polishing up a poop.
 - [ ] Let users re-order the queue
 - [ ] Setup Wizard: Adding 49 series to library… should have some logging or progress.
 

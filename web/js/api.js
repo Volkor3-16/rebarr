@@ -121,6 +121,7 @@ export const system = {
   desktop: () => get('/api/system/desktop'),
   version: () => get('/api/version'),
   changelog: () => fetch('/api/changelog').then(r => r.text()),
+  purgeOrphanCbz: () => post('/api/system/purge-orphan-cbz', null),
 };
 
 // Import API

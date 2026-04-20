@@ -1,4 +1,4 @@
-use rocket::{State, get, serde::json::Json};
+use rocket::{State, get, post, serde::json::Json};
 use rocket_okapi::openapi;
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use super::errors::{ApiResult, internal};
 use crate::db::settings as db_settings;
+use crate::library::scanner;
 
 #[derive(Serialize, JsonSchema)]
 pub struct VersionInfo {
@@ -230,9 +231,29 @@ pub fn changelog() -> &'static str {
 }
 
 // ---------------------------------------------------------------------------
+// POST /api/system/purge-orphan-cbz
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, JsonSchema)]
+pub struct PurgeOrphanResult {
+    /// Number of orphaned CBZ files deleted.
+    pub deleted: u32,
+}
+
+/// Scan every series folder and delete CBZ files with no matching Downloaded chapter.
+#[openapi(tag = "System")]
+#[post("/api/system/purge-orphan-cbz")]
+pub async fn purge_orphan_cbz_api(pool: &State<SqlitePool>) -> ApiResult<PurgeOrphanResult> {
+    let deleted = scanner::purge_orphan_cbz(pool.inner())
+        .await
+        .map_err(internal)?;
+    Ok(Json(PurgeOrphanResult { deleted }))
+}
+
+// ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
 
 pub fn routes() -> Vec<rocket::Route> {
-    rocket::routes![system_info, desktop_health, version_info, changelog]
+    rocket::routes![system_info, desktop_health, version_info, changelog, purge_orphan_cbz_api]
 }
