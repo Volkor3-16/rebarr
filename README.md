@@ -37,6 +37,8 @@ I'll remove this when I've got the first public release out, this is just a quic
 
 ### Providers / Scraper
 
+- [ ] Mangadex: Error: scraper error: Parse error: from_json: variable 'chapters_processed' not found
+- [ ] AllManga: Broken again? Page downloads aint work?
 - Use `setBlockedResourceTypes` to block useless requests (some images, CSS, fonts, media, whatever)
     - This could work, but you'd have to have a list of stuff TO block, since blocking every 3rd party image would block pages
     - Honestly best bet could be forcing it to use pihole/dns blocking

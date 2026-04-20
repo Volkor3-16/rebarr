@@ -1203,7 +1203,8 @@ export async function loadProviders(mangaId) {
       if (p.found && p.matched_title) {
         matchCell = `<a href="${escape(p.provider_url)}" target="_blank" rel="noopener">${escape(p.matched_title)}</a>`;
       } else if (p.found) {
-        matchCell = `<a href="${escape(p.provider_url)}" target="_blank" rel="noopener">Open</a>`;
+        // Matched but title not yet stored — show the URL as the link text
+        matchCell = `<a class="provider-url-text" href="${escape(p.provider_url)}" target="_blank" rel="noopener" title="${escape(p.provider_url)}">${escape(p.provider_url)}</a>`;
       } else {
         matchCell = `<span class="not-found-text">Not found</span>`;
       }
@@ -1218,7 +1219,9 @@ export async function loadProviders(mangaId) {
         ? `<button class="btn btn-xs btn-ghost" onclick="resetProviderEnabled('${mangaId}', '${escape(p.provider_name)}')" title="Reset to global setting">Reset</button>`
         : '';
 
-      const linkBtn = `<button class="btn btn-xs btn-ghost" onclick="pickProvider('${mangaId}', '${escape(p.provider_name)}')" title="Search this provider and link to the correct series">Link</button>`;
+      const linkBtn = p.found
+        ? `<button class="btn btn-xs btn-ghost" onclick="pickProvider('${mangaId}', '${escape(p.provider_name)}')" title="Search again and change the matched series">Rematch</button>`
+        : `<button class="btn btn-xs btn-ghost" onclick="pickProvider('${mangaId}', '${escape(p.provider_name)}')" title="Search this provider and pick the matching series">Find match</button>`;
 
       return `<tr>
         <td><span class="provider-bubble">
@@ -1278,7 +1281,7 @@ window.pickProvider = async function(mangaId, providerName) {
   modal.className = 'modal-overlay';
   modal.innerHTML = `
     <div class="modal-box">
-      <h3 class="modal-title">Link to <strong>${escape(providerName)}</strong></h3>
+      <h3 class="modal-title">Match series on <strong>${escape(providerName)}</strong></h3>
       <div id="pick-modal-results"><p class="modal-loading">Searching…</p></div>
       <div class="modal-custom-url">
         <label>Custom URL</label>
