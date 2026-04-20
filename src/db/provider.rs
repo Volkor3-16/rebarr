@@ -197,3 +197,43 @@ pub async fn has_url(
     .await?;
     Ok(count > 0)
 }
+
+/// Sets `provider_data["title"]` for an existing matched provider row, without
+/// touching the URL or any other field. Used to backfill titles for old entries.
+pub async fn update_title_in_provider_data(
+    pool: &SqlitePool,
+    manga_id: Uuid,
+    provider_name: &str,
+    title: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE MangaProvider
+         SET provider_data = json_set(COALESCE(provider_data, '{}'), '$.title', ?)
+         WHERE manga_id = ? AND provider_name = ? AND provider_url IS NOT NULL",
+    )
+    .bind(title)
+    .bind(manga_id.to_string())
+    .bind(provider_name)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Returns true only if the provider has both a URL and a stored title in provider_data.
+/// Used to skip re-searching providers that are fully resolved.
+pub async fn has_url_with_title(
+    pool: &SqlitePool,
+    manga_id: Uuid,
+    provider_name: &str,
+) -> Result<bool, sqlx::Error> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM MangaProvider
+         WHERE manga_id = ? AND provider_name = ? AND provider_url IS NOT NULL
+           AND json_extract(provider_data, '$.title') IS NOT NULL",
+    )
+    .bind(manga_id.to_string())
+    .bind(provider_name)
+    .fetch_one(pool)
+    .await?;
+    Ok(count > 0)
+}

@@ -95,6 +95,7 @@ pub async fn search_providers(
     let globally_disabled = db_prov_settings::get_globally_disabled(pool).await?;
 
     let mut providers_to_search = Vec::new();
+    let mut providers_to_backfill_title = Vec::new();
     for provider in registry.all() {
         if globally_disabled.iter().any(|d| d == provider.name()) {
             debug!(
@@ -103,17 +104,23 @@ pub async fn search_providers(
             );
             continue;
         }
-        if db_provider::has_url(pool, manga.id, provider.name()).await? {
+        if db_provider::has_url_with_title(pool, manga.id, provider.name()).await? {
             debug!(
-                "[scan] {} already has a URL for '{}', skipping search.",
+                "[scan] {} already has a URL and title for '{}', skipping search.",
                 provider.name(),
                 manga.metadata.title
             );
             continue;
         }
-        providers_to_search.push((*provider).clone());
+        if db_provider::has_url(pool, manga.id, provider.name()).await? {
+            // Has a URL but no stored title — backfill only the title, never touch the URL.
+            providers_to_backfill_title.push((*provider).clone());
+        } else {
+            providers_to_search.push((*provider).clone());
+        }
     }
 
+    // ── Phase 1: full search for providers with no URL yet ──────────────────
     let total_search_providers = providers_to_search.len() as i64;
     if total_search_providers > 0 {
         let mut join_set = JoinSet::new();
@@ -218,6 +225,46 @@ pub async fn search_providers(
             } else {
                 db_provider::upsert_not_found(pool, manga.id, provider.name()).await?;
             }
+        }
+    }
+
+    // ── Phase 2: title-only backfill for providers already matched ──────────
+    // Search to discover the matched series title, but never change the stored URL.
+    for provider in providers_to_backfill_title {
+        let mut found_title: Option<String> = None;
+        'title_search: for title in &search_titles {
+            match ctx.executor.search(ctx, &provider, title).await {
+                Ok(results) if !results.is_empty() => {
+                    if let Some((_, result)) = best_match(&search_titles, &results) {
+                        found_title = Some(result.title.clone());
+                        break 'title_search;
+                    }
+                }
+                Ok(_) => continue,
+                Err(e) => {
+                    warn!(
+                        "[scan] Title backfill search error on {}: {e}",
+                        provider.name()
+                    );
+                    break;
+                }
+            }
+        }
+
+        if let Some(title) = found_title {
+            info!(
+                "[scan] Backfilled title '{}' for '{}' on {}",
+                title,
+                manga.metadata.title,
+                provider.name()
+            );
+            db_provider::update_title_in_provider_data(
+                pool,
+                manga.id,
+                provider.name(),
+                &title,
+            )
+            .await?;
         }
     }
 
