@@ -410,13 +410,21 @@ async fn dispatch(
             let globally_disabled = crate::db::provider_settings::get_globally_disabled(pool)
                 .await
                 .unwrap_or_default();
+            let series_overrides =
+                crate::db::provider_settings::get_all_series_overrides(pool, manga.id)
+                    .await
+                    .unwrap_or_default();
             let all_entries = db_provider::get_all_for_manga(pool, manga.id)
                 .await
                 .map_err(|e| e.to_string())?;
 
             let mut enqueued = 0;
             for entry in &all_entries {
-                if !entry.found() || globally_disabled.contains(&entry.provider_name) {
+                let effective_enabled = series_overrides
+                    .get(&entry.provider_name)
+                    .copied()
+                    .unwrap_or_else(|| !globally_disabled.contains(&entry.provider_name));
+                if !entry.found() || !effective_enabled {
                     continue;
                 }
 

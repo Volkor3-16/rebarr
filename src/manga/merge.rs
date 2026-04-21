@@ -298,10 +298,17 @@ async fn scrape_known_providers(
     task_id: uuid::Uuid,
 ) -> Result<ScanResult, ScanError> {
     let globally_disabled = db_prov_settings::get_globally_disabled(pool).await?;
+    let series_overrides = db_prov_settings::get_all_series_overrides(pool, manga.id).await?;
     let all_entries = db_provider::get_all_for_manga(pool, manga.id).await?;
     let provider_entries: Vec<_> = all_entries
         .into_iter()
-        .filter(|e| e.found() && !globally_disabled.contains(&e.provider_name))
+        .filter(|e| {
+            e.found()
+                && series_overrides
+                    .get(&e.provider_name)
+                    .copied()
+                    .unwrap_or_else(|| !globally_disabled.contains(&e.provider_name))
+        })
         .collect();
 
     let (total_new, new_ids_for_download) =
@@ -339,14 +346,17 @@ async fn scrape_single_provider(
     provider_name: &str,
 ) -> Result<ScanResult, ScanError> {
     let globally_disabled = db_prov_settings::get_globally_disabled(pool).await?;
+    let series_overrides = db_prov_settings::get_all_series_overrides(pool, manga.id).await?;
     let all_entries = db_provider::get_all_for_manga(pool, manga.id).await?;
 
     let entry = all_entries
         .iter()
         .find(|e| {
-            e.provider_name == provider_name
-                && e.found()
-                && !globally_disabled.contains(&e.provider_name)
+            let effective_enabled = series_overrides
+                .get(&e.provider_name)
+                .copied()
+                .unwrap_or_else(|| !globally_disabled.contains(&e.provider_name));
+            e.provider_name == provider_name && e.found() && effective_enabled
         })
         .ok_or_else(|| {
             ScanError::Scraper(crate::scraper::error::ScraperError::Parse(format!(

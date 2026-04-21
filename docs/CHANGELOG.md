@@ -6,6 +6,8 @@ This a informal changelog so i can keep track of what im doing.
 
 - Added a button in settings to mass delete orphaned cbz files. (because tracking downloaded files properly is too annoying)
 - Add better provider listing for each series. You can now see the matches rebarr makes.
+- Overrides work again
+- Disabling a provider no longer searches for chapters anyway
 
 ## 2026-04-19 - 2026-04-20
 
