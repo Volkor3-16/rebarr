@@ -851,6 +851,57 @@ pub async fn update_canonical(
         }
     }
 
+    // Apply user overrides: for each chapter_base that has an override, replace the
+    // auto-selected winner with the user's choice.  Group by base first so we don't
+    // process the same base twice when there are multiple override keys for it (e.g.
+    // "2:1" and "2:2" both pointing into the same split bundle).
+    {
+        let mut applied_bases: std::collections::HashSet<i32> =
+            std::collections::HashSet::new();
+        for override_uuid in overrides.values() {
+            if let Some(override_ch) = all.iter().find(|ch| ch.id.to_string() == *override_uuid) {
+                let base = override_ch.chapter_base;
+                if !applied_bases.insert(base) {
+                    continue; // already handled this base
+                }
+
+                // Remove auto-selected chapters for this base
+                let base_uuid_set: std::collections::HashSet<String> = all
+                    .iter()
+                    .filter(|ch| ch.chapter_base == base)
+                    .map(|ch| ch.id.to_string())
+                    .collect();
+                canonical_uuids.retain(|uuid| !base_uuid_set.contains(uuid));
+
+                // Re-add the override choice (full chapter or entire split bundle)
+                if override_ch.chapter_variant == 0 {
+                    canonical_uuids.push(override_uuid.clone());
+                } else {
+                    let siblings: Vec<String> = all
+                        .iter()
+                        .filter(|ch| {
+                            ch.chapter_base == base
+                                && ch.provider_name == override_ch.provider_name
+                                && ch.chapter_variant >= 1
+                                && ch.chapter_variant <= 4
+                                && !ch.is_extra
+                        })
+                        .map(|ch| ch.id.to_string())
+                        .collect();
+                    if siblings.len() > 1 {
+                        for s in siblings {
+                            if !canonical_uuids.contains(&s) {
+                                canonical_uuids.push(s);
+                            }
+                        }
+                    } else if !canonical_uuids.contains(override_uuid) {
+                        canonical_uuids.push(override_uuid.clone());
+                    }
+                }
+            }
+        }
+    }
+
     debug!(
         "[db] update_canonical: manga={manga_id}, {} canonical chapters, {} active overrides",
         canonical_uuids.len(),
@@ -976,40 +1027,52 @@ pub async fn set_canonical_override(
         .map(|ch| ch.id.to_string())
         .collect();
 
-    // Find all split parts from the SAME provider for this chapter base
-    // If user picked part 15.1, automatically include 15.2, 15.3 etc from same provider
-    let mut bundle_chapters: Vec<&Chapter> = all_chapters
-        .iter()
-        .filter(|ch| {
-            ch.chapter_base == chapter_base
-                && ch.provider_name == selected_chapter.provider_name
-                && ch.chapter_variant >= 1
-                && ch.chapter_variant <= 4
-                && !ch.is_extra
-        })
-        .collect();
-
-    // Sort by variant number to maintain correct order
-    bundle_chapters.sort_by_key(|ch| ch.chapter_variant);
-
-    if bundle_chapters.len() > 1 {
-        // This is a split bundle - add ALL parts
-        debug!(
-            "[db] set_canonical_override: detected split bundle with {} parts",
-            bundle_chapters.len()
-        );
-        for part in bundle_chapters {
-            new_uuids.push(part.id.to_string());
-        }
-    } else {
-        // Single chapter (full or standalone extra) - add just this one
+    if selected_chapter.chapter_variant == 0 {
+        // User selected a full chapter — add just this one.
+        // Do NOT pull in split siblings: the user explicitly chose the full version over splits.
         new_uuids.push(new_uuid.to_string());
+    } else {
+        // User selected a split part — auto-include all sibling parts from the same provider
+        // so the entire bundle becomes canonical (e.g. picking 15.1 also adds 15.2, 15.3).
+        let mut bundle_chapters: Vec<&Chapter> = all_chapters
+            .iter()
+            .filter(|ch| {
+                ch.chapter_base == chapter_base
+                    && ch.provider_name == selected_chapter.provider_name
+                    && ch.chapter_variant >= 1
+                    && ch.chapter_variant <= 4
+                    && !ch.is_extra
+            })
+            .collect();
+
+        // Sort by variant number to maintain correct order
+        bundle_chapters.sort_by_key(|ch| ch.chapter_variant);
+
+        if bundle_chapters.len() > 1 {
+            // This is a split bundle - add ALL parts
+            debug!(
+                "[db] set_canonical_override: detected split bundle with {} parts",
+                bundle_chapters.len()
+            );
+            for part in &bundle_chapters {
+                new_uuids.push(part.id.to_string());
+            }
+        } else {
+            // Only one split part found — add just this one
+            new_uuids.push(new_uuid.to_string());
+        }
     }
 
     let json = serde_json::to_string(&new_uuids).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
 
     // Persist the user's override so it survives future auto-scans.
+    // Clear any stale override keys for the same chapter_base first — if the user
+    // previously overrode "2:1" (split) and now overrides "2:0" (full), the old key
+    // must not remain, or update_canonical would see two conflicting overrides for
+    // base 2 and apply whichever HashMap iteration returns first.
     let mut overrides = load_canonical_overrides(pool, manga_id).await?;
+    let prefix = format!("{chapter_base}:");
+    overrides.retain(|key, _| !key.starts_with(&prefix));
     overrides.insert(
         format!("{chapter_base}:{chapter_variant}"),
         new_uuid.to_string(),
