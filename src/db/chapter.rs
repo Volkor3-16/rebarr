@@ -673,13 +673,20 @@ pub async fn update_canonical(
     manga_id: Uuid,
     _preferred_language: &str,
 ) -> Result<(), sqlx::Error> {
-    let all = get_all_for_manga(pool, manga_id).await?;
+    let all_raw = get_all_for_manga(pool, manga_id).await?;
+
+    // Capture all DB UUIDs before any filtering — used to prune truly-gone overrides only.
+    // We must not prune overrides just because the chapter's provider is currently disabled
+    // or doesn't match the preferred language; the user may re-enable the provider later.
+    let all_raw_uuids: std::collections::HashSet<String> =
+        all_raw.iter().map(|ch| ch.id.to_string()).collect();
 
     // Filter out chapters from disabled providers.
     let globally_disabled = provider_settings::get_globally_disabled(pool).await?;
     let series_overrides = provider_settings::get_all_series_overrides(pool, manga_id).await?;
-    let all: Vec<Chapter> = all
-        .into_iter()
+    let all: Vec<Chapter> = all_raw
+        .iter()
+        .cloned()
         .filter(|ch| {
             let name = match &ch.provider_name {
                 Some(n) => n,
@@ -859,7 +866,8 @@ pub async fn update_canonical(
         let mut applied_bases: std::collections::HashSet<i32> =
             std::collections::HashSet::new();
         for override_uuid in overrides.values() {
-            if let Some(override_ch) = all.iter().find(|ch| ch.id.to_string() == *override_uuid) {
+            // Search all_raw so overrides pointing to disabled-provider chapters still apply.
+            if let Some(override_ch) = all_raw.iter().find(|ch| ch.id.to_string() == *override_uuid) {
                 let base = override_ch.chapter_base;
                 if !applied_bases.insert(base) {
                     continue; // already handled this base
@@ -877,7 +885,8 @@ pub async fn update_canonical(
                 if override_ch.chapter_variant == 0 {
                     canonical_uuids.push(override_uuid.clone());
                 } else {
-                    let siblings: Vec<String> = all
+                    // Search all_raw so split siblings from disabled providers are included.
+                    let siblings: Vec<String> = all_raw
                         .iter()
                         .filter(|ch| {
                             ch.chapter_base == base
@@ -914,10 +923,13 @@ pub async fn update_canonical(
     let json =
         serde_json::to_string(&canonical_uuids).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
 
-    // Prune stale overrides (chapters that no longer exist) before saving.
+    // Prune stale overrides — only remove entries where the chapter is truly gone from the DB.
+    // Do NOT prune based on the filtered `all` (which excludes disabled providers and
+    // non-preferred-language chapters): that would silently delete the user's choice whenever
+    // a provider is globally disabled or language settings change.
     let pruned_overrides: std::collections::HashMap<String, String> = overrides
         .into_iter()
-        .filter(|(_, uuid)| valid_uuids.contains(uuid.as_str()))
+        .filter(|(_, uuid)| all_raw_uuids.contains(uuid.as_str()))
         .collect();
     let overrides_json =
         serde_json::to_string(&pruned_overrides).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
