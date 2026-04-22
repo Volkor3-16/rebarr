@@ -800,12 +800,22 @@ pub async fn update_canonical(
     // Group by (slot_id, provider_name, is_full) to create Provider Bundles.
     // A full chapter (variant=0) and split parts (variant>0) from the same provider at the
     // same slot are *different logical representations* and must be separate competing bundles.
+    //
+    // Extra/bonus chapters are always keyed to their own variant slot (base + variant*0.1) even
+    // when split structure exists.  Without this, a 42.5 extra would be absorbed into the
+    // [42.1, 42.2, 42.3] split bundle and win/lose based on the split parts' scores rather than
+    // its own score against competing extras.
     let mut bundles: std::collections::HashMap<
         (OrderedFloat<f64>, Option<String>, bool),
         Vec<Chapter>,
     > = std::collections::HashMap::new();
     for ch in &all {
-        let slot_id = assign_slot_id(ch.chapter_base, ch.chapter_variant, &all).await;
+        let slot_id = if ch.is_extra {
+            // Extra chapters compete independently at their own variant slot.
+            ch.chapter_base as f64 + ch.chapter_variant as f64 * 0.1
+        } else {
+            assign_slot_id(ch.chapter_base, ch.chapter_variant, &all).await
+        };
         let is_full = ch.chapter_variant == 0;
         bundles
             .entry((
