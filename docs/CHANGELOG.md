@@ -2,6 +2,10 @@
 
 This a informal changelog so i can keep track of what im doing.
 
+## 2026-04-22
+
+- You can now bulk/multi select downloaded chapters (if you want to bulk-delete chapters)
+
 ## 2026-04-21
 
 - Added a button in settings to mass delete orphaned cbz files. (because tracking downloaded files properly is too annoying)
