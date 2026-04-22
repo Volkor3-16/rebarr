@@ -122,6 +122,7 @@ export const system = {
   version: () => get('/api/version'),
   changelog: () => fetch('/api/changelog').then(r => r.text()),
   purgeOrphanCbz: () => post('/api/system/purge-orphan-cbz', null),
+  scanDiskAll: () => post('/api/system/scan-disk-all', null),
 };
 
 // Import API

@@ -6,6 +6,7 @@ This a informal changelog so i can keep track of what im doing.
 
 - You can now bulk/multi select downloaded chapters (if you want to bulk-delete chapters)
 - Fixed up a bug with chapter overrides and canonical generation
+- Add a Danger Zone button to scan all series
 
 ## 2026-04-21
 

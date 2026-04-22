@@ -7,6 +7,7 @@ use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
 use super::errors::{ApiResult, internal};
+use crate::db;
 use crate::db::settings as db_settings;
 use crate::library::scanner;
 
@@ -251,9 +252,51 @@ pub async fn purge_orphan_cbz_api(pool: &State<SqlitePool>) -> ApiResult<PurgeOr
 }
 
 // ---------------------------------------------------------------------------
+// POST /api/system/scan-disk-all
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, JsonSchema)]
+pub struct ScanDiskAllResult {
+    /// Number of ScanDisk tasks enqueued (one per series).
+    pub enqueued: u32,
+}
+
+/// Enqueue a ScanDisk task for every series across all libraries.
+#[openapi(tag = "System")]
+#[post("/api/system/scan-disk-all")]
+pub async fn scan_disk_all_api(pool: &State<SqlitePool>) -> ApiResult<ScanDiskAllResult> {
+    let libraries = db::library::get_all(pool.inner()).await.map_err(internal)?;
+    let mut enqueued = 0u32;
+    for lib in &libraries {
+        let manga_list = db::manga::get_all_for_library(pool.inner(), lib.uuid)
+            .await
+            .map_err(internal)?;
+        for manga in manga_list {
+            let _ = db::task::enqueue(
+                pool.inner(),
+                db::task::TaskType::ScanDisk,
+                Some(manga.id),
+                None,
+                5,
+            )
+            .await;
+            enqueued += 1;
+        }
+    }
+    Ok(Json(ScanDiskAllResult { enqueued }))
+}
+
+// ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
 
 pub fn routes() -> Vec<rocket::Route> {
-    rocket::routes![system_info, desktop_health, version_info, changelog, purge_orphan_cbz_api]
+    rocket::routes![
+        system_info,
+        desktop_health,
+        version_info,
+        changelog,
+        purge_orphan_cbz_api,
+        scan_disk_all_api
+    ]
 }

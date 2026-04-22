@@ -184,6 +184,19 @@ export async function viewSettings() {
         <p class="settings-card-desc">Manage libraries (add, edit paths, delete) on the <a href="/library" data-path="/library">Libraries page</a>.</p>
       </div>
 
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <iconify-icon icon="mdi:harddisk" width="20" height="20"></iconify-icon>
+          <h3>Disk Scan</h3>
+        </div>
+        <p class="settings-card-desc">
+          Queue a <strong>Scan Disk</strong> task for every series across all libraries.
+          Useful after manually adding or moving CBZ files.
+        </p>
+        <button class="btn btn-sm" onclick="scanDiskAll()">Scan Disk — All Series</button>
+        <div id="scan-disk-all-status"></div>
+      </div>
+
       <div class="settings-card" style="border-color:var(--error,#e53e3e)">
         <div class="settings-card-header">
           <iconify-icon icon="mdi:alert-outline" width="20" height="20" style="color:var(--error,#e53e3e)"></iconify-icon>
@@ -789,6 +802,21 @@ window.deleteMetadataRule = async function(id) {
     loadMetadataRules();
   } catch(e) {
     showToast('Error: ' + e.message, 'error');
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Disk Scan
+// ---------------------------------------------------------------------------
+
+window.scanDiskAll = async function() {
+  const statusEl = document.getElementById('scan-disk-all-status');
+  if (statusEl) statusEl.innerHTML = '<small style="color:var(--text-muted)">Queuing…</small>';
+  try {
+    const result = await system.scanDiskAll();
+    if (statusEl) statusEl.innerHTML = `<small style="color:var(--success)">${result?.enqueued ?? 0} series queued for disk scan.</small>`;
+  } catch(e) {
+    if (statusEl) statusEl.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
   }
 };
 
