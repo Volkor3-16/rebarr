@@ -863,23 +863,43 @@ pub async fn update_canonical(
     // process the same base twice when there are multiple override keys for it (e.g.
     // "2:1" and "2:2" both pointing into the same split bundle).
     {
-        let mut applied_bases: std::collections::HashSet<i32> =
+        // Key: "base:main" for full/split chapters, "base:extra:variant" for extras.
+        // This allows a split override and an extra override for the same base to both apply.
+        let mut applied_groups: std::collections::HashSet<String> =
             std::collections::HashSet::new();
         for override_uuid in overrides.values() {
             // Search all_raw so overrides pointing to disabled-provider chapters still apply.
             if let Some(override_ch) = all_raw.iter().find(|ch| ch.id.to_string() == *override_uuid) {
                 let base = override_ch.chapter_base;
-                if !applied_bases.insert(base) {
-                    continue; // already handled this base
+                let override_is_extra = override_ch.chapter_variant > 4 || override_ch.is_extra;
+                let group_key = if override_is_extra {
+                    format!("{base}:extra:{}", override_ch.chapter_variant)
+                } else {
+                    format!("{base}:main")
+                };
+                if !applied_groups.insert(group_key) {
+                    continue; // already handled this group (e.g. two keys for same split bundle)
                 }
 
-                // Remove auto-selected chapters for this base
-                let base_uuid_set: std::collections::HashSet<String> = all
+                // Remove auto-selected chapters in the same competing group.
+                // Full/split: remove full + split parts for this base, keep extras.
+                // Extra: remove only the exact variant being replaced, keep everything else.
+                let evict_set: std::collections::HashSet<String> = all
                     .iter()
-                    .filter(|ch| ch.chapter_base == base)
+                    .filter(|ch| {
+                        if ch.chapter_base != base {
+                            return false;
+                        }
+                        let ch_is_extra = ch.chapter_variant > 4 || ch.is_extra;
+                        if override_is_extra {
+                            ch.chapter_variant == override_ch.chapter_variant
+                        } else {
+                            !ch_is_extra
+                        }
+                    })
                     .map(|ch| ch.id.to_string())
                     .collect();
-                canonical_uuids.retain(|uuid| !base_uuid_set.contains(uuid));
+                canonical_uuids.retain(|uuid| !evict_set.contains(uuid));
 
                 // Re-add the override choice (full chapter or entire split bundle)
                 if override_ch.chapter_variant == 0
@@ -1036,11 +1056,26 @@ pub async fn set_canonical_override(
         .find(|ch| ch.id == new_uuid)
         .ok_or_else(|| sqlx::Error::RowNotFound)?;
 
-    // Remove ALL chapters with the same chapter_base (clear entire slot, not just exact variant)
-    // This fixes the bug where both split and full chapters remained canonical
+    // Clear only the competing group for the selected chapter.
+    // Full chapters (variant 0) and split parts (variant 1–4, !is_extra) compete with each other.
+    // Extra/bonus chapters (variant > 4 or is_extra) are independent and must not be displaced
+    // when the user switches between split parts or picks a full chapter, and vice-versa.
+    let selected_is_extra = selected_chapter.chapter_variant > 4 || selected_chapter.is_extra;
     let mut new_uuids: Vec<String> = current
         .iter()
-        .filter(|ch| ch.chapter_base != chapter_base)
+        .filter(|ch| {
+            if ch.chapter_base != chapter_base {
+                return true; // different base — always keep
+            }
+            let ch_is_extra = ch.chapter_variant > 4 || ch.is_extra;
+            if selected_is_extra {
+                // Replacing an extra: only evict the exact same variant slot
+                ch.chapter_variant != chapter_variant
+            } else {
+                // Replacing full/split: evict full chapters and split parts, keep extras
+                ch_is_extra
+            }
+        })
         .map(|ch| ch.id.to_string())
         .collect();
 
@@ -1088,13 +1123,28 @@ pub async fn set_canonical_override(
     let json = serde_json::to_string(&new_uuids).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
 
     // Persist the user's override so it survives future auto-scans.
-    // Clear any stale override keys for the same chapter_base first — if the user
-    // previously overrode "2:1" (split) and now overrides "2:0" (full), the old key
-    // must not remain, or update_canonical would see two conflicting overrides for
-    // base 2 and apply whichever HashMap iteration returns first.
+    // Clear only competing override keys — if the user previously overrode "2:1" (split) and now
+    // overrides "2:0" (full), the old key must go.  But an extra override like "2:5" must not be
+    // cleared when switching between full/split choices, and a full/split override must not be
+    // cleared when the user changes the extra.
     let mut overrides = load_canonical_overrides(pool, manga_id).await?;
-    let prefix = format!("{chapter_base}:");
-    overrides.retain(|key, _| !key.starts_with(&prefix));
+    if !selected_is_extra {
+        // Full/split selected: remove existing full/split override keys for this base (variants 0–4).
+        // Extra keys (variant > 4) are left untouched.
+        let prefix = format!("{chapter_base}:");
+        overrides.retain(|key, _| {
+            if !key.starts_with(&prefix) {
+                return true;
+            }
+            if let Some(v_str) = key.strip_prefix(&prefix) {
+                if let Ok(v) = v_str.parse::<i32>() {
+                    return v > 4; // keep extra keys, remove full/split keys
+                }
+            }
+            false
+        });
+    }
+    // For an extra selection we just overwrite the exact key below — no need to clear others.
     overrides.insert(
         format!("{chapter_base}:{chapter_variant}"),
         new_uuid.to_string(),

@@ -5,6 +5,7 @@ This a informal changelog so i can keep track of what im doing.
 ## 2026-04-22
 
 - You can now bulk/multi select downloaded chapters (if you want to bulk-delete chapters)
+- Fixed up a bug with chapter overrides and canonical generation
 
 ## 2026-04-21
 
