@@ -123,6 +123,7 @@ pub fn openapi_routes() -> Vec<rocket::Route> {
             system::version_info,
             system::changelog,
             system::purge_orphan_cbz_api,
+            system::scan_disk_all_api,
             // Tasks
             tasks::list_tasks,
             tasks::list_queue_tasks,
