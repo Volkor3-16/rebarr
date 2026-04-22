@@ -619,10 +619,7 @@ function buildChapterGroups(slots) {
 
 function getVisibleSelectableGroupKeys() {
   return visibleChapterGroupsCache
-    .filter(group => {
-      const status = group.mainRow?.download_status;
-      return status === 'Missing' || status === 'Failed';
-    })
+    .filter(group => group.mainRow != null)
     .map(group => group.key);
 }
 
@@ -768,7 +765,7 @@ function chapterRow(mangaId, ch, {
   const fileSizeHtml = (status === 'Downloaded' && ch.file_size_bytes)
     ? ` <span class="ch-filesize">${formatFileSize(ch.file_size_bytes)}</span>`
     : '';
-  const checkboxHtml = (!isSubrow && canDl)
+  const checkboxHtml = !isSubrow
     ? `<input type="checkbox" class="ch-checkbox" data-slot-key="${groupKey}" ${isSelected ? 'checked' : ''} onclick="handleCheckboxClick(event, this)">`
     : '';
   const quickDlBtn = (canDl && !isSubrow)
@@ -1675,6 +1672,10 @@ function setupBulkBar(mangaId) {
       <iconify-icon icon="mdi:check-bold" width="16" height="16"></iconify-icon>
       Mark Downloaded
     </button>
+    <button class="btn btn-sm btn-danger" onclick="doDeleteSelected('${mangaId}')">
+      <iconify-icon icon="mdi:delete" width="16" height="16"></iconify-icon>
+      Delete
+    </button>
     <button class="btn btn-sm btn-ghost" onclick="clearBulkSelection()">
       <iconify-icon icon="mdi:close" width="16" height="16"></iconify-icon>
       Clear
@@ -1741,6 +1742,30 @@ window.doBulkMarkDownloaded = async function(mangaId) {
   renderChapterSection();
   updateBulkBar();
   showToast(`Marked ${count} as downloaded${errors > 0 ? `, ${errors} failed` : ''}`);
+};
+
+window.doDeleteSelected = async function(mangaId) {
+  const selectedGroups = getSelectedGroups();
+  const deletable = selectedGroups.filter(g => g.mainRow?.download_status === 'Downloaded');
+  if (!deletable.length) { showToast('No downloaded chapters in selection.', 'warning'); return; }
+  if (!confirm(`Delete ${deletable.length} downloaded CBZ file${deletable.length === 1 ? '' : 's'} from disk? Chapters will be marked Missing.`)) return;
+  let count = 0, errors = 0;
+  for (const group of deletable) {
+    try {
+      await mangaApi.deleteChapter(mangaId, group.mainRow.chapter_base, group.mainRow.chapter_variant);
+      count++;
+    } catch(e) { errors++; }
+  }
+  for (const group of deletable) {
+    const idx = chapterDataCache.findIndex(ch =>
+      ch.chapter_base == group.mainRow.chapter_base &&
+      ch.chapter_variant == group.mainRow.chapter_variant &&
+      ch.is_canonical);
+    if (idx !== -1) chapterDataCache[idx] = { ...chapterDataCache[idx], download_status: 'Missing' };
+  }
+  renderChapterSection();
+  updateBulkBar();
+  showToast(`Deleted ${count} file${count === 1 ? '' : 's'}${errors > 0 ? `, ${errors} failed` : ''}`);
 };
 
 window.handleCheckboxClick = function(e, cb) {
