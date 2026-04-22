@@ -882,10 +882,15 @@ pub async fn update_canonical(
                 canonical_uuids.retain(|uuid| !base_uuid_set.contains(uuid));
 
                 // Re-add the override choice (full chapter or entire split bundle)
-                if override_ch.chapter_variant == 0 {
+                if override_ch.chapter_variant == 0
+                    || override_ch.chapter_variant > 4
+                    || override_ch.is_extra
+                {
+                    // Full chapter or extra/bonus chapter — standalone, no sibling gathering.
                     canonical_uuids.push(override_uuid.clone());
                 } else {
-                    // Search all_raw so split siblings from disabled providers are included.
+                    // Genuine split part (variant 1–4, not extra) — search all_raw so split
+                    // siblings from disabled providers are included.
                     let siblings: Vec<String> = all_raw
                         .iter()
                         .filter(|ch| {
@@ -1039,13 +1044,18 @@ pub async fn set_canonical_override(
         .map(|ch| ch.id.to_string())
         .collect();
 
-    if selected_chapter.chapter_variant == 0 {
-        // User selected a full chapter — add just this one.
-        // Do NOT pull in split siblings: the user explicitly chose the full version over splits.
+    if selected_chapter.chapter_variant == 0
+        || selected_chapter.chapter_variant > 4
+        || selected_chapter.is_extra
+    {
+        // Full chapter OR extra/bonus chapter — add just this one.
+        // Do NOT pull in split siblings: for a full chapter the user explicitly chose the full
+        // version; for an extra/bonus chapter (variant ≥ 5 or is_extra) it is standalone content
+        // and must not drag in unrelated split parts.
         new_uuids.push(new_uuid.to_string());
     } else {
-        // User selected a split part — auto-include all sibling parts from the same provider
-        // so the entire bundle becomes canonical (e.g. picking 15.1 also adds 15.2, 15.3).
+        // Genuine split part (variant 1–4, not extra) — auto-include all sibling parts from the
+        // same provider so the entire bundle becomes canonical (e.g. picking 15.1 adds 15.2, 15.3).
         let mut bundle_chapters: Vec<&Chapter> = all_chapters
             .iter()
             .filter(|ch| {
