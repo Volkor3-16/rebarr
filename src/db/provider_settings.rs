@@ -1,3 +1,4 @@
+use chrono::Utc;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -122,4 +123,36 @@ pub async fn get_all_series_overrides(
             .fetch_all(pool)
             .await?;
     Ok(rows.into_iter().collect())
+}
+
+// ---------------------------------------------------------------------------
+// Provider version tracking (for automatic re-sync on version bump)
+// ---------------------------------------------------------------------------
+
+/// Get the stored version for a provider. Returns `None` if this provider has
+/// never been recorded (i.e. first time it's been seen since this feature landed).
+pub async fn get_version(pool: &SqlitePool, name: &str) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar("SELECT version FROM ProviderVersion WHERE provider_name = ?")
+        .bind(name)
+        .fetch_optional(pool)
+        .await
+}
+
+/// Persist (or update) the current version for a provider.
+pub async fn set_version(
+    pool: &SqlitePool,
+    name: &str,
+    version: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO ProviderVersion (provider_name, version, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT (provider_name) DO UPDATE SET version = excluded.version, updated_at = excluded.updated_at",
+    )
+    .bind(name)
+    .bind(version)
+    .bind(Utc::now().timestamp())
+    .execute(pool)
+    .await?;
+    Ok(())
 }

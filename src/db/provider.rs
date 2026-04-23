@@ -162,6 +162,23 @@ pub async fn get_all_for_manga(
     rows.into_iter().map(from_row).collect()
 }
 
+/// Return all manga IDs that have a found (non-null) URL for the given provider.
+/// Used when a provider version changes to find which manga need re-syncing.
+pub async fn get_manga_ids_with_found_url(
+    pool: &SqlitePool,
+    provider_name: &str,
+) -> Result<Vec<Uuid>, sqlx::Error> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT manga_id FROM MangaProvider WHERE provider_name = ? AND provider_url IS NOT NULL",
+    )
+    .bind(provider_name)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter()
+        .map(|(s,)| Uuid::parse_str(&s).map_err(|e| sqlx::Error::Decode(Box::new(e))))
+        .collect()
+}
+
 /// Fetch a single MangaProvider entry for a specific manga + provider pair.
 pub async fn get_for_manga_provider(
     pool: &SqlitePool,

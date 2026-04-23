@@ -61,6 +61,7 @@ export const manga = {
   providers: (id) => get(`/api/manga/${id}/providers`),
   providerCandidates: (id, name) => get(`/api/manga/${id}/providers/${encodeURIComponent(name)}/candidates`),
   setProviderUrl: (id, name, url, title) => post(`/api/manga/${id}/providers/${encodeURIComponent(name)}/url`, { url, title: title ?? null }),
+  syncProvider: (id, name) => post(`/api/manga/${id}/providers/${encodeURIComponent(name)}/sync`, null),
   scan: (id) => post(`/api/manga/${id}/scan`, null),
   checkNew: (id) => post(`/api/manga/${id}/check-new`, null),
   scanDisk: (id) => post(`/api/manga/${id}/scan-disk`, null),

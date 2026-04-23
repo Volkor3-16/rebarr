@@ -940,6 +940,40 @@ pub async fn set_provider_url(
 }
 
 // ---------------------------------------------------------------------------
+// POST /api/manga/<id>/providers/<name>/sync
+// ---------------------------------------------------------------------------
+
+/// Enqueue a SyncProviderChapters task for a single provider on this manga.
+#[openapi(tag = "Providers")]
+#[post("/api/manga/<id>/providers/<name>/sync")]
+pub async fn sync_provider_api(
+    pool: &State<SqlitePool>,
+    id: &str,
+    name: &str,
+) -> Result<Status, (Status, Json<ApiError>)> {
+    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    db::manga::get_by_id(pool.inner(), manga_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("manga not found"))?;
+
+    let queue = format!("provider:{}", name);
+    let payload = serde_json::json!({ "provider": name }).to_string();
+    db::task::enqueue_with_payload(
+        pool.inner(),
+        crate::db::task::TaskType::SyncProviderChapters,
+        Some(manga_id),
+        None,
+        5,
+        Some(queue),
+        Some(payload),
+    )
+    .await
+    .map_err(internal)?;
+    Ok(Status::Accepted)
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/manga/<id>/cover — download cover from URL
 // ---------------------------------------------------------------------------
 
@@ -1089,5 +1123,6 @@ pub fn routes() -> Vec<rocket::Route> {
         update_synonyms,
         provider_candidates,
         set_provider_url,
+        sync_provider_api,
     ]
 }

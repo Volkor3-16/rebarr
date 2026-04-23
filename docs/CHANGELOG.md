@@ -10,6 +10,10 @@ This a informal changelog so i can keep track of what im doing.
 - Updated MangaTaro's series url, we previously only extracted the slug, instead of the full url and getting the slug when needed.
 - Only count main chapters in the count, extras are shown separately.
 - The version number now includes a git commit hash, which brings up the commit number on gitlab.
+- When a provider does an update (version number changes) we go through all series with matches on the provider, and re-scan.
+    - This can be disabled in the settings.
+- You can also trigger this manually on each provider per series, added as a button next to "Rematch"
+- You can now see the relative and exact time for downloaded and failed chapters on hover.
 
 ## 2026-04-22
 

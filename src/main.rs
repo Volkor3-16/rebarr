@@ -5,6 +5,7 @@ use std::time::Duration;
 use dotenvy::dotenv;
 use rebarr::api::{extra_routes, frontend_routes, openapi_routes};
 use rebarr::db;
+use rebarr::db::task::TaskType;
 use rebarr::http::{ALClient, AniListMetadata, WebhookDispatcher};
 use rebarr::scheduler::{CancelMap, start_worker};
 use rebarr::scraper::{
@@ -16,8 +17,99 @@ use rocket::fs::FileServer;
 use rocket_okapi::rapidoc::{RapiDocConfig, make_rapidoc};
 use rocket_okapi::settings::UrlObject;
 use rocket_okapi::swagger_ui::{SwaggerUIConfig, make_swagger_ui};
+use sqlx::SqlitePool;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
+
+/// Check each versioned provider's YAML version against the last recorded version in the DB.
+/// If the version changed (or is new), enqueue SyncProviderChapters tasks for every manga
+/// that already has a URL cached for that provider so their chapter lists are refreshed
+/// immediately rather than waiting for the next periodic scheduler cycle.
+async fn check_provider_versions(pool: &SqlitePool, registry: &ProviderRegistry) {
+    for def in registry.all_defs() {
+        let Some(current_version) = &def.version else {
+            continue; // unversioned providers opt out
+        };
+
+        let stored = db::provider_settings::get_version(pool, &def.name)
+            .await
+            .ok()
+            .flatten();
+
+        if stored.as_deref() == Some(current_version.as_str()) {
+            continue; // version unchanged — nothing to do
+        }
+
+        let old_display = stored.as_deref().unwrap_or("(none)");
+        info!(
+            "Provider '{}' version changed: {} -> {}",
+            def.name, old_display, current_version
+        );
+
+        if let Err(e) = db::provider_settings::set_version(pool, &def.name, current_version).await
+        {
+            warn!("Failed to store version for '{}': {e}", def.name);
+            continue;
+        }
+
+        let manga_ids = match db::provider::get_manga_ids_with_found_url(pool, &def.name).await {
+            Ok(ids) => ids,
+            Err(e) => {
+                warn!(
+                    "Failed to query manga for provider '{}' version refresh: {e}",
+                    def.name
+                );
+                continue;
+            }
+        };
+
+        if manga_ids.is_empty() {
+            info!(
+                "Provider '{}' version changed — no manga to re-sync yet.",
+                def.name
+            );
+            continue;
+        }
+
+        let queue = format!("provider:{}", def.name);
+        let payload = serde_json::json!({ "provider": def.name }).to_string();
+        let mut enqueued = 0usize;
+
+        for manga_id in &manga_ids {
+            if db::task::is_pending_in_queue(pool, &queue, *manga_id, TaskType::SyncProviderChapters)
+                .await
+                .unwrap_or(false)
+            {
+                continue; // already queued
+            }
+
+            match db::task::enqueue_with_payload(
+                pool,
+                TaskType::SyncProviderChapters,
+                Some(*manga_id),
+                None,
+                7, // between user-triggered (5) and periodic scheduler (10)
+                Some(queue.clone()),
+                Some(payload.clone()),
+            )
+            .await
+            {
+                Ok(_) => enqueued += 1,
+                Err(e) => warn!(
+                    "Failed to enqueue re-sync for manga {} on provider '{}': {e}",
+                    manga_id, def.name
+                ),
+            }
+        }
+
+        info!(
+            "Provider '{}' version changed — queued {}/{} re-sync task(s).",
+            def.name,
+            enqueued,
+            manga_ids.len()
+        );
+    }
+}
 
 #[rocket::main]
 async fn main() -> Result<(), Box<rocket::Error>> {
@@ -56,6 +148,9 @@ async fn main() -> Result<(), Box<rocket::Error>> {
     {
         warn!("Failed to ensure default provider quality rules: {}", e);
     }
+
+    // Detect provider YAML version bumps and enqueue re-sync tasks for affected manga
+    check_provider_versions(&pool, &registry).await;
     let browser_worker_count = db::settings::get(&pool, "browser_worker_count", "3")
         .await
         .ok()

@@ -1219,6 +1219,10 @@ export async function loadProviders(mangaId) {
         ? `<button class="btn btn-xs btn-ghost" onclick="resetProviderEnabled('${mangaId}', '${escape(p.provider_name)}')" title="Reset to global setting">Reset</button>`
         : '';
 
+      const syncBtn = p.found
+        ? `<button class="btn btn-xs btn-ghost" onclick="syncProvider('${mangaId}', '${escape(p.provider_name)}')" title="Sync chapters from this provider now">Sync</button>`
+        : '';
+
       const linkBtn = p.found
         ? `<button class="btn btn-xs btn-ghost" onclick="pickProvider('${mangaId}', '${escape(p.provider_name)}')" title="Search again and change the matched series">Rematch</button>`
         : `<button class="btn btn-xs btn-ghost" onclick="pickProvider('${mangaId}', '${escape(p.provider_name)}')" title="Search this provider and pick the matching series">Find match</button>`;
@@ -1232,7 +1236,7 @@ export async function loadProviders(mangaId) {
         <td><small>${synced}</small></td>
         <td><small>searched: ${searched}</small></td>
         <td>${enableToggle}${resetBtn}</td>
-        <td>${linkBtn}</td>
+        <td>${linkBtn}${syncBtn}</td>
       </tr>`;
     }).join('');
 
@@ -1266,6 +1270,15 @@ window.resetProviderEnabled = async function(mangaId, providerName) {
     showToast(`${providerName} reset to global setting`);
     loadProviders(mangaId);
     await loadChapters(mangaId);
+  } catch(e) {
+    showToast('Error: ' + e.message, 'error');
+  }
+};
+
+window.syncProvider = async function(mangaId, providerName) {
+  try {
+    await mangaApi.syncProvider(mangaId, providerName);
+    showToast(`Sync queued for ${providerName}`);
   } catch(e) {
     showToast('Error: ' + e.message, 'error');
   }

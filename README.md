@@ -29,10 +29,7 @@ I'll remove this when I've got the first public release out, this is just a quic
 - [ ] Let users re-order the queue
 - [ ] Setup Wizard: Adding 49 series to library… should have some logging or progress.
 - Count number total number of unique suggestions, show that somewhere idk i just wanna know how quick it updates
-- failed status chapters should have failed time - relative
-- downloaded hover time should be relative too (and then YYYY-MM-DD: HH:MM:SS)
-- [ ] Multiple tabs slow down a bunch, all the polling per tab is bad?
-    - Only poll if tab is active?
+
 - [ ] We can't delete downloaded chapters from providers that have been disabled. the action menu doesn't have any entries.
 
 ### Assend (GraphQL frontend for Moku-like frontend?)
@@ -54,7 +51,6 @@ I'll remove this when I've got the first public release out, this is just a quic
 - [ ] Mangadex: Error: scraper error: Parse error: from_json: variable 'chapters_processed' not found
 - [ ] WeebCentral: titles are bad sometimes "82-eng-li" & "Ch.011 " & "Vol.7 Chapter 35 "
 - [ ] Mangakakalot: We don't get a title from them? is it broke?
-- [ ] We should do a provider-level global refresh when a provider updates its version number... somehow.
 
 - Use `setBlockedResourceTypes` to block useless requests (some images, CSS, fonts, media, whatever)
     - This could work, but you'd have to have a list of stuff TO block, since blocking every 3rd party image would block pages
