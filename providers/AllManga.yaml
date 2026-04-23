@@ -164,7 +164,7 @@ pages:
             // Decrypt AES-GCM if the response is encrypted (tobeparsed field)
             let pageListData;
             if (rawData.data && rawData.data.tobeparsed) {
-              const AES_KEY = "SimtVuagFbGR2K7P";
+              const AES_KEY = "Xot36i3lK3:v1";
               const encoder = new TextEncoder();
               const keyBytes = await crypto.subtle.digest("SHA-256", encoder.encode(AES_KEY));
               const cryptoKey = await crypto.subtle.importKey(
@@ -173,8 +173,8 @@ pages:
               const raw = atob(rawData.data.tobeparsed);
               const bytes = new Uint8Array(raw.length);
               for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-              const iv = bytes.slice(0, 12);
-              const ciphertext = bytes.slice(12);
+              const iv = bytes.slice(1, 13);
+              const ciphertext = bytes.slice(13);
               const decrypted = await crypto.subtle.decrypt(
                 { name: "AES-GCM", iv, tagLength: 128 }, cryptoKey, ciphertext
               );
