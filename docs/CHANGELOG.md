@@ -9,6 +9,7 @@ This a informal changelog so i can keep track of what im doing.
 - Updated AllManga, thanks keiyoushi.
 - Updated MangaTaro's series url, we previously only extracted the slug, instead of the full url and getting the slug when needed.
 - Only count main chapters in the count, extras are shown separately.
+- The version number now includes a git commit hash, which brings up the commit number on gitlab.
 
 ## 2026-04-22
 

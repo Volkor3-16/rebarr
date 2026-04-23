@@ -1259,6 +1259,18 @@ pre {
   opacity: 1;
 }
 
+.brand-version-commit {
+  color: var(--text-muted);
+  text-decoration: none;
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-size: inherit;
+}
+
+.brand-version-commit:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
 /* Mini ticker for collapsed state */
 .mini-ticker {
   font-size: 0.75rem;

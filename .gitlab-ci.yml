@@ -43,6 +43,7 @@ variables:
         /kaniko/executor \
           --context $CI_PROJECT_DIR \
           --dockerfile $CI_PROJECT_DIR/Dockerfile \
+          --build-arg GIT_COMMIT=$CI_COMMIT_SHA \
           --cache=true \
           --cache-repo "docker.io/$DOCKERHUB_USERNAME/${IMAGE_NAME}-cache" \
           --destination "docker.io/$DOCKERHUB_USERNAME/$TAG"

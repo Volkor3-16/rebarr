@@ -11,7 +11,8 @@ COPY providers ./providers
 COPY web ./web
 COPY Rocket.toml ./Rocket.toml
 
-RUN cargo build --release --bin rebarr
+ARG GIT_COMMIT
+RUN GIT_COMMIT=${GIT_COMMIT} cargo build --release --bin rebarr
 
 # --- Runtime Stage ---
 FROM debian:bookworm-slim

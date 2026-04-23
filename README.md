@@ -54,6 +54,7 @@ I'll remove this when I've got the first public release out, this is just a quic
 - [ ] Mangadex: Error: scraper error: Parse error: from_json: variable 'chapters_processed' not found
 - [ ] WeebCentral: titles are bad sometimes "82-eng-li" & "Ch.011 " & "Vol.7 Chapter 35 "
 - [ ] Mangakakalot: We don't get a title from them? is it broke?
+- [ ] We should do a provider-level global refresh when a provider updates its version number... somehow.
 
 - Use `setBlockedResourceTypes` to block useless requests (some images, CSS, fonts, media, whatever)
     - This could work, but you'd have to have a list of stuff TO block, since blocking every 3rd party image would block pages

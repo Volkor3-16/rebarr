@@ -247,14 +247,19 @@ async function checkVersionAndUpdate() {
     // Update version display in navbar with build type
     const versionEl = document.getElementById('brand-version');
     if (versionEl) {
-      let versionText = `v${currentVersion}`;
+      let html = `<span style="cursor:pointer" onclick="showChangelogFromClick()">v${currentVersion}`;
       if (versionData.build_type) {
-        versionText += ` (${versionData.build_type})`;
+        html += ` (${versionData.build_type})`;
       }
+      html += `</span>`;
       if (versionData.git_commit) {
-        versionText += ` [${versionData.git_commit}]`;
+        if (versionData.git_commit_url) {
+          html += ` <a class="brand-version-commit" href="${versionData.git_commit_url}" target="_blank" rel="noopener">[${versionData.git_commit}]</a>`;
+        } else {
+          html += ` <span class="brand-version-commit">[${versionData.git_commit}]</span>`;
+        }
       }
-      versionEl.textContent = versionText;
+      versionEl.innerHTML = html;
     }
     
     // Check if this is an update
@@ -451,9 +456,6 @@ window.showChangelogFromClick = async function() {
       let versionText = `v${versionData.version}`;
       if (versionData.build_type) {
         versionText += ` (${versionData.build_type})`;
-      }
-      if (versionData.git_commit) {
-        versionText += ` [${versionData.git_commit}]`;
       }
       showChangelogModal(versionText, changelog);
     }

@@ -16,6 +16,7 @@ pub struct VersionInfo {
     pub version: String,
     pub build_type: String,
     pub git_commit: Option<String>,
+    pub git_commit_url: Option<String>,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -192,31 +193,29 @@ pub async fn desktop_health() -> Json<DesktopHealth> {
 // GET /api/version
 // ---------------------------------------------------------------------------
 
+const REPO_URL: &str = "https://git.volkor.me/Volkor/rebarr";
+
 /// Get application version and build information.
 #[openapi(tag = "System")]
 #[get("/api/version")]
 pub fn version_info() -> Json<VersionInfo> {
-    // Determine build type based on environment variables
+    // Determine build type based on compile-time flags
     let build_type = if cfg!(debug_assertions) {
         "dev".to_string()
-    } else if std::env::var("GITLAB_CI").is_ok() {
-        "gitlab-ci".to_string()
-    } else if std::env::var("CI").is_ok() {
-        "ci".to_string()
     } else {
         "release".to_string()
     };
 
-    // Try to get git commit hash from environment or build
-    let git_commit = std::env::var("GIT_COMMIT")
-        .or_else(|_| std::env::var("CI_COMMIT_SHA"))
-        .ok()
-        .map(|s| s.chars().take(8).collect()); // Short hash
+    // Git commit hash baked in at compile time via build.rs + GIT_COMMIT env var
+    let git_commit_full: Option<String> = option_env!("GIT_COMMIT_HASH").map(str::to_owned);
+    let git_commit = git_commit_full.as_deref().map(|s| s.chars().take(8).collect());
+    let git_commit_url = git_commit_full.map(|sha| format!("{REPO_URL}/-/commit/{sha}"));
 
     Json(VersionInfo {
         version: env!("CARGO_PKG_VERSION").to_string(),
         build_type,
         git_commit,
+        git_commit_url,
     })
 }
 
