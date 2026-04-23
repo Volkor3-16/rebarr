@@ -1,6 +1,6 @@
 name: MangaTaro
 base_url: https://mangataro.org
-version: "1"
+version: "2"
 default_score: 30 # Decent library, average quality, well organised.
 tags:
   - aggregator
@@ -28,11 +28,13 @@ search:
           cover: thumbnail
           # Saved as provider_data so later chapter sync jobs can reuse it.
           manga_id: id
+        prefix:
+          url: "{base_url}/manga/"
 
 chapters:
   steps:
-    # `manga_url` is the persisted slug; `manga_id` comes from persisted provider_data.
-    - open: "{base_url}/manga/{manga_url}"
+    # `manga_url` is the full manga URL; `manga_id` comes from persisted provider_data.
+    - open: "{manga_url}"
     - extract_js:
         var: auth_token
         script: |
@@ -51,7 +53,7 @@ chapters:
         url: "{base_url}/auth/manga-chapters?manga_id={manga_id}&offset=0&limit=500&order=DESC&_t={auth_token}&_ts={auth_timestamp}"
         method: GET
         headers:
-          Referer: "{base_url}/manga/{manga_url}"
+          Referer: "{manga_url}"
         var: chapters_data
         json_path: chapters
     - extract_js:

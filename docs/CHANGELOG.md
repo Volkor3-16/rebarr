@@ -7,6 +7,7 @@ This a informal changelog so i can keep track of what im doing.
 - Don't poll the server when the tab is in the background
     - This should improve performance when there's a bunch of tabs open.
 - Updated AllManga, thanks keiyoushi.
+- Updated MangaTaro's series url, we previously only extracted the slug, instead of the full url and getting the slug when needed.
 - Only count main chapters in the count, extras are shown separately.
 
 ## 2026-04-22
