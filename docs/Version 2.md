@@ -22,3 +22,11 @@ IPFS + Orbit DB for metdata/syncing?
 - Theres no 'one' site, harder to get people to use it (You need someone to run a server and allow you to use it.)
 - Harder to do comments / ratings / metadata
 - Spam would be a biiitch
+
+- is there really no way to not lose data and have compatibility with providers and their version changes?
+as providers update and change metadata?
+- UUIDs will never work?? will ipfs shared things lose?
+- will each user have to sync database stuff?
+- should we compute/build a 'literally' canonical uuid, and use that with ipfs?
+- or fuck it, treat it like uhhh soulseek, users ask for their sources/metadata
+- user/automatic votes tags on specific UUIDs/variants?

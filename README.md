@@ -15,6 +15,7 @@ I'll remove this when I've got the first public release out, this is just a quic
 
 - Providers should be library specifc -> tag for western, manga,manwha and shit
     - same with metadata client
+    - Categories?
 - I Was Reincarnated as the 7th Prince So I Can Take My Time Perfecting My Magical Ability
     BuildFullChapterList • 2/3 attempts • 1m ago
     17%
@@ -23,14 +24,36 @@ I'll remove this when I've got the first public release out, this is just a quic
 - Build Full Chapter List should:
     - Not just error our when a provider is disabled
     - take priority over anything, even manual downloads
+- and automatic instant reqwest mode for  search steps too, auto check providers when searching? on hover?
+    - automatically start searching for providers when searching anilist.
+    - we can just throw them out/invalidate/cache them separately if we don't follow  through with a library add.
+- quality rules for provider tags: Mostly useless since each provider has it's own default score.
+- We probably shouldn't include every single metadata instance for the fucken translator group for official releases, you can't see the provider.
+- Use a combined metadata thing for titles, save titles from 'all/best' providers, just not save it in the rebarr json entry
+- rebarr chapter tags - marking low quality, mtl, whatever else
+    - Automatic rules for specific groups, titles whatever?
+- [ ]  Chapter 8.1 — The Residence (1) is incorrectly marked as an extra (My Co-worker Is an Eldritch X!)
+    - Same with Chapter 14.5 — Oscar Orcus (Arifureta)
+
 
 ### Frontend
 
 - [ ] Let users re-order the queue
 - [ ] Setup Wizard: Adding 49 series to library… should have some logging or progress.
 - Count number total number of unique suggestions, show that somewhere idk i just wanna know how quick it updates
-
 - [ ] We can't delete downloaded chapters from providers that have been disabled. the action menu doesn't have any entries.
+- [ ] Detect duplicates + old downloads? We shouldn't have more than one cbz of the same chapter. EVER
+- Initial Provider Search Rewrite:
+    - Show the loading thing, but instead of a log, show a live-updating provider table.
+    - This table should replace the existing one, or just be 'part' of it?
+- New Library Page
+    - Full screen table/grid/whatever selector. Top has an automatic searcher, it auto searches from any keyboard entry
+    - Auto-scan anilist if theres no matches, options to add to library
+- does the worker page show rate limited/disabled providers?
+    - Does rate limiting / disabling actually work after enough failures?
+- Direct file browser/explorer for each series
+    - Lets us see filesize of the whole series (including random ass files), delete them/import them?
+- We should be able to click download on chapter variants in the dropdown table, it should automatically override them too.
 
 ### Assend (GraphQL frontend for Moku-like frontend?)
 

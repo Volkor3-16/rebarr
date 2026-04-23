@@ -106,6 +106,7 @@ pub fn openapi_routes() -> Vec<rocket::Route> {
             manga::update_synonyms,
             manga::provider_candidates,
             manga::set_provider_url,
+            manga::sync_provider_api,
             manga::upload_cover_url,
             manga::upload_cover_file,
             // Provider Settings
