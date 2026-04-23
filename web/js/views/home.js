@@ -208,7 +208,7 @@ function buildAniListSection() {
       ? `<img src="${escape(m.thumbnail_url)}" alt="${escape(title)}" loading="lazy">`
       : `<img src="/web/img/no-cover.svg" alt="${escape(title)}" loading="lazy">`;
     const meta = [year, status].filter(Boolean).join(' · ');
-    return `<div class="manga-card anilist-card" onclick="showAddMangaModal(${id}, ${JSON.stringify(pathSafe)})">
+    return `<div class="manga-card anilist-card" onclick="showAddMangaModal(${id}, '${escape(pathSafe)}')">
       ${thumb}
       <div class="add-overlay"><button class="add-btn" title="Add to library">+</button></div>
       <div class="info">

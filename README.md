@@ -34,7 +34,7 @@ I'll remove this when I've got the first public release out, this is just a quic
     - Automatic rules for specific groups, titles whatever?
 - [ ]  Chapter 8.1 — The Residence (1) is incorrectly marked as an extra (My Co-worker Is an Eldritch X!)
     - Same with Chapter 14.5 — Oscar Orcus (Arifureta)
-
+- [ ] Cloudflare bypass not working anymore :( - https://www.mangakakalot.gg/manga/i-became-the-strongest-with-the-failure-frame/chapter-29-6
 
 ### Frontend
 
@@ -46,9 +46,6 @@ I'll remove this when I've got the first public release out, this is just a quic
 - Initial Provider Search Rewrite:
     - Show the loading thing, but instead of a log, show a live-updating provider table.
     - This table should replace the existing one, or just be 'part' of it?
-- New Library Page
-    - Full screen table/grid/whatever selector. Top has an automatic searcher, it auto searches from any keyboard entry
-    - Auto-scan anilist if theres no matches, options to add to library
 - does the worker page show rate limited/disabled providers?
     - Does rate limiting / disabling actually work after enough failures?
 - Direct file browser/explorer for each series
