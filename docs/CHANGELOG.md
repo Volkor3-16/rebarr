@@ -14,6 +14,7 @@ This a informal changelog so i can keep track of what im doing.
     - This can be disabled in the settings.
 - You can also trigger this manually on each provider per series, added as a button next to "Rematch"
 - You can now see the relative and exact time for downloaded and failed chapters on hover.
+- Rework Home page to be both searches, falls back to searching anilist/metadata source when chapters aren't found.
 
 ## 2026-04-22
 

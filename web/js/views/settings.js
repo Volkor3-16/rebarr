@@ -1,6 +1,6 @@
 // Settings view
 
-import { providers, settings, providerSettings, webhooks, qualityRules as qualityRulesApi, metadataRules as metadataRulesApi, system } from '../api.js';
+import { providers, settings, libraries, providerSettings, webhooks, qualityRules as qualityRulesApi, metadataRules as metadataRulesApi, system } from '../api.js';
 import { render } from '../router.js';
 import { escape, skeleton, showToast } from '../utils.js';
 import { showWizard } from './wizard.js';
@@ -11,9 +11,10 @@ export async function viewSettings() {
   render(`<div class="settings">${skeleton(5)}</div>`);
 
   try {
-    const [providerList, appSettings] = await Promise.all([
+    const [providerList, appSettings, libList] = await Promise.all([
       providers.list(),
       settings.get(),
+      libraries.list(),
     ]);
 
     // Provider rows with enabled toggle
@@ -31,8 +32,50 @@ export async function viewSettings() {
           </tr>
         `).join('');
 
+    const libRows = libList.map(lib => {
+      const type = lib.type === 'Comics' ? 'Comics' : 'Manga';
+      return `<tr id="settings-librow-${lib.uuid}">
+        <td>${escape(type)}</td>
+        <td>
+          <span id="settings-libpath-${lib.uuid}">${escape(lib.root_path)}</span>
+          <div class="hidden" id="settings-libedit-${lib.uuid}">
+            <input type="text" id="settings-libinput-${lib.uuid}" value="${escape(lib.root_path)}">
+            <button class="btn btn-sm btn-primary" onclick="settingsSaveLibrary('${lib.uuid}')">Save</button>
+            <button class="btn btn-sm" onclick="settingsCancelEditLibrary('${lib.uuid}')">Cancel</button>
+          </div>
+        </td>
+        <td>
+          <button class="btn btn-sm btn-ghost" onclick="settingsEditLibrary('${lib.uuid}')">Edit</button>
+          <button class="btn btn-sm btn-error btn-outline" onclick="settingsDeleteLibrary('${lib.uuid}')">Delete</button>
+        </td>
+      </tr>`;
+    }).join('');
+
     render(`
       <h2>Settings</h2>
+
+      <div class="settings-card" id="settings-libraries-card">
+        <div class="settings-card-header">
+          <iconify-icon icon="mdi:bookshelf" width="20" height="20"></iconify-icon>
+          <h3>Libraries</h3>
+        </div>
+        <p class="settings-card-desc">Manage the directories Rebarr monitors for manga/comics.</p>
+        ${libList.length > 0
+          ? `<table><thead><tr><th>Type</th><th>Root Path</th><th></th></tr></thead><tbody id="settings-lib-tbody">${libRows}</tbody></table>`
+          : '<p id="settings-lib-empty" style="color:var(--text-muted)">No libraries yet.</p>'
+        }
+        <hr style="margin:1rem 0">
+        <h4>Add Library</h4>
+        <form id="settings-add-library-form" class="flex gap-2 align-center flex-wrap" style="margin-top:0.5rem">
+          <select id="sal-type" class="select select-bordered select-sm">
+            <option value="Manga">Manga</option>
+            <option value="Comics">Comics (Western)</option>
+          </select>
+          <input type="text" id="sal-path" class="input input-bordered input-sm" placeholder="/data/manga" style="min-width:200px;flex:1">
+          <button type="submit" class="btn btn-sm btn-primary">+ Add Library</button>
+        </form>
+        <div id="sal-status"></div>
+      </div>
 
       <div class="settings-card">
         <div class="settings-card-header">
@@ -178,14 +221,6 @@ export async function viewSettings() {
 
       <div class="settings-card">
         <div class="settings-card-header">
-          <iconify-icon icon="mdi:folder-multiple-outline" width="20" height="20"></iconify-icon>
-          <h3>Libraries</h3>
-        </div>
-        <p class="settings-card-desc">Manage libraries (add, edit paths, delete) on the <a href="/library" data-path="/library">Libraries page</a>.</p>
-      </div>
-
-      <div class="settings-card">
-        <div class="settings-card-header">
           <iconify-icon icon="mdi:harddisk" width="20" height="20"></iconify-icon>
           <h3>Disk Scan</h3>
         </div>
@@ -212,6 +247,21 @@ export async function viewSettings() {
         <div id="purge-orphan-status"></div>
       </div>
     `);
+
+    // Library add form
+    document.getElementById('settings-add-library-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const type = document.getElementById('sal-type').value;
+      const path = document.getElementById('sal-path').value.trim();
+      const statusEl = document.getElementById('sal-status');
+      if (!path) { statusEl.innerHTML = '<p class="error">Root path required.</p>'; return; }
+      try {
+        await libraries.create({ library_type: type, root_path: path });
+        viewSettings();
+      } catch (err) {
+        statusEl.innerHTML = `<p class="error">Error: ${escape(err.message)}</p>`;
+      }
+    });
 
     // Load existing global enabled settings
     loadProviderSettings(providerList);
@@ -817,6 +867,42 @@ window.scanDiskAll = async function() {
     if (statusEl) statusEl.innerHTML = `<small style="color:var(--success)">${result?.enqueued ?? 0} series queued for disk scan.</small>`;
   } catch(e) {
     if (statusEl) statusEl.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Library management (inline in Settings)
+// ---------------------------------------------------------------------------
+
+window.settingsEditLibrary = function(uuid) {
+  document.getElementById(`settings-libpath-${uuid}`).classList.add('hidden');
+  document.getElementById(`settings-libedit-${uuid}`).classList.remove('hidden');
+  document.getElementById(`settings-libinput-${uuid}`).focus();
+};
+
+window.settingsCancelEditLibrary = function(uuid) {
+  document.getElementById(`settings-libpath-${uuid}`).classList.remove('hidden');
+  document.getElementById(`settings-libedit-${uuid}`).classList.add('hidden');
+};
+
+window.settingsSaveLibrary = async function(uuid) {
+  const newPath = document.getElementById(`settings-libinput-${uuid}`).value.trim();
+  if (!newPath) { alert('Root path cannot be empty.'); return; }
+  try {
+    await libraries.update(uuid, { root_path: newPath });
+    viewSettings();
+  } catch(e) {
+    alert('Error: ' + e.message);
+  }
+};
+
+window.settingsDeleteLibrary = async function(uuid) {
+  if (!confirm('Delete this library and ALL its manga records? (Files on disk are not deleted.)')) return;
+  try {
+    await libraries.delete(uuid);
+    viewSettings();
+  } catch(e) {
+    alert('Error: ' + e.message);
   }
 };
 

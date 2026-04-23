@@ -3092,4 +3092,264 @@ body.bulk-bar-active { padding-bottom: 60px; }
 .log-debug .log-level { color: var(--text-muted); opacity: 0.7; }
 .log-debug .log-msg   { opacity: 0.7; }
 .log-trace .log-level { color: var(--text-muted); opacity: 0.5; }
+
+/* ============================================================
+   Home toolbar (sticky search + sort + view mode)
+   ============================================================ */
+
+.home-toolbar {
+  position: sticky;
+  top: var(--nav-height);
+  z-index: 90;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border-light);
+  padding: 0.5rem 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.home-search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  color: var(--text);
+  font-size: 0.95rem;
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+.home-search-input:focus {
+  border-color: var(--accent);
+}
+
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.sort-select {
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  color: var(--text);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.view-mode-btns {
+  display: flex;
+  gap: 0.2rem;
+}
+
+.view-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition), border-color var(--transition);
+}
+
+.view-mode-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text);
+}
+
+.view-mode-btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--bg-secondary);
+}
+
+/* ---- View mode grid variants ---- */
+
+.card-grid--large {
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+
+.card-grid--small {
+  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+  gap: 0.75rem;
+}
+
+.card-grid--small .manga-card .info {
+  padding: 0.4rem 0.5rem;
+}
+
+.card-grid--small .manga-card .meta {
+  display: none;
+}
+
+.card-grid--small .manga-card .title {
+  font-size: 0.75rem;
+  -webkit-line-clamp: 2;
+}
+
+/* ---- Table view ---- */
+
+.manga-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.manga-table th {
+  text-align: left;
+  padding: 0.4rem 0.75rem;
+  border-bottom: 2px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.manga-table td {
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--border-light);
+  vertical-align: middle;
+}
+
+.manga-table tr:hover td {
+  background: var(--bg-secondary);
+}
+
+.manga-table img.thumb {
+  width: 36px;
+  height: 54px;
+  object-fit: cover;
+  border-radius: 3px;
+  display: block;
+}
+
+.manga-table-title {
+  font-weight: 500;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.manga-table-title:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+/* ---- Library badge on cards ---- */
+
+.lib-badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-light);
+  border-radius: 3px;
+  padding: 0 0.35rem;
+  margin-top: 0.2rem;
+  line-height: 1.5;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- AniList results section ---- */
+
+.anilist-results {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-light);
+}
+
+.anilist-results h4 {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin: 0 0 0.75rem 0;
+}
+
+/* ---- AniList card (extends .manga-card) ---- */
+
+.anilist-card {
+  position: relative;
+  cursor: pointer;
+}
+
+.anilist-card .add-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  border-radius: var(--radius);
+}
+
+.anilist-card:hover .add-overlay {
+  opacity: 1;
+}
+
+.anilist-card .add-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  width: 2.75rem;
+  height: 2.75rem;
+  font-size: 1.75rem;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  transition: background var(--transition), transform 0.1s ease;
+}
+
+.anilist-card .add-btn:hover {
+  background: var(--accent-hover);
+  transform: scale(1.1);
+}
+
+/* ---- Misc home helpers ---- */
+
+.no-results-msg {
+  margin-top: 1rem;
+  color: var(--text-muted);
+}
+
+.text-muted {
+  color: var(--text-muted);
+}
+
+/* ---- Responsive adjustments for toolbar ---- */
+
+@media (max-width: 600px) {
+  .home-toolbar {
+    flex-wrap: wrap;
+  }
+  .home-search-input {
+    width: 100%;
+  }
+  .toolbar-right {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
 .log-trace .log-msg   { opacity: 0.5; }

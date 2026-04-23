@@ -6,9 +6,9 @@ import * as sse from './events.js';
 // Views are attached to window by their respective modules
 const routes = [
   [/^\/$/, 'viewHome'],
-  [/^\/library$/, 'viewLibraries'],
+  [/^\/library$/, null], // moved to Settings
   [/^\/series\/([^/]+)$/, 'viewSeries'],
-  [/^\/search$/, 'viewSearch'],
+  [/^\/search$/, null], // merged into home
   [/^\/settings$/, 'viewSettings'],
   [/^\/desktop$/, 'viewDesktop'],
   [/^\/queue$/, 'viewQueue'],
@@ -82,6 +82,11 @@ export function dispatch(path) {
   for (const [pat, viewName] of routes) {
     const m = path.match(pat);
     if (m) {
+      if (viewName === null) {
+        // Route removed — redirect to home
+        navigate('/');
+        return;
+      }
       const viewFn = window[viewName];
       if (viewFn) {
         viewFn(...m.slice(1));
