@@ -366,59 +366,30 @@ document.addEventListener('keydown', (e) => {
   window.setHomeSearch(input.value);
 });
 
-// ---- Add-to-library modal ----
+// ---- Add to first library immediately (no modal) ----
 
 window.showAddMangaModal = async function(anilistId, pathSafeTitle) {
-  document.querySelector('.modal-overlay.add-modal')?.remove();
-
-  let libOptions = '<option value="">— select library —</option>';
-  try {
-    const libs = await libraries.list();
-    libOptions += libs.map(lib =>
-      `<option value="${lib.uuid}">${escape(lib.root_path)}</option>`
-    ).join('');
-  } catch (_) {
-    libOptions = '<option value="">Error loading libraries</option>';
+  // Find the card element and show a spinner while adding
+  const card = document.querySelector(`.anilist-card[onclick*="${anilistId}"]`);
+  if (card) {
+    card.style.pointerEvents = 'none';
+    card.style.opacity = '0.6';
   }
 
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay add-modal';
-  overlay.innerHTML = `
-    <div class="modal">
-      <h3>Add to Library</h3>
-      <p style="color:var(--text-secondary);font-size:0.9rem">AniList #${anilistId} — metadata fetched automatically.</p>
-      <form id="add-modal-form">
-        <label>Library</label>
-        <select id="am-lib">${libOptions}</select>
-        <label>Folder name</label>
-        <input type="text" id="am-path" value="${escape(pathSafeTitle)}">
-        <div style="display:flex;gap:0.5rem;margin-top:1rem">
-          <button type="submit" class="btn btn-primary">Add to Library</button>
-          <button type="button" class="btn btn-ghost" onclick="document.querySelector('.modal-overlay.add-modal').remove()">Cancel</button>
-        </div>
-      </form>
-      <div id="am-status"></div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
-
-  document.getElementById('add-modal-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const libId = document.getElementById('am-lib').value;
-    const path = document.getElementById('am-path').value.trim();
-    const statusEl = document.getElementById('am-status');
-    if (!libId) { statusEl.innerHTML = '<p class="error">Please select a library.</p>'; return; }
-    if (!path) { statusEl.innerHTML = '<p class="error">Folder name required.</p>'; return; }
-    statusEl.innerHTML = '<p>Adding… (downloading cover, fetching metadata)</p>';
-    try {
-      const m = await mangaApi.create({ anilist_id: anilistId, library_id: libId, relative_path: path });
-      overlay.remove();
-      navigate(`/series/${m.id}`);
-    } catch (err) {
-      statusEl.innerHTML = `<p class="error">Error: ${escape(err.message)}</p>`;
+  try {
+    const libs = await libraries.list();
+    if (libs.length === 0) {
+      alert('No libraries configured. Add one in Settings first.');
+      if (card) { card.style.pointerEvents = ''; card.style.opacity = ''; }
+      return;
     }
-  });
+    const lib = libs[0];
+    const m = await mangaApi.create({ anilist_id: anilistId, library_id: lib.uuid, relative_path: pathSafeTitle });
+    navigate(`/series/${m.id}`);
+  } catch (err) {
+    if (card) { card.style.pointerEvents = ''; card.style.opacity = ''; }
+    alert(`Failed to add: ${err.message}`);
+  }
 };
 
 window.viewHome = viewHome;
