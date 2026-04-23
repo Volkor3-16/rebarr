@@ -126,6 +126,9 @@ function buildCards(mangas) {
   return `<div class="card-grid">${sortManga(filtered).map(m => {
     const dl = m.downloaded_count ?? 0;
     const total = m.chapter_count != null ? m.chapter_count : '?';
+    const extDl = m.extras_downloaded_count;
+    const hasExtras = m.extras_count != null && m.extras_count > 0;
+    const extrasStr = hasExtras ? (extDl != null && extDl > 0 ? ` + ${extDl}` : ' +') : '';
     const title = m.metadata?.title ?? 'Unknown';
     const thumb = m.thumbnail_url
       ? `<img src="${escape(m.thumbnail_url)}" alt="${escape(title)}" loading="lazy">`
@@ -134,7 +137,7 @@ function buildCards(mangas) {
       ${thumb}
       <div class="info">
         <div class="title">${escape(title)}</div>
-        <div class="meta">${dl} / ${total} chapters</div>
+        <div class="meta">${dl} / ${total}${extrasStr} chapters</div>
       </div>
     </a>`;
   }).join('')}</div>`;

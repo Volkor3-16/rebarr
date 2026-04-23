@@ -986,27 +986,44 @@ pub async fn update_canonical(
 pub async fn update_manga_counts(pool: &SqlitePool, manga_id: Uuid) -> Result<(), sqlx::Error> {
     let uuids = get_canonical_uuids(pool, manga_id).await?;
 
-    let (chapter_count, downloaded_count) = if uuids.is_empty() {
-        (0i64, 0i64)
-    } else {
-        let placeholders: String = uuids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-        let count_sql = format!(
-            "SELECT COUNT(*), SUM(CASE WHEN download_status = 'Downloaded' THEN 1 ELSE 0 END)
-             FROM Chapters WHERE uuid IN ({placeholders})"
-        );
-        let mut q = sqlx::query_as::<_, (i64, i64)>(&count_sql);
-        for uuid in &uuids {
-            q = q.bind(uuid);
-        }
-        q.fetch_one(pool).await?
-    };
+    let (chapter_count, downloaded_count, extras_count, extras_downloaded_count) =
+        if uuids.is_empty() {
+            (0i64, 0i64, 0i64, 0i64)
+        } else {
+            let placeholders: String = uuids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+            let count_sql = format!(
+                "SELECT
+                   SUM(CASE WHEN is_extra = 0 THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN is_extra = 0 AND download_status = 'Downloaded' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN is_extra = 1 THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN is_extra = 1 AND download_status = 'Downloaded' THEN 1 ELSE 0 END)
+                 FROM Chapters WHERE uuid IN ({placeholders})"
+            );
+            let mut q = sqlx::query_as::<_, (Option<i64>, Option<i64>, Option<i64>, Option<i64>)>(
+                &count_sql,
+            );
+            for uuid in &uuids {
+                q = q.bind(uuid);
+            }
+            let row = q.fetch_one(pool).await?;
+            (
+                row.0.unwrap_or(0),
+                row.1.unwrap_or(0),
+                row.2.unwrap_or(0),
+                row.3.unwrap_or(0),
+            )
+        };
 
-    sqlx::query("UPDATE Manga SET chapter_count = ?, downloaded_count = ? WHERE uuid = ?")
-        .bind(chapter_count)
-        .bind(downloaded_count)
-        .bind(manga_id.to_string())
-        .execute(pool)
-        .await?;
+    sqlx::query(
+        "UPDATE Manga SET chapter_count = ?, downloaded_count = ?, extras_count = ?, extras_downloaded_count = ? WHERE uuid = ?",
+    )
+    .bind(chapter_count)
+    .bind(downloaded_count)
+    .bind(extras_count)
+    .bind(extras_downloaded_count)
+    .bind(manga_id.to_string())
+    .execute(pool)
+    .await?;
 
     db_manga::update_last_chapter(pool, manga_id).await?;
 

@@ -414,9 +414,10 @@ async function init() {
   // Use SSE for real-time activity console updates (replaces polling)
   sse.on('task_update', handleTaskUpdate);
 
-  // System stats polling every 30s (low frequency, fine to poll)
+  // System stats polling every 30s — skips while tab is hidden
   updateSystemStats();
-  setInterval(updateSystemStats, 30000);
+  setInterval(() => { if (!document.hidden) updateSystemStats(); }, 30000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) updateSystemStats(); });
 
   // Measure the header height so we only collapse after it has fully scrolled off-screen.
   // We read offsetHeight before any collapse has occurred, giving us the full expanded height.

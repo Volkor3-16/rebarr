@@ -91,3 +91,13 @@ function dispatch(eventType, data) {
 
 // Auto-connect on module load
 connect();
+
+// Disconnect SSE when the tab is hidden to free server-side receivers,
+// and reconnect immediately when it becomes active again.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    disconnect();
+  } else {
+    connect();
+  }
+});

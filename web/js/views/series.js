@@ -132,6 +132,9 @@ export async function viewSeries(id) {
     const year = meta.start_year ? (meta.end_year ? `${meta.start_year} - ${meta.end_year}` : `${meta.start_year} - ongoing`) : '?';
     const dl = m.downloaded_count ?? 0;
     const total = m.chapter_count != null ? m.chapter_count : '?';
+    const extDl = m.extras_downloaded_count;
+    const hasExtras = m.extras_count != null && m.extras_count > 0;
+    const extrasStr = hasExtras ? (extDl != null && extDl > 0 ? ` + ${extDl}` : ' +') : '';
     
     const thumb = m.thumbnail_url
       ? `<div class="series-cover-wrapper">
@@ -196,7 +199,7 @@ export async function viewSeries(id) {
             </div>
             <div class="series-meta-item">
               <span class="label">Chapters:</span>
-              <span class="value">${dl} / ${total} downloaded</span>
+              <span class="value">${dl} / ${total}${extrasStr} downloaded</span>
             </div>
             <div class="series-meta-item">
               <span class="label">Folder:</span>

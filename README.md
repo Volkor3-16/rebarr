@@ -15,11 +15,25 @@ I'll remove this when I've got the first public release out, this is just a quic
 
 - Providers should be library specifc -> tag for western, manga,manwha and shit
     - same with metadata client
+- I Was Reincarnated as the 7th Prince So I Can Take My Time Perfecting My Magical Ability
+    BuildFullChapterList • 2/3 attempts • 1m ago
+    17%
+    Finished provider search on TCB Scans
+    Error: scraper error: Browser error: task 115865 panicked with message "end byte index 62 is not a char boundary; it is inside '術' (bytes 60..63) of `転生したら第七王子だったので、気ままに魔術を極めます`"
+- Build Full Chapter List should:
+    - Not just error our when a provider is disabled
+    - take priority over anything, even manual downloads
 
 ### Frontend
 
 - [ ] Let users re-order the queue
 - [ ] Setup Wizard: Adding 49 series to library… should have some logging or progress.
+- Count number total number of unique suggestions, show that somewhere idk i just wanna know how quick it updates
+- failed status chapters should have failed time - relative
+- downloaded hover time should be relative too (and then YYYY-MM-DD: HH:MM:SS)
+- [ ] Multiple tabs slow down a bunch, all the polling per tab is bad?
+    - Only poll if tab is active?
+- [ ] We can't delete downloaded chapters from providers that have been disabled. the action menu doesn't have any entries.
 
 ### Assend (GraphQL frontend for Moku-like frontend?)
 
@@ -38,8 +52,10 @@ I'll remove this when I've got the first public release out, this is just a quic
 ### Providers / Scraper
 
 - [ ] Mangadex: Error: scraper error: Parse error: from_json: variable 'chapters_processed' not found
-- [ ] AllManga: Broken again? Page downloads aint work?
-- [ ] MangaTaro: url match isn't correct
+- [ ] MangaTaro: url match isn't correct, clicking it opens rebarr anyway
+- [ ] WeebCentral: titles are bad sometimes "82-eng-li" & "Ch.011 " & "Vol.7 Chapter 35 "
+- [ ] Mangakakalot: We don't get a title from them? is it broke?
+
 - Use `setBlockedResourceTypes` to block useless requests (some images, CSS, fonts, media, whatever)
     - This could work, but you'd have to have a list of stuff TO block, since blocking every 3rd party image would block pages
     - Honestly best bet could be forcing it to use pihole/dns blocking
@@ -53,6 +69,7 @@ I'll remove this when I've got the first public release out, this is just a quic
     - Automatic updates and all that nice stuff
     - Add more providers
     - The separate repo should also have a nice CI Pipeline that runs tests for each provider, using text_fixtures, to find broken providers, and alert of new broken ones & a nice 'auto updating' list of what providers work
+- Can we just make a wrapper to parse the keiyoushi extensions instead of needing to adapt them all?
 
 ## Features
 

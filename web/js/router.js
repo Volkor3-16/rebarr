@@ -21,6 +21,7 @@ const routes = [
 
 // Current poll handle for live updates
 let _pollHandle = null;
+let _visibilityHandler = null;
 
 /**
  * Stop any active polling and SSE listeners
@@ -30,18 +31,29 @@ export function stopPolling() {
     clearInterval(_pollHandle);
     _pollHandle = null;
   }
+  if (_visibilityHandler) {
+    document.removeEventListener('visibilitychange', _visibilityHandler);
+    _visibilityHandler = null;
+  }
   sse.clearListeners();
 }
 
 /**
- * Set a poll interval
+ * Set a poll interval — skips execution while the tab is hidden and
+ * fires immediately when the tab becomes visible again.
  * @param {Function} fn - Function to call
  * @param {number} interval - Interval in ms
  */
 export function setPoll(fn, interval) {
   stopPolling();
-  fn(); // Call immediately
-  _pollHandle = setInterval(fn, interval);
+  if (!document.hidden) fn();
+  _pollHandle = setInterval(() => {
+    if (!document.hidden) fn();
+  }, interval);
+  _visibilityHandler = () => {
+    if (!document.hidden) fn();
+  };
+  document.addEventListener('visibilitychange', _visibilityHandler);
 }
 
 /**

@@ -23,8 +23,10 @@ pub struct Manga {
     pub mal_id: Option<u32>, // MAL cross-reference ID (sourced from AniList's id_mal field)
     pub metadata: MangaMetadata, // Stores all the metadata for the series
     pub relative_path: PathBuf, // Relative (to the library root) path of the manga files.
-    pub downloaded_count: Option<i32>, // How many chapters are on disk already.
-    pub chapter_count: Option<u32>, // anilist doesn't support chapter counts in any sane way, we need to build this from providers @ scrape time.
+    pub downloaded_count: Option<i32>, // How many non-extra chapters are on disk already.
+    pub chapter_count: Option<u32>, // Total non-extra canonical chapters (built from providers @ scrape time).
+    pub extras_downloaded_count: Option<i32>, // How many extra/bonus chapters are on disk.
+    pub extras_count: Option<u32>, // Total extra/bonus canonical chapters.
     pub metadata_source: MangaSource, // The source of the metadata, not where we download it from.
     pub thumbnail_url: Option<String>, // Cached cover image URL from metadata source.
     pub monitored: bool,            // If true, new chapters are automatically downloaded.
@@ -638,6 +640,8 @@ impl From<Media> for Manga {
             relative_path: PathBuf::new(), // caller must set before persisting
             downloaded_count: None,
             chapter_count,
+            extras_downloaded_count: None,
+            extras_count: None,
             metadata_source: MangaSource::AniList,
             thumbnail_url,
             monitored: true,

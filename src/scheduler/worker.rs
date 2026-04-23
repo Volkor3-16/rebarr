@@ -603,6 +603,8 @@ async fn dispatch(
                     fresh.relative_path = manga.relative_path.clone();
                     fresh.downloaded_count = manga.downloaded_count;
                     fresh.chapter_count = manga.chapter_count;
+                    fresh.extras_downloaded_count = manga.extras_downloaded_count;
+                    fresh.extras_count = manga.extras_count;
                     fresh.monitored = manga.monitored;
                     fresh.created_at = manga.created_at;
                     fresh.metadata_updated_at = chrono::Utc::now().timestamp();

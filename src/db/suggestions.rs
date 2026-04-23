@@ -443,6 +443,8 @@ mod tests {
             relative_path: PathBuf::from(title),
             downloaded_count: None,
             chapter_count: None,
+            extras_downloaded_count: None,
+            extras_count: None,
             metadata_source: MangaSource::AniList,
             thumbnail_url: None,
             monitored: true,

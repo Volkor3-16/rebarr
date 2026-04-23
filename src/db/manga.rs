@@ -47,6 +47,8 @@ struct MangaRow {
     end_year: Option<i32>,
     chapter_count: Option<i64>,
     downloaded_count: Option<i64>,
+    extras_count: Option<i64>,
+    extras_downloaded_count: Option<i64>,
     metadata_source: String,
     thumbnail_url: Option<String>,
     created_at: i64,
@@ -135,6 +137,8 @@ fn manga_from_parts(row: MangaRow, tags: Vec<String>) -> Result<Manga, sqlx::Err
         relative_path: PathBuf::from(row.relative_path),
         downloaded_count: row.downloaded_count.map(|v| v as i32),
         chapter_count: row.chapter_count.map(|v| v as u32),
+        extras_downloaded_count: row.extras_downloaded_count.map(|v| v as i32),
+        extras_count: row.extras_count.map(|v| v as u32),
         metadata_source,
         thumbnail_url: row.thumbnail_url,
         monitored: row.monitored,
@@ -219,6 +223,8 @@ pub async fn insert(pool: &SqlitePool, manga: &Manga) -> Result<(), sqlx::Error>
     let mal_id = manga.mal_id.map(|v| v as i64);
     let chapter_count = manga.chapter_count.map(|v| v as i64);
     let downloaded_count = manga.downloaded_count.map(|v| v as i64);
+    let extras_count = manga.extras_count.map(|v| v as i64);
+    let extras_downloaded_count = manga.extras_downloaded_count.map(|v| v as i64);
     let other_titles_json = serialize_other_titles(&manga.metadata.other_titles);
 
     sqlx::query(
@@ -226,6 +232,7 @@ pub async fn insert(pool: &SqlitePool, manga: &Manga) -> Result<(), sqlx::Error>
             uuid, library_id, anilist_id, mal_id, relative_path,
             title, other_titles, synopsis, publishing_status,
             start_year, start_month, start_day, end_year, chapter_count, downloaded_count,
+            extras_count, extras_downloaded_count,
             metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at,
             last_checked_at, last_chapter_at,
             writer, penciller, inker, colorist, letterer, editor, translator,
@@ -234,6 +241,7 @@ pub async fn insert(pool: &SqlitePool, manga: &Manga) -> Result<(), sqlx::Error>
             ?, ?, ?, ?, ?,
             ?, ?, ?, ?,
             ?, ?, ?, ?, ?, ?,
+            ?, ?,
             ?, ?, ?, ?, ?,
             ?, ?,
             ?, ?, ?, ?, ?, ?, ?,
@@ -255,6 +263,8 @@ pub async fn insert(pool: &SqlitePool, manga: &Manga) -> Result<(), sqlx::Error>
     .bind(manga.metadata.end_year)
     .bind(chapter_count)
     .bind(downloaded_count)
+    .bind(extras_count)
+    .bind(extras_downloaded_count)
     .bind(metadata_source)
     .bind(manga.thumbnail_url.as_deref())
     .bind(manga.monitored as i64)
@@ -294,6 +304,7 @@ pub async fn get_by_id(pool: &SqlitePool, id: Uuid) -> Result<Option<Manga>, sql
             uuid, library_id, anilist_id, mal_id, relative_path,
             title, other_titles, synopsis, publishing_status,
             start_year, start_month, start_day, end_year, chapter_count, downloaded_count,
+            extras_count, extras_downloaded_count,
             metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at, last_chapter_at,
             writer, penciller, inker, colorist, letterer, editor, translator,
             genre, community_rating
@@ -325,6 +336,7 @@ pub async fn get_all_for_library(
             uuid, library_id, anilist_id, mal_id, relative_path,
             title, other_titles, synopsis, publishing_status,
             start_year, start_month, start_day, end_year, chapter_count, downloaded_count,
+            extras_count, extras_downloaded_count,
             metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at, last_chapter_at,
             writer, penciller, inker, colorist, letterer, editor, translator,
             genre, community_rating
@@ -366,6 +378,7 @@ pub async fn exists_by_external_ids(
             uuid, library_id, anilist_id, mal_id, relative_path,
             title, other_titles, synopsis, publishing_status,
             start_year, start_month, start_day, end_year, chapter_count, downloaded_count,
+            extras_count, extras_downloaded_count,
             metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at, last_chapter_at,
             writer, penciller, inker, colorist, letterer, editor, translator,
             genre, community_rating
@@ -399,6 +412,7 @@ pub async fn get_by_anilist_id(
             uuid, library_id, anilist_id, mal_id, relative_path,
             title, other_titles, synopsis, publishing_status,
             start_year, start_month, start_day, end_year, chapter_count, downloaded_count,
+            extras_count, extras_downloaded_count,
             metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at, last_chapter_at,
             writer, penciller, inker, colorist, letterer, editor, translator,
             genre, community_rating
@@ -551,6 +565,7 @@ pub async fn get_due_for_check(
             uuid, library_id, anilist_id, mal_id, relative_path,
             title, other_titles, synopsis, publishing_status,
             start_year, start_month, start_day, end_year, chapter_count, downloaded_count,
+            extras_count, extras_downloaded_count,
             metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at, last_chapter_at,
             writer, penciller, inker, colorist, letterer, editor, translator,
             genre, community_rating
@@ -642,6 +657,7 @@ pub async fn get_all_monitored(pool: &SqlitePool) -> Result<Vec<Manga>, sqlx::Er
             uuid, library_id, anilist_id, mal_id, relative_path,
             title, other_titles, synopsis, publishing_status,
             start_year, start_month, start_day, end_year, chapter_count, downloaded_count,
+            extras_count, extras_downloaded_count,
             metadata_source, thumbnail_url, monitored, created_at, metadata_updated_at, last_checked_at, last_chapter_at,
             writer, penciller, inker, colorist, letterer, editor, translator,
             genre, community_rating
@@ -724,6 +740,8 @@ mod tests {
             relative_path: PathBuf::from("test-manga"),
             downloaded_count: None,
             chapter_count: None,
+            extras_downloaded_count: None,
+            extras_count: None,
             metadata_source: MangaSource::Local,
             thumbnail_url: None,
             monitored: true,

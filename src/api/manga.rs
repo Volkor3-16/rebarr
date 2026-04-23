@@ -338,6 +338,8 @@ pub async fn add_manga_manual(
         relative_path: PathBuf::from(body.relative_path.trim()),
         downloaded_count: None,
         chapter_count: None,
+        extras_downloaded_count: None,
+        extras_count: None,
         metadata_source: MangaSource::Local,
         thumbnail_url: body.cover_url.clone().filter(|s| !s.is_empty()),
         monitored: true,
