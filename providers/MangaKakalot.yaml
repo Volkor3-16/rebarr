@@ -1,5 +1,6 @@
 name: MangaKakalot
 base_url: https://www.mangakakalot.gg # These guys run Manganato.gg (and a bunch of others) (not the original manganato though)
+version: "1"
 default_score: -20 # Low image quality, but large library, good backup.
 tags:
   - aggregator
