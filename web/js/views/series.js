@@ -2,7 +2,7 @@
 
 import { manga as mangaApi, tasks, providerSettings, coverApi, qualityRules } from '../api.js';
 import { render, setPoll, navigate } from '../router.js';
-import { escape, relTime, statusBadge, taskBadge, skeleton, showToast, truncateMiddle, formatFileSize, renderTaskProgress } from '../utils.js';
+import { escape, relTime, statusBadge, taskBadge, skeleton, showToast, truncateMiddle, renderTaskProgress } from '../utils.js';
 
 let currentMangaId = null;
 let chapterDataCache = [];
@@ -765,8 +765,8 @@ function chapterRow(mangaId, ch, {
 
   const status = ch.download_status;
   const canDl = status === 'Missing' || status === 'Failed';
-  const fileSizeHtml = (status === 'Downloaded' && ch.file_size_bytes)
-    ? ` <span class="ch-filesize">${formatFileSize(ch.file_size_bytes)}</span>`
+  const downloadedAtHtml = (status === 'Downloaded' && ch.downloaded_at)
+    ? ` <small>${relTime(ch.downloaded_at)}</small>`
     : '';
   const checkboxHtml = !isSubrow
     ? `<input type="checkbox" class="ch-checkbox" data-slot-key="${groupKey}" ${isSelected ? 'checked' : ''} onclick="handleCheckboxClick(event, this)">`
@@ -820,7 +820,7 @@ function chapterRow(mangaId, ch, {
     <td>${sourceHtml}</td>
     <td>
        <div class="ch-status-cell">
-         ${statusBadge(status, ch.downloaded_at)}${fileSizeHtml}
+         ${statusBadge(status, ch.file_size_bytes)}${downloadedAtHtml}
          ${quickDlBtn}
        </div>
     </td>

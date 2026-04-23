@@ -34,10 +34,10 @@ export function statusBadgeClass(s) {
 /**
  * Render status badge HTML with icon
  * @param {string} s - Status string
- * @param {number|null} downloadedAt - Unix timestamp when chapter was downloaded (optional)
+ * @param {number|null} fileSizeBytes - CBZ file size in bytes (optional, shown in tooltip for Downloaded)
  * @returns {string} HTML span element
  */
-export function statusBadge(s, downloadedAt = null) {
+export function statusBadge(s, fileSizeBytes = null) {
   const icons = {
     'Missing': 'mdi:book-remove',
     'Queued': 'mdi:book-clock',
@@ -47,13 +47,12 @@ export function statusBadge(s, downloadedAt = null) {
   };
   const icon = icons[s] || 'mdi:book-remove';
   const cls = statusBadgeClass(s);
-  
+
   let title = s;
-  if (s === 'Downloaded' && downloadedAt) {
-    const dlDate = new Date(downloadedAt * 1000);
-    title = `${s}\nDownloaded: ${dlDate.toLocaleString()}`;
+  if (s === 'Downloaded' && fileSizeBytes) {
+    title = `${s}\n${formatFileSize(fileSizeBytes)}`;
   }
-  
+
   return `<span class="status-icon ${cls.replace('st-', '')}" title="${escape(title)}"><iconify-icon icon="${icon}" width="20" height="20"></iconify-icon></span>`;
 }
 
@@ -119,7 +118,8 @@ export function relTime(ts) {
   if (!ts) return '—';
   const now = Math.floor(Date.now() / 1000);
   const diff = now - ts;
-  const title = new Date(ts * 1000).toLocaleString();
+  const _d = new Date(ts * 1000);
+  const title = `${_d.getFullYear()}-${String(_d.getMonth()+1).padStart(2,'0')}-${String(_d.getDate()).padStart(2,'0')} ${String(_d.getHours()).padStart(2,'0')}:${String(_d.getMinutes()).padStart(2,'0')}:${String(_d.getSeconds()).padStart(2,'0')}`;
   
   if (diff < 60) return `<span class="rel-time" data-ts="${ts}" title="${title}">just now</span>`;
   if (diff < 3600) return `<span class="rel-time" data-ts="${ts}" title="${title}">${Math.floor(diff / 60)}m ago</span>`;
