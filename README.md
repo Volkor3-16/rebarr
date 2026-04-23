@@ -52,7 +52,6 @@ I'll remove this when I've got the first public release out, this is just a quic
 ### Providers / Scraper
 
 - [ ] Mangadex: Error: scraper error: Parse error: from_json: variable 'chapters_processed' not found
-- [ ] MangaTaro: url match isn't correct, clicking it opens rebarr anyway
 - [ ] WeebCentral: titles are bad sometimes "82-eng-li" & "Ch.011 " & "Vol.7 Chapter 35 "
 - [ ] Mangakakalot: We don't get a title from them? is it broke?
 
