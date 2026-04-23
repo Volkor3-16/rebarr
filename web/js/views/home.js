@@ -366,6 +366,20 @@ document.addEventListener('keydown', (e) => {
   window.setHomeSearch(input.value);
 });
 
+// Global paste: redirect pasted text into the search input when it isn't already focused
+document.addEventListener('paste', (e) => {
+  const input = document.getElementById(SEARCH_INPUT_ID);
+  if (!input) return;
+  if (document.activeElement === input) return;
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return;
+  e.preventDefault();
+  const text = e.clipboardData.getData('text/plain');
+  if (!text) return;
+  input.focus();
+  input.value += text;
+  window.setHomeSearch(input.value);
+});
+
 // ---- Add to first library immediately (no modal) ----
 
 window.showAddMangaModal = async function(anilistId, pathSafeTitle) {
