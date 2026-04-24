@@ -212,9 +212,14 @@ function buildAniListSection() {
       ? `<img src="${escape(m.thumbnail_url)}" alt="${escape(title)}" loading="lazy">`
       : `<img src="/web/img/no-cover.svg" alt="${escape(title)}" loading="lazy">`;
     const meta = [year, status].filter(Boolean).join(' · ');
-    return `<div class="manga-card anilist-card" onclick="showAddMangaModal(${id}, '${escape(pathSafe)}')">
+    return `<div class="manga-card anilist-card" title="${escape(title)}" onclick="showAddMangaModal(${id}, '${escape(pathSafe)}')">
       ${thumb}
-      <div class="add-overlay"><button class="add-btn" title="Add to library">+</button></div>
+      <div class="add-overlay">
+        <button class="add-btn" title="Add to library">+</button>
+        <a class="anilist-link-btn" href="https://anilist.co/manga/${id}" target="_blank" rel="noopener" title="Open on AniList" onclick="event.stopPropagation()">
+          <iconify-icon icon="simple-icons:anilist" width="16" height="16"></iconify-icon>
+        </a>
+      </div>
       <div class="info">
         <div class="title">${escape(title)}</div>
         ${homeView !== 'small' ? `<div class="meta">${escape(meta)}</div>` : ''}
