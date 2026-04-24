@@ -186,7 +186,18 @@ function buildLocalCards(mangas, multiLib) {
 
 function buildAniListSection() {
   if (!currentSearchQuery || currentSearchQuery.length < 2) return '';
-  if (anilistResults === null) return '';
+  if (anilistResults === null) {
+    return `<div class="anilist-results anilist-prompt">
+      <button class="btn btn-sm btn-ghost anilist-search-btn" onclick="triggerAnilistSearch()">
+        <iconify-icon icon="simple-icons:anilist" width="14" height="14"></iconify-icon>
+        Search AniList for "${escape(currentSearchQuery)}"
+      </button>
+      <button class="btn btn-sm btn-ghost anilist-search-btn" data-title="${escape(currentSearchQuery)}" onclick="showManualAddModal(this.dataset.title)">
+        <iconify-icon icon="mdi:plus" width="14" height="14"></iconify-icon>
+        Add "${escape(currentSearchQuery)}" manually
+      </button>
+    </div>`;
+  }
   if (anilistResults === 'loading') {
     return `<div class="anilist-results"><p class="text-muted">Searching AniList…</p></div>`;
   }
@@ -270,12 +281,13 @@ function rerenderContent() {
   const toolbar = buildToolbar();
   const cards = buildLocalCards(mangas, multiLib);
 
+  const aniSection = currentSearchQuery.length >= 2 ? buildAniListSection() : '';
+
   let body;
   if (cards === null) {
-    const aniSection = buildAniListSection();
     body = `<p class="text-muted no-results-msg">No series match your search.</p>${aniSection}`;
   } else {
-    body = cards;
+    body = cards + aniSection;
   }
 
   render(`<div class="home">${toolbar}${body}</div>`);
@@ -357,6 +369,14 @@ window.setHomeSearch = function(query) {
   rerenderContent();
 };
 
+window.triggerAnilistSearch = function() {
+  if (!currentSearchQuery || currentSearchQuery.length < 2) return;
+  clearTimeout(anilistDebounceTimer);
+  anilistResults = 'loading';
+  rerenderContent();
+  scheduleAnilistSearch(currentSearchQuery);
+};
+
 window.clearHomeSearch = function() {
   currentSearchQuery = '';
   clearTimeout(anilistDebounceTimer);
@@ -392,6 +412,121 @@ document.addEventListener('paste', (e) => {
   input.value += text;
   window.setHomeSearch(input.value);
 });
+
+// ---- Manual add modal ----
+
+window.showManualAddModal = function(prefillTitle) {
+  document.querySelector('.modal-overlay.manual-modal')?.remove();
+
+  const pathSafe = toPathSafe(prefillTitle || '');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay manual-modal';
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:480px;width:100%">
+      <h3>Add Manually</h3>
+      <p style="color:var(--text-secondary);font-size:0.9rem">For series not on AniList. Only Title and Folder are required.</p>
+      <form id="manual-modal-form">
+        <label>Title *</label>
+        <input type="text" id="mm-title" value="${escape(prefillTitle || '')}" placeholder="English title" required>
+
+        <label>Other Titles</label>
+        <input type="text" id="mm-other-titles" placeholder="Comma-separated: 呪術廻戦, Jujutsu Kaisen">
+
+        <label>Synopsis</label>
+        <textarea id="mm-synopsis" rows="3" placeholder="Series description…"></textarea>
+
+        <label>Status</label>
+        <select id="mm-status">
+          <option value="Unknown">Unknown</option>
+          <option value="Ongoing">Ongoing</option>
+          <option value="Completed">Completed</option>
+          <option value="Hiatus">Hiatus</option>
+          <option value="Cancelled">Cancelled</option>
+          <option value="NotYetReleased">Not Yet Released</option>
+        </select>
+
+        <div style="display:flex;gap:0.5rem">
+          <div style="flex:1"><label>Start Year</label><input type="number" id="mm-start-year" placeholder="e.g. 2019" style="width:100%"></div>
+          <div style="flex:1"><label>End Year</label><input type="number" id="mm-end-year" placeholder="blank if ongoing" style="width:100%"></div>
+        </div>
+
+        <label>Tags</label>
+        <input type="text" id="mm-tags" placeholder="Comma-separated: Action, Fantasy">
+
+        <label>Cover URL</label>
+        <input type="text" id="mm-cover" placeholder="https://…">
+
+        <label>Folder Name *</label>
+        <input type="text" id="mm-path" value="${escape(pathSafe)}" placeholder="Series folder within library root" required>
+
+        <div style="display:flex;gap:0.5rem;margin-top:1rem">
+          <button type="submit" class="btn btn-primary">Add to Library</button>
+          <button type="button" class="btn btn-ghost" onclick="document.querySelector('.modal-overlay.manual-modal').remove()">Cancel</button>
+        </div>
+      </form>
+      <div id="mm-status-msg"></div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+
+  // Auto-fill folder from title unless user has edited it
+  const titleEl = overlay.querySelector('#mm-title');
+  const pathEl = overlay.querySelector('#mm-path');
+  pathEl.dataset.edited = pathSafe && prefillTitle ? '1' : '';
+  titleEl.addEventListener('input', () => {
+    if (!pathEl.dataset.edited) pathEl.value = toPathSafe(titleEl.value);
+  });
+  pathEl.addEventListener('input', () => { pathEl.dataset.edited = '1'; });
+
+  // Focus title, select all so the prefill is easy to replace
+  titleEl.focus();
+  titleEl.select();
+
+  overlay.querySelector('#manual-modal-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const title = titleEl.value.trim();
+    const path = pathEl.value.trim();
+    const statusEl = overlay.querySelector('#mm-status-msg');
+
+    if (!title) { statusEl.innerHTML = '<p class="error">Title is required.</p>'; return; }
+    if (!path)  { statusEl.innerHTML = '<p class="error">Folder name is required.</p>'; return; }
+
+    statusEl.innerHTML = '<p>Adding…</p>';
+
+    try {
+      const libs = await libraries.list();
+      if (libs.length === 0) {
+        statusEl.innerHTML = '<p class="error">No libraries configured. Add one in Settings first.</p>';
+        return;
+      }
+
+      const splitCsv = id => overlay.querySelector(id).value.trim()
+        ? overlay.querySelector(id).value.trim().split(',').map(t => t.trim()).filter(Boolean)
+        : null;
+
+      const body = {
+        library_id: libs[0].uuid,
+        relative_path: path,
+        title,
+        other_titles: splitCsv('#mm-other-titles'),
+        synopsis: overlay.querySelector('#mm-synopsis').value.trim() || null,
+        publishing_status: overlay.querySelector('#mm-status').value,
+        tags: splitCsv('#mm-tags') ?? [],
+        start_year: overlay.querySelector('#mm-start-year').value ? parseInt(overlay.querySelector('#mm-start-year').value, 10) : null,
+        end_year: overlay.querySelector('#mm-end-year').value ? parseInt(overlay.querySelector('#mm-end-year').value, 10) : null,
+        cover_url: overlay.querySelector('#mm-cover').value.trim() || null,
+      };
+
+      const m = await mangaApi.createManual(body);
+      overlay.remove();
+      navigate(`/series/${m.id}`);
+    } catch (err) {
+      statusEl.innerHTML = `<p class="error">Error: ${escape(err.message)}</p>`;
+    }
+  });
+};
 
 // ---- Add to first library immediately (no modal) ----
 

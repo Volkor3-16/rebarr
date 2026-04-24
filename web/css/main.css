@@ -3297,6 +3297,33 @@ body.bulk-bar-active { padding-bottom: 60px; }
   border-top: 1px solid var(--border-light);
 }
 
+.anilist-prompt {
+  padding-top: 0.75rem !important;
+  border-top: none !important;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.anilist-search-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--text-muted);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 0.35rem 0.75rem;
+  font-size: 0.85rem;
+  background: none;
+  cursor: pointer;
+  transition: color var(--transition), border-color var(--transition);
+}
+
+.anilist-search-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 .anilist-results h4 {
   display: flex;
   align-items: center;

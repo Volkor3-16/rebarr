@@ -13,6 +13,9 @@ This a informal changelog so i can keep track of what im doing.
     - We cache a LOT more
     - We group 60 queries into 1!
 - We now change the title of the page more often.
+- You can open anilist page for series in search results
+- You can manually trigger a anilist search when there's local results.
+- Same with manual series addition
 
 ## 2026-04-23
 
