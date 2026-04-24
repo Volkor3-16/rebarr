@@ -78,6 +78,7 @@ pub const DEFAULT_QUEUE_TERMINAL_LIMIT: i64 = 200;
 // available chapters before draining background download backlog.
 pub const PRIORITY_PROVIDER_SYNC: i64 = 1;
 pub const PRIORITY_DOWNLOAD_CHAPTER: i64 = 10;
+pub const PRIORITY_QUEUE_FRONT_SEED: i64 = 0;
 
 #[derive(Debug, Clone, Default)]
 pub struct RecentTaskQuery {
@@ -869,6 +870,29 @@ pub async fn enqueue_with_payload(
     .await
 }
 
+/// Insert a new Pending task at the front of a specific queue.
+pub async fn enqueue_at_front(
+    pool: &SqlitePool,
+    task_type: TaskType,
+    manga_id: Option<Uuid>,
+    chapter_id: Option<Uuid>,
+    queue: String,
+    payload: Option<String>,
+) -> Result<Uuid, sqlx::Error> {
+    let priority = next_front_priority(pool, &queue).await?;
+    enqueue_full(
+        pool,
+        task_type,
+        None,
+        manga_id,
+        chapter_id,
+        priority,
+        Some(queue),
+        payload,
+    )
+    .await
+}
+
 /// Insert a new Pending library task with optional queue and payload.
 pub async fn enqueue_library_with_payload(
     pool: &SqlitePool,
@@ -929,6 +953,82 @@ async fn enqueue_full(
         &task_event_details(pool, id, task_type_str(&task_type), "Pending", None).await,
     );
     Ok(id)
+}
+
+async fn next_front_priority(pool: &SqlitePool, queue: &str) -> Result<i64, sqlx::Error> {
+    let min_priority: Option<i64> =
+        sqlx::query_scalar("SELECT MIN(priority) FROM Task WHERE queue = ? AND status = 'Pending'")
+            .bind(queue)
+            .fetch_one(pool)
+            .await?;
+
+    Ok(min_priority
+        .unwrap_or(PRIORITY_QUEUE_FRONT_SEED)
+        .saturating_sub(1))
+}
+
+/// Promote a Pending task so it will be claimed before all other Pending tasks in its queue.
+/// Returns false if the task does not exist or is not currently Pending.
+pub async fn prioritise_task(pool: &SqlitePool, id: Uuid) -> Result<bool, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let row: Option<(String, String)> =
+        sqlx::query_as("SELECT queue, task_type FROM Task WHERE uuid = ? AND status = 'Pending'")
+            .bind(id.to_string())
+            .fetch_optional(&mut *tx)
+            .await?;
+
+    let Some((queue, task_type)) = row else {
+        tx.commit().await?;
+        return Ok(false);
+    };
+
+    let min_priority: Option<i64> =
+        sqlx::query_scalar("SELECT MIN(priority) FROM Task WHERE queue = ? AND status = 'Pending'")
+            .bind(&queue)
+            .fetch_one(&mut *tx)
+            .await?;
+
+    let now = Utc::now();
+    let next_priority = min_priority
+        .unwrap_or(PRIORITY_QUEUE_FRONT_SEED)
+        .saturating_sub(1);
+
+    sqlx::query("UPDATE Task SET priority = ?, updated_at = ? WHERE uuid = ?")
+        .bind(next_priority)
+        .bind(now)
+        .bind(id.to_string())
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+    events::emit_task_update(&task_event_details(pool, id, &task_type, "Pending", None).await);
+    Ok(true)
+}
+
+/// Promote an existing Pending chapter download to the front of its queue.
+/// Returns false if no Pending task exists for the chapter.
+pub async fn prioritise_pending_download_for_chapter(
+    pool: &SqlitePool,
+    chapter_id: Uuid,
+) -> Result<bool, sqlx::Error> {
+    let task_id: Option<String> = sqlx::query_scalar(
+        "SELECT uuid
+         FROM Task
+         WHERE chapter_id = ? AND task_type = 'DownloadChapter' AND status = 'Pending'
+         ORDER BY priority ASC, created_at ASC
+         LIMIT 1",
+    )
+    .bind(chapter_id.to_string())
+    .fetch_optional(pool)
+    .await?;
+
+    let Some(task_id) = task_id else {
+        return Ok(false);
+    };
+
+    let task_id = Uuid::parse_str(&task_id)
+        .map_err(|e| sqlx::Error::Protocol(format!("invalid task uuid: {e}")))?;
+    prioritise_task(pool, task_id).await
 }
 
 /// Fetch recent tasks ordered by created_at DESC. Optionally filter by manga_id.
@@ -1340,5 +1440,81 @@ mod tests {
 
         assert_eq!(sync_priority, PRIORITY_PROVIDER_SYNC);
         assert_eq!(download_priority, PRIORITY_DOWNLOAD_CHAPTER);
+    }
+
+    #[tokio::test]
+    async fn prioritise_task_moves_pending_download_ahead_of_provider_sync() {
+        let pool = db::init("sqlite::memory:").await.expect("init db");
+        let queue = "provider:test-provider".to_string();
+
+        let sync_id = enqueue_with_queue(
+            &pool,
+            TaskType::SyncProviderChapters,
+            None,
+            None,
+            PRIORITY_PROVIDER_SYNC,
+            Some(queue.clone()),
+        )
+        .await
+        .expect("enqueue sync");
+        let download_id = enqueue_with_queue(
+            &pool,
+            TaskType::DownloadChapter,
+            None,
+            None,
+            PRIORITY_DOWNLOAD_CHAPTER,
+            Some(queue.clone()),
+        )
+        .await
+        .expect("enqueue download");
+
+        let changed = prioritise_task(&pool, download_id)
+            .await
+            .expect("prioritise");
+        assert!(changed);
+
+        let claimed = claim_next_for_queue(&pool, &queue)
+            .await
+            .expect("claim task")
+            .expect("task exists");
+
+        assert_eq!(claimed.id, download_id);
+        assert_ne!(claimed.id, sync_id);
+    }
+
+    #[tokio::test]
+    async fn enqueue_at_front_places_new_download_ahead_of_existing_pending_tasks() {
+        let pool = db::init("sqlite::memory:").await.expect("init db");
+        let queue = "provider:test-provider".to_string();
+
+        let existing_id = enqueue_with_queue(
+            &pool,
+            TaskType::DownloadChapter,
+            None,
+            None,
+            PRIORITY_DOWNLOAD_CHAPTER,
+            Some(queue.clone()),
+        )
+        .await
+        .expect("enqueue existing");
+
+        let urgent_id = enqueue_at_front(
+            &pool,
+            TaskType::DownloadChapter,
+            None,
+            None,
+            queue.clone(),
+            None,
+        )
+        .await
+        .expect("enqueue urgent");
+
+        let claimed = claim_next_for_queue(&pool, &queue)
+            .await
+            .expect("claim task")
+            .expect("task exists");
+
+        assert_eq!(claimed.id, urgent_id);
+        assert_ne!(claimed.id, existing_id);
     }
 }

@@ -309,6 +309,65 @@ pub async fn download_chapter_api(
     Ok(Status::Accepted)
 }
 
+/// Tells rebarr to move a specific chapter download to the front of its provider queue.
+#[openapi(tag = "Chapters")]
+#[post("/api/manga/<id>/chapters/<base>/<variant>/download-now")]
+pub async fn download_chapter_now_api(
+    pool: &State<SqlitePool>,
+    id: &str,
+    base: i32,
+    variant: i32,
+) -> Result<Status, (Status, Json<ApiError>)> {
+    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    db::manga::get_by_id(pool.inner(), manga_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("manga not found"))?;
+
+    let chapter = db::chapter::get_canonical_by_number(pool.inner(), manga_id, base, variant)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("chapter not found"))?;
+
+    let already_running = db::task::get_running_for_chapter(pool.inner(), chapter.id)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .next()
+        .is_some();
+
+    if !already_running {
+        let promoted = db::task::prioritise_pending_download_for_chapter(pool.inner(), chapter.id)
+            .await
+            .map_err(internal)?;
+
+        if !promoted {
+            let queue = chapter
+                .provider_name
+                .as_ref()
+                .map(|name| format!("provider:{name}"))
+                .unwrap_or_else(|| "system".to_string());
+
+            db::task::enqueue_at_front(
+                pool.inner(),
+                crate::db::task::TaskType::DownloadChapter,
+                Some(manga_id),
+                Some(chapter.id),
+                queue,
+                None,
+            )
+            .await
+            .map_err(internal)?;
+        }
+    }
+
+    db::chapter::set_status(pool.inner(), chapter.id, DownloadStatus::Queued, None)
+        .await
+        .map_err(internal)?;
+
+    Ok(Status::Accepted)
+}
+
 // ---------------------------------------------------------------------------
 // DELETE /api/manga/<id>/chapters/<base>/<variant>
 // ---------------------------------------------------------------------------
@@ -457,6 +516,7 @@ pub fn routes() -> Vec<rocket::Route> {
     rocket::routes![
         list_chapters,
         download_chapter_api,
+        download_chapter_now_api,
         delete_chapter_api,
         delete_chapter_entry_api,
         mark_chapter_downloaded,

@@ -117,6 +117,7 @@ async function refreshQueue() {
     
     ctrlEl.innerHTML = `
       <button class="btn btn-sm ${paused ? 'btn-success' : ''}" onclick="toggleQueuePause(${paused})">${pauseLabel}</button>
+      <button class="btn btn-sm btn-accent btn-outline" onclick="prioritiseSelected()">Prioritise Selected</button>
       <button class="btn btn-sm btn-error btn-outline" onclick="cancelSelected()">Cancel Selected</button>
       ${jumpBtn}
       ${paused ? '<span class="badge badge-warning">Queue paused — no new tasks will run.</span>' : ''}
@@ -315,7 +316,13 @@ function buildTaskRow(t) {
   const progress = buildCompactTaskProgress(t.progress);
   const err = t.last_error ? `<br><small class="error">${escape(t.last_error)}</small>` : '';
   const canCancel = t.status === 'Pending' || t.status === 'Running';
-  const cb = canCancel ? `<input type="checkbox" class="task-cb" data-id="${t.id}">` : '';
+  const canPrioritise = t.status === 'Pending' && t.task_type === 'DownloadChapter';
+  const cb = canCancel
+    ? `<input type="checkbox" class="task-cb" data-id="${t.id}" data-can-prioritise="${canPrioritise ? '1' : '0'}">`
+    : '';
+  const prioritiseBtn = canPrioritise
+    ? `<button class="btn btn-xs btn-accent btn-outline" onclick='prioritiseTask("${t.id}")'>Run next</button>`
+    : '';
   const cancelBtn = canCancel
     ? `<button class="btn btn-xs btn-error btn-outline" onclick='cancelTask("${t.id}")'>Cancel</button>`
     : '';
@@ -328,7 +335,7 @@ function buildTaskRow(t) {
       <td><small>${escape(ts)}</small></td>
       <td><div class="queue-task-main">${taskDesc}</div>${progress}</td>
       <td>${taskBadge(t.status)}${err}</td>
-      <td>${cancelBtn}</td>
+      <td>${prioritiseBtn}${cancelBtn}</td>
     </tr>
   `;
 }
@@ -440,6 +447,34 @@ window.cancelSelected = async function() {
   scheduleQueueRefresh(0);
 };
 
+window.prioritiseSelected = async function() {
+  const checked = Array.from(document.querySelectorAll('.task-cb:checked'));
+  const pendingIds = checked
+    .filter(cb => cb.dataset.canPrioritise === '1')
+    .map(cb => cb.dataset.id);
+
+  if (pendingIds.length === 0) {
+    showToast('Select at least one pending task.', 'warning');
+    return;
+  }
+
+  let count = 0;
+  for (const id of pendingIds.reverse()) {
+    try {
+      await tasks.prioritise(id);
+      count++;
+    } catch(_) {}
+  }
+
+  if (count === 0) {
+    showToast('No selected tasks could be prioritised.', 'warning');
+    return;
+  }
+
+  showToast(`Moved ${count} task${count === 1 ? '' : 's'} to the front`);
+  scheduleQueueRefresh(0);
+};
+
 window.cancelTask = async function(taskId) {
   try {
     await tasks.cancel(taskId);
@@ -448,6 +483,16 @@ window.cancelTask = async function(taskId) {
     scheduleQueueRefresh(0);
   } catch(e) {
     showToast('Cancel failed: ' + e.message, 'error');
+  }
+};
+
+window.prioritiseTask = async function(taskId) {
+  try {
+    await tasks.prioritise(taskId);
+    showToast('Task moved to the front of the queue');
+    scheduleQueueRefresh(0);
+  } catch(e) {
+    showToast('Prioritise failed: ' + e.message, 'error');
   }
 };
 

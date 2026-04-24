@@ -35,6 +35,8 @@ I'll remove this when I've got the first public release out, this is just a quic
 - [ ]  Chapter 8.1 — The Residence (1) is incorrectly marked as an extra (My Co-worker Is an Eldritch X!)
     - Same with Chapter 14.5 — Oscar Orcus (Arifureta)
 - [ ] Cloudflare bypass not working anymore :( - https://www.mangakakalot.gg/manga/i-became-the-strongest-with-the-failure-frame/chapter-29-6
+- [ ] Have a way to enable/disable chapter upgrades? tags?
+    - Why do split chapters act fucky? let me override them one variant at a time.
 
 ### Frontend
 
@@ -51,6 +53,9 @@ I'll remove this when I've got the first public release out, this is just a quic
 - Direct file browser/explorer for each series
     - Lets us see filesize of the whole series (including random ass files), delete them/import them?
 - We should be able to click download on chapter variants in the dropdown table, it should automatically override them too.
+- [ ] The workers page has a limit on how many tasks it grabs - it calcs the number of tasks from that
+    - Rework it to use the full number of tasks, just don't grab them all constantly
+    - Pull `n` tasks from each worker, so we don't have 500 tasks on one and blank on all the others.
 
 ### Assend (GraphQL frontend for Moku-like frontend?)
 
@@ -97,7 +102,8 @@ I'll remove this when I've got the first public release out, this is just a quic
 - New sites are just a .yaml with some html selectors (and maybe some javascript). No rust knowledge needed.
     - Hell half the providers were just me giving chatgpt the yaml schema and an example.
 - CLI tool for testing and debugging providers without touching the database — search, list chapters, download pages, run regression tests against fixture files.
-- REST API, so someone with a workable knowledge of frontend design can implement their own (PRs welcome!)
+- REST API, so someone(you?) can replace the existing vibecoded slop frontend.
+    - although the rest api is just me adding what stupid shit the ai said, idk man frontend isn't my thing
 - Nice 'Setup Wizard' that'll help you match and import your existing library
     - Although it's a bit jank, it mostly works if you're careful.
     - That all said, unless you've got a giant collection, its probably better to just redownload what you want.

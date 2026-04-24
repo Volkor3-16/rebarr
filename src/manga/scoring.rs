@@ -205,6 +205,7 @@ mod tests {
             downloaded_at: None,
             scraped_at: None,
             file_size_bytes: None,
+            tags: vec![],
         }
     }
 

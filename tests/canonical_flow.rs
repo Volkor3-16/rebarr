@@ -97,6 +97,8 @@ async fn setup_manga(pool: &SqlitePool) -> rebarr::manga::core::Manga {
         relative_path: PathBuf::from("testmanga"),
         downloaded_count: Some(0),
         chapter_count: None,
+        extras_downloaded_count: None,
+        extras_count: None,
         metadata_source: MangaSource::Local,
         thumbnail_url: None,
         monitored: true, // ← MUST be true for auto-download to fire
@@ -404,6 +406,7 @@ async fn local_provider_wins_canonical_over_all_others() {
             downloaded_at: Some(chrono::Utc::now()),
             scraped_at: None,
             file_size_bytes: Some(1024),
+            tags: vec![],
         };
         db_chapter::insert(&pool, &chapter).await.unwrap();
     }

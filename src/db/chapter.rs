@@ -853,8 +853,19 @@ pub async fn update_canonical(
 
     // Load user-set overrides before re-scoring.
     let overrides = load_canonical_overrides(pool, manga_id).await?;
-    let _disable_chapter_upgrades =
+    let disable_chapter_upgrades =
         crate::db::settings::get(pool, "disable_chapter_upgrades", "false").await? == "true";
+
+    // Load current canonical chapters for upgrade-disabling logic.
+    let current_canonical = if disable_chapter_upgrades {
+        get_canonical_for_manga(pool, manga_id).await.ok().unwrap_or_default()
+    } else {
+        vec![]
+    };
+    let current_canonical_map: std::collections::HashMap<(i32, i32), Chapter> = current_canonical
+        .into_iter()
+        .map(|ch| ((ch.chapter_base, ch.chapter_variant), ch))
+        .collect();
 
     // Group by (slot_id, provider_name, is_full) to create Provider Bundles.
     // A full chapter (variant=0) and split parts (variant>0) from the same provider at the
@@ -925,6 +936,37 @@ pub async fn update_canonical(
         // Apply deterministic selection priority; splits return all parts.
         let winners = select_best_bundle(bundles, &all, &quality_rules, &meta_rules).await;
         for winner in &winners {
+            // If chapter upgrades are disabled, preserve the currently-downloaded canonical
+            // chapter for this slot even if a better-scored source appeared.
+            let preserved: Option<Chapter> = if disable_chapter_upgrades {
+                if let Some(current_ch) =
+                    current_canonical_map.get(&(winner.chapter_base, winner.chapter_variant))
+                {
+                    if current_ch.download_status == DownloadStatus::Downloaded
+                        && current_ch.id != winner.id
+                    {
+                        Some(current_ch.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            if let Some(ref preserved) = preserved {
+                debug!(
+                    "[canonical] slot={slot_id:.1} → preserving downloaded {}.{} provider={:?} group={:?} (upgrades disabled)",
+                    preserved.chapter_base,
+                    preserved.chapter_variant,
+                    preserved.provider_name,
+                    preserved.scanlator_group,
+                );
+                canonical_uuids.push(preserved.id.to_string());
+                continue;
+            }
             debug!(
                 "[canonical] slot={slot_id:.1} → winner {}.{} score={} provider={:?} group={:?}",
                 winner.chapter_base,

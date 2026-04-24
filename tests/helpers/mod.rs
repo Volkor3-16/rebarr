@@ -69,6 +69,8 @@ pub async fn insert_manga(pool: &SqlitePool, library_id: Uuid, title: &str) -> M
         relative_path: std::path::PathBuf::from(title.to_lowercase().replace(' ', "-")),
         downloaded_count: Some(0),
         chapter_count: None,
+        extras_downloaded_count: None,
+        extras_count: None,
         metadata_source: MangaSource::Local,
         thumbnail_url: None,
         monitored: false,

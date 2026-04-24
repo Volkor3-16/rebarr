@@ -67,6 +67,7 @@ export const manga = {
   scanDisk: (id) => post(`/api/manga/${id}/scan-disk`, null),
   refresh: (id) => post(`/api/manga/${id}/refresh`, null),
   downloadChapter: (id, base, variant) => post(`/api/manga/${id}/chapters/${base}/${variant}/download`, null),
+  downloadChapterNow: (id, base, variant) => post(`/api/manga/${id}/chapters/${base}/${variant}/download-now`, null),
   resetChapter: (id, base, variant) => post(`/api/manga/${id}/chapters/${base}/${variant}/reset`, null),
   deleteChapter: (id, base, variant) => del(`/api/manga/${id}/chapters/${base}/${variant}`),
   deleteChapterEntry: (id, base, variant) => del(`/api/manga/${id}/chapters/${base}/${variant}/entry`),
@@ -114,6 +115,7 @@ export const tasks = {
     return get(`/api/tasks/queue${query ? '?' + query : ''}`);
   },
   cancel: (id) => post(`/api/tasks/${id}/cancel`, null),
+  prioritise: (id) => post(`/api/tasks/${id}/prioritise`, null),
   listGrouped: () => get('/api/tasks/grouped'),
 };
 

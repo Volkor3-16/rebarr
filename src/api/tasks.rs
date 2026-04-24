@@ -322,6 +322,35 @@ pub async fn cancel_task(
     Ok(Status::NoContent)
 }
 
+/// Move a pending task to the front of its queue.
+#[openapi(tag = "Tasks")]
+#[post("/api/tasks/<id>/prioritise")]
+pub async fn prioritise_task(
+    pool: &State<SqlitePool>,
+    id: &str,
+) -> Result<Status, (Status, Json<ApiError>)> {
+    let uuid = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+
+    let task = db::task::get_by_id(pool.inner(), uuid)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| bad_request("task not found"))?;
+
+    if task.status != db::task::TaskStatus::Pending {
+        return Err(bad_request("only pending tasks can be prioritised"));
+    }
+
+    let reprioritised = db::task::prioritise_task(pool.inner(), uuid)
+        .await
+        .map_err(internal)?;
+
+    if !reprioritised {
+        return Err(bad_request("task could not be prioritised"));
+    }
+
+    Ok(Status::Accepted)
+}
+
 // ---------------------------------------------------------------------------
 // Routes aggregation
 // ---------------------------------------------------------------------------
@@ -331,7 +360,8 @@ pub fn routes() -> Vec<rocket::Route> {
         list_tasks,
         list_queue_tasks,
         list_tasks_grouped,
-        cancel_task
+        cancel_task,
+        prioritise_task
     ]
 }
 

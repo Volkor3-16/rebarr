@@ -68,6 +68,7 @@ pub fn openapi_routes() -> Vec<rocket::Route> {
             // Chapters
             chapters::list_chapters,
             chapters::download_chapter_api,
+            chapters::download_chapter_now_api,
             chapters::delete_chapter_api,
             chapters::mark_chapter_downloaded,
             chapters::reset_chapter_api,
@@ -133,6 +134,7 @@ pub fn openapi_routes() -> Vec<rocket::Route> {
             tasks::list_queue_tasks,
             tasks::list_tasks_grouped,
             tasks::cancel_task,
+            tasks::prioritise_task,
             // Metadata Rules
             metadata_rules::list_rules,
             metadata_rules::create_rule,

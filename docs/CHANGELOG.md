@@ -17,6 +17,7 @@ This a informal changelog so i can keep track of what im doing.
 - You can manually trigger a anilist search when there's local results.
 - Same with manual series addition
 - System for automatically cleaing old tasks from the database
+- You can now promote chapters to the front of the queue (long/right click on download button, "Run Next" in queue.)
 
 ## 2026-04-23
 

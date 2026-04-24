@@ -778,6 +778,7 @@ mod tests {
             downloaded_at: downloaded_at.and_then(|ts| Utc.timestamp_opt(ts, 0).single()),
             scraped_at: scraped_at.and_then(|ts| Utc.timestamp_opt(ts, 0).single()),
             file_size_bytes: None,
+            tags: vec![],
         };
         db_chapter::insert(pool, &chapter)
             .await

@@ -17,6 +17,8 @@ let intersectionObserver = null;
 let hoveredChapterRow = null;
 let selectedSlotKeys = new Set();
 let expandedSlotKeys = new Set();
+let priorityDownloadPressTimer = null;
+let priorityDownloadTriggered = false;
 
 // Loading overlay / banner state
 let tipsCache = null;
@@ -782,7 +784,16 @@ function chapterRow(mangaId, ch, {
     ? `<input type="checkbox" class="ch-checkbox" data-slot-key="${groupKey}" ${isSelected ? 'checked' : ''} onclick="handleCheckboxClick(event, this)">`
     : '';
   const quickDlBtn = (canDl && !isSubrow)
-    ? `<button class="ch-status-overlay-btn" onclick="event.stopPropagation(); doDownload('${mangaId}', ${base}, ${variant})" title="Download">
+    ? `<button class="ch-status-overlay-btn"
+         onclick="return handleDownloadButtonClick(event, '${mangaId}', ${base}, ${variant})"
+         onmousedown="startPriorityDownloadPress(event, '${mangaId}', ${base}, ${variant})"
+         onmouseup="endPriorityDownloadPress(event)"
+         onmouseleave="cancelPriorityDownloadPress()"
+         ontouchstart="startPriorityDownloadPress(event, '${mangaId}', ${base}, ${variant})"
+         ontouchend="endPriorityDownloadPress(event)"
+         ontouchcancel="cancelPriorityDownloadPress()"
+         oncontextmenu="return handleDownloadButtonContext(event, '${mangaId}', ${base}, ${variant})"
+         title="Download. Hold or right-click to run next.">
          <iconify-icon icon="mdi:download" width="18" height="18"></iconify-icon>
        </button>`
     : '';
@@ -791,6 +802,7 @@ function chapterRow(mangaId, ch, {
   if (!isSubrow) {
     const menuId = `${slotDomId(groupKey)}-menu`;
     const dlBtn = canDl ? `<button onclick="doDownload('${mangaId}', ${base}, ${variant})">Download</button>` : '';
+    const dlNowBtn = canDl ? `<button onclick="doDownloadNow('${mangaId}', ${base}, ${variant})">Download next</button>` : '';
     const canReset = (status === 'Failed' || status === 'Queued' || status === 'Downloading') && ch.is_canonical;
     const resetBtn = canReset ? `<button onclick="doResetChapter('${mangaId}', ${base}, ${variant})">Reset</button>` : '';
     const extraBtn = ch.is_canonical ? `<button onclick="doToggleExtra('${mangaId}', ${base}, ${variant})">${ch.is_extra ? 'Un-extra' : 'Extra'}</button>` : '';
@@ -811,7 +823,7 @@ function chapterRow(mangaId, ch, {
       <button class="action-menu-btn" type="button" aria-haspopup="menu" aria-expanded="false"
         onclick="toggleActionMenu('${menuId}')"><iconify-icon icon="mdi:dots-vertical" width="18" height="18"></iconify-icon></button>
       <div class="action-menu-dropdown" id="${menuId}">
-        ${dlBtn}${resetBtn}${extraBtn}${clearOverrideBtn}${deleteBtn}${hideBtn}
+        ${dlBtn}${dlNowBtn}${resetBtn}${extraBtn}${clearOverrideBtn}${deleteBtn}${hideBtn}
       </div>
     </div>`;
   }
@@ -1448,6 +1460,63 @@ window.doDownload = async function(mangaId, base, variant) {
   } catch(e) {
     showToast('Download error: ' + e.message, 'error');
   }
+};
+
+window.doDownloadNow = async function(mangaId, base, variant) {
+  try {
+    await mangaApi.downloadChapterNow(mangaId, base, variant);
+    patchCachedChapter(base, variant, { download_status: 'Queued' });
+    showToast('Chapter moved to the front of the queue');
+  } catch(e) {
+    showToast('Priority download error: ' + e.message, 'error');
+  }
+};
+
+window.startPriorityDownloadPress = function(event, mangaId, base, variant) {
+  event.stopPropagation();
+  priorityDownloadTriggered = false;
+  if (priorityDownloadPressTimer) clearTimeout(priorityDownloadPressTimer);
+  priorityDownloadPressTimer = setTimeout(async () => {
+    priorityDownloadPressTimer = null;
+    priorityDownloadTriggered = true;
+    await window.doDownloadNow(mangaId, base, variant);
+  }, 450);
+};
+
+window.endPriorityDownloadPress = function(event) {
+  event?.stopPropagation();
+  if (priorityDownloadPressTimer) {
+    clearTimeout(priorityDownloadPressTimer);
+    priorityDownloadPressTimer = null;
+  }
+};
+
+window.cancelPriorityDownloadPress = function() {
+  if (priorityDownloadPressTimer) {
+    clearTimeout(priorityDownloadPressTimer);
+    priorityDownloadPressTimer = null;
+  }
+};
+
+window.handleDownloadButtonClick = function(event, mangaId, base, variant) {
+  event.preventDefault();
+  event.stopPropagation();
+  window.endPriorityDownloadPress();
+  if (priorityDownloadTriggered) {
+    priorityDownloadTriggered = false;
+    return false;
+  }
+  window.doDownload(mangaId, base, variant);
+  return false;
+};
+
+window.handleDownloadButtonContext = function(event, mangaId, base, variant) {
+  event.preventDefault();
+  event.stopPropagation();
+  window.cancelPriorityDownloadPress();
+  priorityDownloadTriggered = false;
+  window.doDownloadNow(mangaId, base, variant);
+  return false;
 };
 
 window.doResetChapter = async function(mangaId, base, variant) {
