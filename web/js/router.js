@@ -67,10 +67,20 @@ export function navigate(path) {
 }
 
 /**
+ * Reset page title to default.
+ */
+export function resetPageTitle() {
+  document.title = 'REBARR';
+}
+
+/**
  * Dispatch to the appropriate view handler
  * @param {string} path - URL path
  */
 export function dispatch(path) {
+  // Reset page title before loading new view
+  resetPageTitle();
+
   // Update nav active state
   document.querySelectorAll('#nav a').forEach(a => {
     const pathMatch = path === a.dataset.path || 

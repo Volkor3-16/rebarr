@@ -187,6 +187,7 @@ async function loadSuggestions() {
 
 export async function viewSuggested() {
   await loadSuggestions();
+  document.title = 'Suggested - REBARR';
 }
 
 window.refreshSuggestedLibrary = async function refreshSuggestedLibrary() {

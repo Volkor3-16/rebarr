@@ -151,6 +151,10 @@ async function refreshQueues() {
             ? `<div class="queue-grid">${queues.map(queueSection).join('')}</div>`
             : '<div class="alert alert-info">No queues configured.</div>';
 
+        const totalRunning = queues.reduce((sum, q) => sum + q.running_count, 0);
+        const totalPending = queues.reduce((sum, q) => sum + q.pending_count, 0);
+        document.title = `[${totalRunning} - ${totalPending}] REBARR`;
+
         // Re-attach cancel handlers
         listEl.querySelectorAll('.cancel-btn').forEach(btn => {
             btn.addEventListener('click', async (e) => {

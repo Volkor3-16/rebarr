@@ -101,7 +101,11 @@ async function refreshQueue() {
     visibleTaskTypes = normalizeVisibleTaskTypes(visibleTaskTypes, availableTaskTypes);
     saveTaskTypeFilters();
     const filteredTaskList = taskList.filter(t => visibleTaskTypes.has(t.task_type));
-    
+
+    const runningCount = taskList.filter(t => t.status === 'Running').length;
+    const pendingCount = taskList.filter(t => t.status === 'Pending').length;
+    document.title = `[${runningCount} - ${pendingCount}] REBARR`;
+
     // Check if there's a running task for the Jump button
     const hasRunning = filteredTaskList.some(t => t.status === 'Running');
     const jumpBtn = hasRunning

@@ -296,12 +296,16 @@ export async function viewHome() {
           <p>No libraries configured yet. Add one in <a href="/settings" data-path="/settings">Settings</a>.</p>
         </div>
       `);
+      document.title = 'REBARR - 0 series';
       return;
     }
 
     const mangaLists = await Promise.all(libs.map(lib => libraries.manga(lib.uuid)));
     cachedLibs = libs;
     cachedMangaLists = mangaLists;
+
+    const totalManga = mangaLists.flat().length;
+    document.title = `REBARR - ${totalManga} series`;
 
     rerenderContent();
   } catch (e) {
