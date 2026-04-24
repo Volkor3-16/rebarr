@@ -340,6 +340,7 @@ mod tests {
     use super::*;
     use rocket::local::asynchronous::Client;
     use serde_json::Value;
+    use uuid::Uuid;
 
     async fn test_client() -> Client {
         let pool = crate::db::init("sqlite::memory:").await.expect("init db");
@@ -379,6 +380,39 @@ mod tests {
         .await
         .expect("update task");
         id.to_string()
+    }
+
+    async fn insert_library(pool: &SqlitePool) -> String {
+        let id = Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO Library (uuid, library_type, root_path) VALUES (?, 'Manga', ?)")
+            .bind(&id)
+            .bind(format!("/tmp/{id}"))
+            .execute(pool)
+            .await
+            .expect("insert library");
+        id
+    }
+
+    async fn insert_manga(pool: &SqlitePool, title: &str) -> String {
+        let library_id = insert_library(pool).await;
+        let id = Uuid::new_v4().to_string();
+        let now = Utc::now().timestamp();
+        sqlx::query(
+            "INSERT INTO Manga
+                (uuid, library_id, relative_path, title, publishing_status, metadata_source,
+                 created_at, metadata_updated_at, monitored)
+             VALUES (?, ?, ?, ?, 'Unknown', 'Local', ?, ?, 1)",
+        )
+        .bind(&id)
+        .bind(library_id)
+        .bind(title.to_lowercase())
+        .bind(title)
+        .bind(now)
+        .bind(now)
+        .execute(pool)
+        .await
+        .expect("insert manga");
+        id
     }
 
     #[rocket::async_test]
@@ -506,5 +540,64 @@ mod tests {
 
         let json: Value = response.into_json().await.expect("json body");
         assert_eq!(json.as_array().expect("array").len(), 2);
+    }
+
+    #[rocket::async_test]
+    async fn queue_endpoint_supports_manga_id_filter() {
+        let client = test_client().await;
+        let pool = client.rocket().state::<SqlitePool>().expect("pool");
+        let now = Utc::now();
+        let manga_a = insert_manga(pool, "Series A").await;
+        let manga_b = insert_manga(pool, "Series B").await;
+
+        let task_a = db::task::enqueue(
+            pool,
+            db::task::TaskType::Backup,
+            Some(Uuid::parse_str(&manga_a).expect("uuid")),
+            None,
+            0,
+        )
+        .await
+        .expect("task a");
+        let task_b = db::task::enqueue(
+            pool,
+            db::task::TaskType::Backup,
+            Some(Uuid::parse_str(&manga_b).expect("uuid")),
+            None,
+            0,
+        )
+        .await
+        .expect("task b");
+
+        sqlx::query(
+            "UPDATE Task SET status = 'Completed', created_at = ?, updated_at = ? WHERE uuid = ?",
+        )
+        .bind(now)
+        .bind(now)
+        .bind(task_a.to_string())
+        .execute(pool)
+        .await
+        .expect("update task a");
+        sqlx::query(
+            "UPDATE Task SET status = 'Completed', created_at = ?, updated_at = ? WHERE uuid = ?",
+        )
+        .bind(now - chrono::Duration::seconds(1))
+        .bind(now - chrono::Duration::seconds(1))
+        .bind(task_b.to_string())
+        .execute(pool)
+        .await
+        .expect("update task b");
+
+        let response = client
+            .get(format!("/api/tasks/queue?manga_id={manga_a}"))
+            .dispatch()
+            .await;
+        assert_eq!(response.status(), Status::Ok);
+
+        let json: Value = response.into_json().await.expect("json body");
+        let tasks = json["tasks"].as_array().expect("tasks");
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0]["manga_id"].as_str(), Some(manga_a.as_str()));
+        assert_eq!(tasks[0]["manga_title"].as_str(), Some("Series A"));
     }
 }

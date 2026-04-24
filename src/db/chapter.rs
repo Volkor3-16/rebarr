@@ -419,7 +419,10 @@ pub async fn get_all_for_manga(
     .fetch_all(pool)
     .await?;
 
-    let mut chapters: Vec<Chapter> = rows.into_iter().map(chapter_from_row).collect::<Result<_, _>>()?;
+    let mut chapters: Vec<Chapter> = rows
+        .into_iter()
+        .map(chapter_from_row)
+        .collect::<Result<_, _>>()?;
 
     let tag_map = get_tags_for_manga(pool, manga_id).await?;
     for ch in &mut chapters {
@@ -457,25 +460,21 @@ pub async fn get_tags_for_manga(
 
 /// Add a tag to a chapter. No-ops if the tag already exists.
 pub async fn add_tag(pool: &SqlitePool, chapter_id: Uuid, tag: &str) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "INSERT OR IGNORE INTO ChapterTags (chapter_id, tag) VALUES (?, ?)",
-    )
-    .bind(chapter_id.to_string())
-    .bind(tag)
-    .execute(pool)
-    .await?;
+    sqlx::query("INSERT OR IGNORE INTO ChapterTags (chapter_id, tag) VALUES (?, ?)")
+        .bind(chapter_id.to_string())
+        .bind(tag)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
 /// Remove a tag from a chapter. No-ops if the tag does not exist.
 pub async fn remove_tag(pool: &SqlitePool, chapter_id: Uuid, tag: &str) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "DELETE FROM ChapterTags WHERE chapter_id = ? AND tag = ?",
-    )
-    .bind(chapter_id.to_string())
-    .bind(tag)
-    .execute(pool)
-    .await?;
+    sqlx::query("DELETE FROM ChapterTags WHERE chapter_id = ? AND tag = ?")
+        .bind(chapter_id.to_string())
+        .bind(tag)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -899,7 +898,16 @@ pub async fn update_canonical(
             "[canonical] slot={slot_id:.1} provider={:?} type={:?} coverage={coverage} entries=[{}]",
             provider_name,
             bundle_type,
-            entries.iter().map(|e| format!("{}.{} score={}", e.chapter_base, e.chapter_variant, compute_score(&apply_meta_rules(e, &meta_rules), &quality_rules))).collect::<Vec<_>>().join(","),
+            entries
+                .iter()
+                .map(|e| format!(
+                    "{}.{} score={}",
+                    e.chapter_base,
+                    e.chapter_variant,
+                    compute_score(&apply_meta_rules(e, &meta_rules), &quality_rules)
+                ))
+                .collect::<Vec<_>>()
+                .join(","),
         );
 
         let bundle = ProviderBundle {
@@ -919,7 +927,8 @@ pub async fn update_canonical(
         for winner in &winners {
             debug!(
                 "[canonical] slot={slot_id:.1} → winner {}.{} score={} provider={:?} group={:?}",
-                winner.chapter_base, winner.chapter_variant,
+                winner.chapter_base,
+                winner.chapter_variant,
                 compute_score(&apply_meta_rules(winner, &meta_rules), &quality_rules),
                 winner.provider_name,
                 winner.scanlator_group,
@@ -939,7 +948,10 @@ pub async fn update_canonical(
             std::collections::HashSet::new();
         for override_uuid in overrides.values() {
             // Search all_raw so overrides pointing to disabled-provider chapters still apply.
-            if let Some(override_ch) = all_raw.iter().find(|ch| ch.id.to_string() == *override_uuid) {
+            if let Some(override_ch) = all_raw
+                .iter()
+                .find(|ch| ch.id.to_string() == *override_uuid)
+            {
                 let base = override_ch.chapter_base;
                 let override_is_extra = override_ch.chapter_variant > 4 || override_ch.is_extra;
                 let group_key = if override_is_extra {
@@ -1046,33 +1058,33 @@ pub async fn update_canonical(
 pub async fn update_manga_counts(pool: &SqlitePool, manga_id: Uuid) -> Result<(), sqlx::Error> {
     let uuids = get_canonical_uuids(pool, manga_id).await?;
 
-    let (chapter_count, downloaded_count, extras_count, extras_downloaded_count) =
-        if uuids.is_empty() {
-            (0i64, 0i64, 0i64, 0i64)
-        } else {
-            let placeholders: String = uuids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-            let count_sql = format!(
-                "SELECT
+    let (chapter_count, downloaded_count, extras_count, extras_downloaded_count) = if uuids
+        .is_empty()
+    {
+        (0i64, 0i64, 0i64, 0i64)
+    } else {
+        let placeholders: String = uuids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+        let count_sql = format!(
+            "SELECT
                    SUM(CASE WHEN is_extra = 0 THEN 1 ELSE 0 END),
                    SUM(CASE WHEN is_extra = 0 AND download_status = 'Downloaded' THEN 1 ELSE 0 END),
                    SUM(CASE WHEN is_extra = 1 THEN 1 ELSE 0 END),
                    SUM(CASE WHEN is_extra = 1 AND download_status = 'Downloaded' THEN 1 ELSE 0 END)
                  FROM Chapters WHERE uuid IN ({placeholders})"
-            );
-            let mut q = sqlx::query_as::<_, (Option<i64>, Option<i64>, Option<i64>, Option<i64>)>(
-                &count_sql,
-            );
-            for uuid in &uuids {
-                q = q.bind(uuid);
-            }
-            let row = q.fetch_one(pool).await?;
-            (
-                row.0.unwrap_or(0),
-                row.1.unwrap_or(0),
-                row.2.unwrap_or(0),
-                row.3.unwrap_or(0),
-            )
-        };
+        );
+        let mut q =
+            sqlx::query_as::<_, (Option<i64>, Option<i64>, Option<i64>, Option<i64>)>(&count_sql);
+        for uuid in &uuids {
+            q = q.bind(uuid);
+        }
+        let row = q.fetch_one(pool).await?;
+        (
+            row.0.unwrap_or(0),
+            row.1.unwrap_or(0),
+            row.2.unwrap_or(0),
+            row.3.unwrap_or(0),
+        )
+    };
 
     sqlx::query(
         "UPDATE Manga SET chapter_count = ?, downloaded_count = ?, extras_count = ?, extras_downloaded_count = ? WHERE uuid = ?",

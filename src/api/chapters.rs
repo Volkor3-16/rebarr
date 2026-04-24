@@ -296,7 +296,7 @@ pub async fn download_chapter_api(
         crate::db::task::TaskType::DownloadChapter,
         Some(manga_id),
         Some(chapter.id),
-        10,
+        crate::db::task::PRIORITY_DOWNLOAD_CHAPTER,
         queue,
     )
     .await
@@ -405,10 +405,7 @@ pub async fn delete_chapter_entry_api(
 
 /// Add a tag to a chapter (e.g. "hidden", "low_quality").
 #[openapi(tag = "Chapters")]
-#[post(
-    "/api/manga/<id>/chapters/<base>/<variant>/tags",
-    data = "<body>"
-)]
+#[post("/api/manga/<id>/chapters/<base>/<variant>/tags", data = "<body>")]
 pub async fn add_chapter_tag_api(
     pool: &State<SqlitePool>,
     id: &str,

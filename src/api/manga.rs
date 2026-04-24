@@ -547,7 +547,7 @@ pub async fn check_new_chapters_api(
         crate::db::task::TaskType::SyncProviderChapters,
         Some(manga_id),
         None,
-        5,
+        crate::db::task::PRIORITY_PROVIDER_SYNC,
     )
     .await
     .map_err(internal)?;
@@ -964,7 +964,7 @@ pub async fn sync_provider_api(
         crate::db::task::TaskType::SyncProviderChapters,
         Some(manga_id),
         None,
-        5,
+        crate::db::task::PRIORITY_PROVIDER_SYNC,
         Some(queue),
         Some(payload),
     )

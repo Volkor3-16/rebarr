@@ -74,6 +74,10 @@ pub struct TaskProgress {
 }
 
 pub const DEFAULT_QUEUE_TERMINAL_LIMIT: i64 = 200;
+// Provider syncs must outrank provider downloads so rebarr can discover
+// available chapters before draining background download backlog.
+pub const PRIORITY_PROVIDER_SYNC: i64 = 1;
+pub const PRIORITY_DOWNLOAD_CHAPTER: i64 = 10;
 
 #[derive(Debug, Clone, Default)]
 pub struct RecentTaskQuery {
@@ -89,6 +93,19 @@ pub struct QueueTaskSnapshot {
     pub terminal_limit: i64,
     pub has_more_history: bool,
     pub next_before: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RetentionPolicy {
+    pub enabled: bool,
+    pub days: u64,
+    pub min_keep: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetentionRun {
+    pub deleted_count: u64,
+    pub cutoff: DateTime<Utc>,
 }
 
 // ---------------------------------------------------------------------------
@@ -984,4 +1001,344 @@ pub async fn get_queue_snapshot(
         has_more_history,
         next_before,
     })
+}
+
+pub async fn prune_terminal_history(
+    pool: &SqlitePool,
+    days: u64,
+    min_keep: u64,
+) -> Result<RetentionRun, sqlx::Error> {
+    let cutoff = Utc::now() - Duration::days(days.min(i64::MAX as u64) as i64);
+    let min_keep = min_keep.min(i64::MAX as u64) as i64;
+    let result = sqlx::query(
+        "DELETE FROM Task
+         WHERE status IN ('Completed', 'Cancelled')
+           AND created_at < ?
+           AND uuid NOT IN (
+               SELECT uuid FROM (
+                   SELECT uuid
+                   FROM Task
+                   WHERE status IN ('Completed', 'Cancelled')
+                   ORDER BY created_at DESC, uuid DESC
+                   LIMIT ?
+               )
+           )",
+    )
+    .bind(cutoff)
+    .bind(min_keep)
+    .execute(pool)
+    .await?;
+
+    Ok(RetentionRun {
+        deleted_count: result.rows_affected(),
+        cutoff,
+    })
+}
+
+pub async fn maybe_run_daily_retention(
+    pool: &SqlitePool,
+    policy: RetentionPolicy,
+    now: DateTime<Utc>,
+) -> Result<Option<RetentionRun>, sqlx::Error> {
+    if !policy.enabled {
+        return Ok(None);
+    }
+
+    let last_run: Option<DateTime<Utc>> =
+        sqlx::query_scalar("SELECT value FROM Settings WHERE key = 'task_retention_last_run_at'")
+            .fetch_optional(pool)
+            .await?
+            .and_then(|raw: String| DateTime::parse_from_rfc3339(&raw).ok())
+            .map(|ts| ts.with_timezone(&Utc));
+
+    if last_run.is_some_and(|ts| now.signed_duration_since(ts) < Duration::days(1)) {
+        return Ok(None);
+    }
+
+    let run = prune_terminal_history(pool, policy.days, policy.min_keep).await?;
+    sqlx::query(
+        "INSERT INTO Settings (key, value) VALUES ('task_retention_last_run_at', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    )
+    .bind(now.to_rfc3339())
+    .execute(pool)
+    .await?;
+
+    Ok(Some(run))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db;
+    use sqlx::Row;
+
+    async fn insert_task(
+        pool: &SqlitePool,
+        status: &str,
+        created_at: DateTime<Utc>,
+    ) -> Result<String, sqlx::Error> {
+        let id = enqueue(pool, TaskType::Backup, None, None, 0).await?;
+        sqlx::query(
+            "UPDATE Task
+             SET status = ?, created_at = ?, updated_at = ?
+             WHERE uuid = ?",
+        )
+        .bind(status)
+        .bind(created_at)
+        .bind(created_at)
+        .bind(id.to_string())
+        .execute(pool)
+        .await?;
+        Ok(id.to_string())
+    }
+
+    #[tokio::test]
+    async fn prune_terminal_history_only_deletes_completed_and_cancelled() {
+        let pool = db::init("sqlite::memory:").await.expect("init db");
+        let now = Utc::now();
+
+        insert_task(&pool, "Completed", now - Duration::days(40))
+            .await
+            .expect("completed");
+        insert_task(&pool, "Cancelled", now - Duration::days(35))
+            .await
+            .expect("cancelled");
+        insert_task(&pool, "Failed", now - Duration::days(50))
+            .await
+            .expect("failed");
+        insert_task(&pool, "Pending", now - Duration::days(60))
+            .await
+            .expect("pending");
+        insert_task(&pool, "Running", now - Duration::days(70))
+            .await
+            .expect("running");
+
+        let result = prune_terminal_history(&pool, 30, 0).await.expect("prune");
+        assert_eq!(result.deleted_count, 2);
+
+        let statuses: Vec<String> = sqlx::query_scalar("SELECT status FROM Task ORDER BY status")
+            .fetch_all(&pool)
+            .await
+            .expect("statuses");
+        assert_eq!(statuses, vec!["Failed", "Pending", "Running"]);
+    }
+
+    #[tokio::test]
+    async fn prune_terminal_history_respects_min_keep_floor() {
+        let pool = db::init("sqlite::memory:").await.expect("init db");
+        let now = Utc::now();
+
+        let mut ids = Vec::new();
+        for offset in [50, 40, 30] {
+            ids.push(
+                insert_task(&pool, "Completed", now - Duration::days(offset))
+                    .await
+                    .expect("insert"),
+            );
+        }
+
+        let result = prune_terminal_history(&pool, 1, 2).await.expect("prune");
+        assert_eq!(result.deleted_count, 1);
+
+        let remaining: Vec<String> =
+            sqlx::query_scalar("SELECT uuid FROM Task ORDER BY created_at DESC, uuid DESC")
+                .fetch_all(&pool)
+                .await
+                .expect("remaining");
+        assert_eq!(remaining.len(), 2);
+        assert!(remaining.contains(&ids[1]));
+        assert!(remaining.contains(&ids[2]));
+    }
+
+    #[tokio::test]
+    async fn maybe_run_daily_retention_skips_when_disabled_or_already_ran() {
+        let pool = db::init("sqlite::memory:").await.expect("init db");
+        let now = Utc::now();
+
+        insert_task(&pool, "Completed", now - Duration::days(40))
+            .await
+            .expect("completed");
+
+        let disabled = RetentionPolicy {
+            enabled: false,
+            days: 30,
+            min_keep: 0,
+        };
+        assert!(
+            maybe_run_daily_retention(&pool, disabled, now)
+                .await
+                .expect("disabled")
+                .is_none()
+        );
+
+        let enabled = RetentionPolicy {
+            enabled: true,
+            days: 30,
+            min_keep: 0,
+        };
+        let first = maybe_run_daily_retention(&pool, enabled, now)
+            .await
+            .expect("first");
+        assert_eq!(first.expect("run").deleted_count, 1);
+
+        insert_task(&pool, "Completed", now - Duration::days(60))
+            .await
+            .expect("second completed");
+        let second = maybe_run_daily_retention(&pool, enabled, now + Duration::hours(12))
+            .await
+            .expect("second");
+        assert!(second.is_none());
+    }
+
+    #[tokio::test]
+    async fn claim_next_for_queue_prioritises_provider_sync_over_older_download() {
+        let pool = db::init("sqlite::memory:").await.expect("init db");
+        let queue = "provider:test-provider";
+        let older = Utc::now() - Duration::minutes(5);
+        let newer = Utc::now();
+
+        let download_id = enqueue_with_queue(
+            &pool,
+            TaskType::DownloadChapter,
+            None,
+            None,
+            PRIORITY_DOWNLOAD_CHAPTER,
+            Some(queue.to_string()),
+        )
+        .await
+        .expect("download task");
+        sqlx::query("UPDATE Task SET created_at = ?, updated_at = ? WHERE uuid = ?")
+            .bind(older)
+            .bind(older)
+            .bind(download_id.to_string())
+            .execute(&pool)
+            .await
+            .expect("age download task");
+
+        let sync_id = enqueue_with_queue(
+            &pool,
+            TaskType::SyncProviderChapters,
+            None,
+            None,
+            PRIORITY_PROVIDER_SYNC,
+            Some(queue.to_string()),
+        )
+        .await
+        .expect("sync task");
+        sqlx::query("UPDATE Task SET created_at = ?, updated_at = ? WHERE uuid = ?")
+            .bind(newer)
+            .bind(newer)
+            .bind(sync_id.to_string())
+            .execute(&pool)
+            .await
+            .expect("freshen sync task");
+
+        let claimed = claim_next_for_queue(&pool, queue)
+            .await
+            .expect("claim task")
+            .expect("task exists");
+
+        assert_eq!(claimed.id, sync_id);
+        assert_eq!(claimed.task_type, TaskType::SyncProviderChapters);
+    }
+
+    #[tokio::test]
+    async fn claim_next_for_queue_uses_fifo_when_priorities_match() {
+        let pool = db::init("sqlite::memory:").await.expect("init db");
+        let queue = "provider:test-provider";
+        let older = Utc::now() - Duration::minutes(5);
+        let newer = Utc::now();
+
+        let first_id = enqueue_with_queue(
+            &pool,
+            TaskType::DownloadChapter,
+            None,
+            None,
+            PRIORITY_DOWNLOAD_CHAPTER,
+            Some(queue.to_string()),
+        )
+        .await
+        .expect("first task");
+        sqlx::query("UPDATE Task SET created_at = ?, updated_at = ? WHERE uuid = ?")
+            .bind(older)
+            .bind(older)
+            .bind(first_id.to_string())
+            .execute(&pool)
+            .await
+            .expect("age first task");
+
+        let second_id = enqueue_with_queue(
+            &pool,
+            TaskType::DownloadChapter,
+            None,
+            None,
+            PRIORITY_DOWNLOAD_CHAPTER,
+            Some(queue.to_string()),
+        )
+        .await
+        .expect("second task");
+        sqlx::query("UPDATE Task SET created_at = ?, updated_at = ? WHERE uuid = ?")
+            .bind(newer)
+            .bind(newer)
+            .bind(second_id.to_string())
+            .execute(&pool)
+            .await
+            .expect("freshen second task");
+
+        let claimed = claim_next_for_queue(&pool, queue)
+            .await
+            .expect("claim task")
+            .expect("task exists");
+
+        assert_eq!(claimed.id, first_id);
+    }
+
+    #[tokio::test]
+    async fn provider_sync_priority_constant_stays_above_download_priority() {
+        assert!(PRIORITY_PROVIDER_SYNC < PRIORITY_DOWNLOAD_CHAPTER);
+    }
+
+    #[tokio::test]
+    async fn enqueue_with_queue_persists_explicit_priority() {
+        let pool = db::init("sqlite::memory:").await.expect("init db");
+        let queue = "provider:test-provider".to_string();
+
+        let sync_id = enqueue_with_queue(
+            &pool,
+            TaskType::SyncProviderChapters,
+            None,
+            None,
+            PRIORITY_PROVIDER_SYNC,
+            Some(queue.clone()),
+        )
+        .await
+        .expect("enqueue sync");
+        let download_id = enqueue_with_queue(
+            &pool,
+            TaskType::DownloadChapter,
+            None,
+            None,
+            PRIORITY_DOWNLOAD_CHAPTER,
+            Some(queue.clone()),
+        )
+        .await
+        .expect("enqueue download");
+
+        let sync_priority: i64 = sqlx::query("SELECT priority FROM Task WHERE uuid = ?")
+            .bind(sync_id.to_string())
+            .fetch_one(&pool)
+            .await
+            .expect("fetch sync")
+            .get(0);
+        let download_priority: i64 = sqlx::query("SELECT priority FROM Task WHERE uuid = ?")
+            .bind(download_id.to_string())
+            .fetch_one(&pool)
+            .await
+            .expect("fetch download")
+            .get(0);
+
+        assert_eq!(sync_priority, PRIORITY_PROVIDER_SYNC);
+        assert_eq!(download_priority, PRIORITY_DOWNLOAD_CHAPTER);
+    }
 }

@@ -10,10 +10,7 @@ use crate::{
         SuggestionRelationKind, SuggestionSourceKind, UpsertSuggestionCandidate,
         UpsertSuggestionSource,
     },
-    http::metadata::{
-        AniListMetadata,
-        anilist::suggestion_bundle_from_media,
-    },
+    http::metadata::{AniListMetadata, anilist::suggestion_bundle_from_media},
 };
 
 #[derive(Debug, Clone)]
@@ -138,26 +135,27 @@ pub async fn refresh_library_suggestions(
                 {
                     continue;
                 }
-                let entry = aggregate
-                    .entry(rec.target.anilist_id)
-                    .or_insert_with(|| AggregatedCandidate {
-                        meta: AggregatedMeta {
-                            anilist_id: rec.target.anilist_id,
-                            title: rec.target.title.clone(),
-                            cover_url: rec.target.cover_url.clone(),
-                            synopsis: rec.target.synopsis.clone(),
-                            media_format: rec.target.media_format.clone(),
-                            publishing_status: rec.target.publishing_status.clone(),
-                            tags: rec.target.tags.clone(),
-                            community_rating: rec.target.community_rating,
-                            popularity: rec.target.popularity,
-                            favourites: rec.target.favourites,
-                        },
-                        total_occurrences: 0,
-                        recommendation_occurrences: 0,
-                        relation_occurrences: 0,
-                        weighted_score: 0.0,
-                    });
+                let entry =
+                    aggregate
+                        .entry(rec.target.anilist_id)
+                        .or_insert_with(|| AggregatedCandidate {
+                            meta: AggregatedMeta {
+                                anilist_id: rec.target.anilist_id,
+                                title: rec.target.title.clone(),
+                                cover_url: rec.target.cover_url.clone(),
+                                synopsis: rec.target.synopsis.clone(),
+                                media_format: rec.target.media_format.clone(),
+                                publishing_status: rec.target.publishing_status.clone(),
+                                tags: rec.target.tags.clone(),
+                                community_rating: rec.target.community_rating,
+                                popularity: rec.target.popularity,
+                                favourites: rec.target.favourites,
+                            },
+                            total_occurrences: 0,
+                            recommendation_occurrences: 0,
+                            relation_occurrences: 0,
+                            weighted_score: 0.0,
+                        });
                 entry.total_occurrences += 1;
                 entry.recommendation_occurrences += 1;
                 entry.weighted_score += 1.0 + (f64::from(rec.rating.unwrap_or(0)) / 1000.0);

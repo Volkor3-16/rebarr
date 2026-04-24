@@ -208,7 +208,9 @@ pub fn version_info() -> Json<VersionInfo> {
 
     // Git commit hash baked in at compile time via build.rs + GIT_COMMIT env var
     let git_commit_full: Option<String> = option_env!("GIT_COMMIT_HASH").map(str::to_owned);
-    let git_commit = git_commit_full.as_deref().map(|s| s.chars().take(8).collect());
+    let git_commit = git_commit_full
+        .as_deref()
+        .map(|s| s.chars().take(8).collect());
     let git_commit_url = git_commit_full.map(|sha| format!("{REPO_URL}/-/commit/{sha}"));
 
     Json(VersionInfo {
@@ -260,6 +262,12 @@ pub struct ScanDiskAllResult {
     pub enqueued: u32,
 }
 
+#[derive(Serialize, JsonSchema)]
+pub struct TaskRetentionCleanupResult {
+    pub deleted_count: u64,
+    pub cutoff: String,
+}
+
 /// Enqueue a ScanDisk task for every series across all libraries.
 #[openapi(tag = "System")]
 #[post("/api/system/scan-disk-all")]
@@ -285,6 +293,34 @@ pub async fn scan_disk_all_api(pool: &State<SqlitePool>) -> ApiResult<ScanDiskAl
     Ok(Json(ScanDiskAllResult { enqueued }))
 }
 
+#[openapi(tag = "System")]
+#[post("/api/system/task-retention/prune")]
+pub async fn prune_task_retention_api(
+    pool: &State<SqlitePool>,
+) -> ApiResult<TaskRetentionCleanupResult> {
+    let days = db_settings::get(pool.inner(), "task_retention_days", "30")
+        .await
+        .unwrap_or_else(|_| "30".to_string())
+        .parse::<u64>()
+        .unwrap_or(30)
+        .clamp(1, 3650);
+    let min_keep = db_settings::get(pool.inner(), "task_retention_min_keep", "200")
+        .await
+        .unwrap_or_else(|_| "200".to_string())
+        .parse::<u64>()
+        .unwrap_or(200)
+        .clamp(0, 100_000);
+
+    let result = db::task::prune_terminal_history(pool.inner(), days, min_keep)
+        .await
+        .map_err(internal)?;
+
+    Ok(Json(TaskRetentionCleanupResult {
+        deleted_count: result.deleted_count,
+        cutoff: result.cutoff.to_rfc3339(),
+    }))
+}
+
 // ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
@@ -296,6 +332,7 @@ pub fn routes() -> Vec<rocket::Route> {
         version_info,
         changelog,
         purge_orphan_cbz_api,
-        scan_disk_all_api
+        scan_disk_all_api,
+        prune_task_retention_api
     ]
 }

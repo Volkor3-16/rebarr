@@ -139,11 +139,7 @@ pub async fn get_version(pool: &SqlitePool, name: &str) -> Result<Option<String>
 }
 
 /// Persist (or update) the current version for a provider.
-pub async fn set_version(
-    pool: &SqlitePool,
-    name: &str,
-    version: &str,
-) -> Result<(), sqlx::Error> {
+pub async fn set_version(pool: &SqlitePool, name: &str, version: &str) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO ProviderVersion (provider_name, version, updated_at)
          VALUES (?, ?, ?)

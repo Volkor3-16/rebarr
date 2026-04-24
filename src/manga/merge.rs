@@ -258,13 +258,8 @@ pub async fn search_providers(
                 manga.metadata.title,
                 provider.name()
             );
-            db_provider::update_title_in_provider_data(
-                pool,
-                manga.id,
-                provider.name(),
-                &title,
-            )
-            .await?;
+            db_provider::update_title_in_provider_data(pool, manga.id, provider.name(), &title)
+                .await?;
         }
     }
 

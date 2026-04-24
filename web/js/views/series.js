@@ -256,6 +256,10 @@ export async function viewSeries(id) {
           <iconify-icon icon="mdi-database-refresh" width="18" height="18"></iconify-icon>
           Refresh Metadata
         </button>
+        <button class="btn btn-sm btn-outline" onclick='navigate("/queue?manga_id=${m.id}")'>
+          <iconify-icon icon="mdi-history" width="18" height="18"></iconify-icon>
+          History
+        </button>
         <button class="btn btn-sm btn-accent" onclick='doDownloadAllMissing("${m.id}")'>
           <iconify-icon icon="mdi-download" width="18" height="18"></iconify-icon>
           Download All Missing

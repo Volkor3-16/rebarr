@@ -17,16 +17,16 @@ pub struct Library {
 /// Contains all the important data about a Manga
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Manga {
-    pub id: Uuid,                      // internal, canonical
-    pub library_id: Uuid,              // The Library the manga belongs to
-    pub anilist_id: Option<u32>,       // external identity
+    pub id: Uuid,                             // internal, canonical
+    pub library_id: Uuid,                     // The Library the manga belongs to
+    pub anilist_id: Option<u32>,              // external identity
     pub mal_id: Option<u32>, // MAL cross-reference ID (sourced from AniList's id_mal field)
     pub metadata: MangaMetadata, // Stores all the metadata for the series
     pub relative_path: PathBuf, // Relative (to the library root) path of the manga files.
     pub downloaded_count: Option<i32>, // How many non-extra chapters are on disk already.
     pub chapter_count: Option<u32>, // Total non-extra canonical chapters (built from providers @ scrape time).
     pub extras_downloaded_count: Option<i32>, // How many extra/bonus chapters are on disk.
-    pub extras_count: Option<u32>, // Total extra/bonus canonical chapters.
+    pub extras_count: Option<u32>,  // Total extra/bonus canonical chapters.
     pub metadata_source: MangaSource, // The source of the metadata, not where we download it from.
     pub thumbnail_url: Option<String>, // Cached cover image URL from metadata source.
     pub monitored: bool,            // If true, new chapters are automatically downloaded.

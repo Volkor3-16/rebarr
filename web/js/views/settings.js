@@ -237,6 +237,30 @@ export async function viewSettings() {
           <iconify-icon icon="mdi:alert-outline" width="20" height="20" style="color:var(--error,#e53e3e)"></iconify-icon>
           <h3 style="color:var(--error,#e53e3e)">Danger Zone</h3>
         </div>
+        <div style="display:grid;gap:0.85rem;margin-bottom:1rem">
+          <div>
+            <p class="settings-card-desc" style="margin-bottom:0.5rem">
+              <strong>Task Retention</strong> — Automatically prune old completed and cancelled tasks.
+              Failed tasks are preserved. Pending and running tasks are never touched.
+            </p>
+            <div class="flex gap-2 align-center flex-wrap">
+              <label class="flex gap-1 align-center">
+                <input type="checkbox" id="task-retention-enabled" class="checkbox checkbox-sm" ${appSettings.task_retention_enabled ? 'checked' : ''}>
+                <span>Enable automatic cleanup</span>
+              </label>
+              <label class="flex gap-1 align-center">
+                <span>Older than (days):</span>
+                <input type="number" id="task-retention-days" class="input input-bordered input-sm" min="1" max="3650" value="${escape(appSettings.task_retention_days ?? 30)}" style="width:90px">
+              </label>
+              <label class="flex gap-1 align-center">
+                <span>Always keep newest:</span>
+                <input type="number" id="task-retention-min-keep" class="input input-bordered input-sm" min="0" max="100000" value="${escape(appSettings.task_retention_min_keep ?? 200)}" style="width:100px">
+              </label>
+              <button class="btn btn-sm btn-outline" onclick="runTaskRetentionCleanup()">Run Cleanup Now</button>
+            </div>
+            <div id="task-retention-status"></div>
+          </div>
+        </div>
         <p class="settings-card-desc">
           <strong>Purge Orphan CBZs</strong> — Scans every series folder and permanently deletes
           <code>.cbz</code> files that do not match any Downloaded chapter in the database.
@@ -283,6 +307,9 @@ async function saveSchedulerSettings(showToastOnSuccess = false) {
   const autoUnmonitorCompleted = document.getElementById('auto-unmonitor-completed').checked;
   const disableChapterUpgrades = document.getElementById('disable-chapter-upgrades').checked;
   const downloadMode = document.getElementById('download-mode').value;
+  const taskRetentionEnabled = document.getElementById('task-retention-enabled').checked;
+  const taskRetentionDays = parseInt(document.getElementById('task-retention-days').value, 10);
+  const taskRetentionMinKeep = parseInt(document.getElementById('task-retention-min-keep').value, 10);
   const statusEl = document.getElementById('settings-status');
   const saveBtn = document.getElementById('settings-save-btn');
   const seq = ++_settingsSaveSeq;
@@ -293,6 +320,14 @@ async function saveSchedulerSettings(showToastOnSuccess = false) {
   }
   if (!browserWorkers || browserWorkers < 1 || browserWorkers > 16) {
     statusEl.innerHTML = '<p class="error">Browser workers must be 1–16.</p>';
+    return false;
+  }
+  if (!taskRetentionDays || taskRetentionDays < 1 || taskRetentionDays > 3650) {
+    statusEl.innerHTML = '<p class="error">Task retention days must be 1–3650.</p>';
+    return false;
+  }
+  if (!Number.isInteger(taskRetentionMinKeep) || taskRetentionMinKeep < 0 || taskRetentionMinKeep > 100000) {
+    statusEl.innerHTML = '<p class="error">Task retention keep floor must be 0–100000.</p>';
     return false;
   }
 
@@ -307,6 +342,9 @@ async function saveSchedulerSettings(showToastOnSuccess = false) {
       auto_unmonitor_completed: autoUnmonitorCompleted,
       disable_chapter_upgrades: disableChapterUpgrades,
       download_mode: downloadMode,
+      task_retention_enabled: taskRetentionEnabled,
+      task_retention_days: taskRetentionDays,
+      task_retention_min_keep: taskRetentionMinKeep,
     });
     if (seq === _settingsSaveSeq) {
       statusEl.innerHTML = '<small style="color:var(--success)">Saved</small>';
@@ -339,6 +377,7 @@ function bindSchedulerAutoSave() {
     'auto-unmonitor-completed',
     'disable-chapter-upgrades',
     'download-mode',
+    'task-retention-enabled',
   ];
   immediateIds.forEach((id) => {
     const el = document.getElementById(id);
@@ -350,6 +389,8 @@ function bindSchedulerAutoSave() {
     'scan-interval',
     'browser-worker-count',
     'preferred-language',
+    'task-retention-days',
+    'task-retention-min-keep',
   ];
   delayedIds.forEach((id) => {
     const el = document.getElementById(id);
@@ -919,5 +960,23 @@ window.purgeOrphanCbz = async function() {
     if (statusEl) statusEl.innerHTML = `<small style="color:var(--success)">${result?.deleted ?? 0} orphaned file(s) deleted.</small>`;
   } catch(e) {
     if (statusEl) statusEl.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
+  }
+};
+
+window.runTaskRetentionCleanup = async function() {
+  const statusEl = document.getElementById('task-retention-status');
+  const saved = await saveSchedulerSettings(false);
+  if (!saved) return;
+  if (statusEl) statusEl.innerHTML = '<small style="color:var(--text-muted)">Cleaning up…</small>';
+  try {
+    const result = await system.pruneTaskRetention();
+    const cutoff = result?.cutoff ? new Date(result.cutoff).toLocaleString() : 'the configured cutoff';
+    if (statusEl) {
+      statusEl.innerHTML = `<small style="color:var(--success)">${result?.deleted_count ?? 0} task(s) deleted. Cutoff: ${escape(cutoff)}</small>`;
+    }
+    showToast(`Deleted ${result?.deleted_count ?? 0} old task(s)`);
+  } catch(e) {
+    if (statusEl) statusEl.innerHTML = `<p class="error">Error: ${escape(e.message)}</p>`;
+    showToast('Error: ' + e.message, 'error');
   }
 };

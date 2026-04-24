@@ -29,6 +29,9 @@ pub struct SettingsResponse {
     pub disable_chapter_upgrades: bool,
     /// Download mode: "best_only" (try best release, fail immediately) or "must_have" (fallback on failure).
     pub download_mode: String,
+    pub task_retention_enabled: bool,
+    pub task_retention_days: u64,
+    pub task_retention_min_keep: u64,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -44,6 +47,9 @@ pub struct UpdateSettingsRequest {
     pub disable_chapter_upgrades: Option<bool>,
     /// "best_only" or "must_have".
     pub download_mode: Option<String>,
+    pub task_retention_enabled: Option<bool>,
+    pub task_retention_days: Option<u64>,
+    pub task_retention_min_keep: Option<u64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -104,6 +110,22 @@ pub async fn get_settings(pool: &State<sqlx::SqlitePool>) -> ApiResult<SettingsR
     } else {
         "must_have".to_string()
     };
+    let task_retention_enabled = db::settings::get(pool.inner(), "task_retention_enabled", "false")
+        .await
+        .unwrap_or_else(|_| "false".to_string())
+        == "true";
+    let task_retention_days = db::settings::get(pool.inner(), "task_retention_days", "30")
+        .await
+        .unwrap_or_else(|_| "30".to_string())
+        .parse::<u64>()
+        .unwrap_or(30)
+        .clamp(1, 3650);
+    let task_retention_min_keep = db::settings::get(pool.inner(), "task_retention_min_keep", "200")
+        .await
+        .unwrap_or_else(|_| "200".to_string())
+        .parse::<u64>()
+        .unwrap_or(200)
+        .clamp(0, 100_000);
     Ok(Json(SettingsResponse {
         scan_interval_hours: hours,
         queue_paused,
@@ -114,6 +136,9 @@ pub async fn get_settings(pool: &State<sqlx::SqlitePool>) -> ApiResult<SettingsR
         auto_unmonitor_completed,
         disable_chapter_upgrades,
         download_mode,
+        task_retention_enabled,
+        task_retention_days,
+        task_retention_min_keep,
     }))
 }
 
@@ -206,6 +231,35 @@ pub async fn update_settings(
             .await
             .map_err(internal)?;
     }
+    if let Some(enabled) = body.task_retention_enabled {
+        db::settings::set(
+            pool.inner(),
+            "task_retention_enabled",
+            if enabled { "true" } else { "false" },
+        )
+        .await
+        .map_err(internal)?;
+    }
+    if let Some(days) = body.task_retention_days {
+        if !(1..=3650).contains(&days) {
+            return Err(bad_request("task_retention_days must be 1–3650"));
+        }
+        db::settings::set(pool.inner(), "task_retention_days", &days.to_string())
+            .await
+            .map_err(internal)?;
+    }
+    if let Some(min_keep) = body.task_retention_min_keep {
+        if min_keep > 100_000 {
+            return Err(bad_request("task_retention_min_keep must be 0–100000"));
+        }
+        db::settings::set(
+            pool.inner(),
+            "task_retention_min_keep",
+            &min_keep.to_string(),
+        )
+        .await
+        .map_err(internal)?;
+    }
     Ok(Status::NoContent)
 }
 
@@ -215,4 +269,74 @@ pub async fn update_settings(
 
 pub fn routes() -> Vec<rocket::Route> {
     rocket::routes![get_settings, update_settings,]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scraper::{ProviderRegistry, browser::BrowserPool, executor::ProviderExecutor};
+    use rocket::local::asynchronous::Client;
+    use std::sync::Arc;
+
+    async fn test_client() -> Client {
+        let pool = crate::db::init("sqlite::memory:").await.expect("init db");
+        let registry = ProviderRegistry::from_providers_for_tests(vec![]);
+        let ctx = ScraperCtx::new(
+            reqwest::Client::new(),
+            BrowserPool::new(),
+            Arc::new(ProviderExecutor::new(&registry, 2)),
+        );
+        let rocket = rocket::build()
+            .manage(pool)
+            .manage(ctx)
+            .mount("/", rocket::routes![get_settings, update_settings]);
+        Client::tracked(rocket).await.expect("client")
+    }
+
+    #[tokio::test]
+    async fn retention_settings_round_trip() {
+        let client = test_client().await;
+
+        let response = client
+            .put("/api/settings")
+            .header(rocket::http::ContentType::JSON)
+            .body(
+                r#"{
+                    "task_retention_enabled": true,
+                    "task_retention_days": 45,
+                    "task_retention_min_keep": 321
+                }"#,
+            )
+            .dispatch()
+            .await;
+        assert_eq!(response.status(), Status::NoContent);
+
+        let response = client.get("/api/settings").dispatch().await;
+        assert_eq!(response.status(), Status::Ok);
+        let json: serde_json::Value = response.into_json().await.expect("json");
+        assert_eq!(json["task_retention_enabled"], true);
+        assert_eq!(json["task_retention_days"], 45);
+        assert_eq!(json["task_retention_min_keep"], 321);
+    }
+
+    #[tokio::test]
+    async fn retention_settings_validate_bounds() {
+        let client = test_client().await;
+
+        let response = client
+            .put("/api/settings")
+            .header(rocket::http::ContentType::JSON)
+            .body(r#"{ "task_retention_days": 0 }"#)
+            .dispatch()
+            .await;
+        assert_eq!(response.status(), Status::BadRequest);
+
+        let response = client
+            .put("/api/settings")
+            .header(rocket::http::ContentType::JSON)
+            .body(r#"{ "task_retention_min_keep": 100001 }"#)
+            .dispatch()
+            .await;
+        assert_eq!(response.status(), Status::BadRequest);
+    }
 }

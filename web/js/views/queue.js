@@ -1,7 +1,7 @@
 // Queue view - task history + active queue with live polling
 
 import { tasks, settings } from '../api.js';
-import { render } from '../router.js';
+import { navigate, render } from '../router.js';
 import { escape, taskBadge, showToast } from '../utils.js';
 import * as sse from '../events.js';
 
@@ -50,8 +50,11 @@ let visibleTaskTypes = loadTaskTypeFilters();
 let refreshInFlight = false;
 let refreshQueued = false;
 let refreshTimer = null;
+let currentMangaFilter = null;
 
 export async function viewQueue() {
+  const url = new URL(window.location.href);
+  currentMangaFilter = url.searchParams.get('manga_id') || null;
   render(`
     <h2>Queue</h2>
     <div id="queue-controls">
@@ -90,7 +93,7 @@ async function refreshQueue() {
   
   try {
     const [queueData, appSettings] = await Promise.all([
-      tasks.listQueue(),
+      tasks.listQueue(currentMangaFilter ? { manga_id: currentMangaFilter } : {}),
       settings.get(),
     ]);
     const taskList = queueData.tasks || [];
@@ -117,6 +120,7 @@ async function refreshQueue() {
       <button class="btn btn-sm btn-error btn-outline" onclick="cancelSelected()">Cancel Selected</button>
       ${jumpBtn}
       ${paused ? '<span class="badge badge-warning">Queue paused — no new tasks will run.</span>' : ''}
+      ${currentMangaFilter ? '<span class="badge badge-info">Filtered to one series task history.</span><button class="btn btn-sm btn-ghost" onclick="clearQueueSeriesFilter()">Show all tasks</button>' : ''}
       ${queueData.has_more_history ? `<span class="badge badge-info">Showing all active tasks + latest ${queueData.terminal_limit} finished tasks.</span>` : ''}
       ${buildTaskTypeFilterBar(availableTaskTypes, taskList)}
     `;
@@ -465,6 +469,10 @@ window.jumpToActive = function() {
   } else {
     showToast('No active task found', 'warning');
   }
+};
+
+window.clearQueueSeriesFilter = function() {
+  navigate('/queue');
 };
 
 window.viewQueue = viewQueue;

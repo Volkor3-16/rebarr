@@ -329,7 +329,7 @@ async fn run_scheduler(
                                     TaskType::SyncProviderChapters,
                                     Some(manga.id),
                                     None,
-                                    10,
+                                    db_task::PRIORITY_PROVIDER_SYNC,
                                     Some(queue.clone()),
                                     Some(payload),
                                 )
@@ -450,7 +450,7 @@ async fn dispatch(
                     TaskType::SyncProviderChapters,
                     Some(manga.id),
                     None,
-                    1,
+                    db_task::PRIORITY_PROVIDER_SYNC,
                     Some(queue.clone()),
                     Some(payload),
                 )

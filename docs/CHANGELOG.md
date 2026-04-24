@@ -16,6 +16,7 @@ This a informal changelog so i can keep track of what im doing.
 - You can open anilist page for series in search results
 - You can manually trigger a anilist search when there's local results.
 - Same with manual series addition
+- System for automatically cleaing old tasks from the database
 
 ## 2026-04-23
 

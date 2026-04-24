@@ -325,9 +325,7 @@ pub async fn scan_existing_chapters(
 /// (`Chapter {number_sort}[ - {title}].cbz`) of any chapter currently marked Downloaded
 /// for that manga. Comparison is case-insensitive.
 pub async fn purge_orphan_cbz(pool: &SqlitePool) -> Result<u32, String> {
-    let libraries = db_library::get_all(pool)
-        .await
-        .map_err(|e| e.to_string())?;
+    let libraries = db_library::get_all(pool).await.map_err(|e| e.to_string())?;
 
     let mut total_deleted: u32 = 0;
 
@@ -361,10 +359,7 @@ pub async fn purge_orphan_cbz(pool: &SqlitePool) -> Result<u32, String> {
                 let path = entry.path();
                 match std::fs::remove_file(&path) {
                     Ok(()) => {
-                        info!(
-                            "[scanner] Purge orphan: deleted {}",
-                            path.display()
-                        );
+                        info!("[scanner] Purge orphan: deleted {}", path.display());
                         deleted_for_manga += 1;
                         total_deleted += 1;
                     }

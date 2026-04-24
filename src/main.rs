@@ -2,10 +2,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use chrono::Utc;
 use dotenvy::dotenv;
 use rebarr::api::{extra_routes, frontend_routes, openapi_routes};
 use rebarr::db;
-use rebarr::db::task::TaskType;
+use rebarr::db::task::{RetentionPolicy, TaskType};
 use rebarr::http::{ALClient, AniListMetadata, WebhookDispatcher};
 use rebarr::scheduler::{CancelMap, start_worker};
 use rebarr::scraper::{
@@ -46,8 +47,7 @@ async fn check_provider_versions(pool: &SqlitePool, registry: &ProviderRegistry)
             def.name, old_display, current_version
         );
 
-        if let Err(e) = db::provider_settings::set_version(pool, &def.name, current_version).await
-        {
+        if let Err(e) = db::provider_settings::set_version(pool, &def.name, current_version).await {
             warn!("Failed to store version for '{}': {e}", def.name);
             continue;
         }
@@ -76,9 +76,14 @@ async fn check_provider_versions(pool: &SqlitePool, registry: &ProviderRegistry)
         let mut enqueued = 0usize;
 
         for manga_id in &manga_ids {
-            if db::task::is_pending_in_queue(pool, &queue, *manga_id, TaskType::SyncProviderChapters)
-                .await
-                .unwrap_or(false)
+            if db::task::is_pending_in_queue(
+                pool,
+                &queue,
+                *manga_id,
+                TaskType::SyncProviderChapters,
+            )
+            .await
+            .unwrap_or(false)
             {
                 continue; // already queued
             }
@@ -111,6 +116,43 @@ async fn check_provider_versions(pool: &SqlitePool, registry: &ProviderRegistry)
     }
 }
 
+async fn load_task_retention_policy(pool: &SqlitePool) -> RetentionPolicy {
+    let enabled = db::settings::get(pool, "task_retention_enabled", "false")
+        .await
+        .unwrap_or_else(|_| "false".to_string())
+        == "true";
+    let days = db::settings::get(pool, "task_retention_days", "30")
+        .await
+        .unwrap_or_else(|_| "30".to_string())
+        .parse::<u64>()
+        .unwrap_or(30)
+        .clamp(1, 3650);
+    let min_keep = db::settings::get(pool, "task_retention_min_keep", "200")
+        .await
+        .unwrap_or_else(|_| "200".to_string())
+        .parse::<u64>()
+        .unwrap_or(200)
+        .clamp(0, 100_000);
+    RetentionPolicy {
+        enabled,
+        days,
+        min_keep,
+    }
+}
+
+async fn run_task_retention_if_due(pool: &SqlitePool) {
+    let policy = load_task_retention_policy(pool).await;
+    match db::task::maybe_run_daily_retention(pool, policy, Utc::now()).await {
+        Ok(Some(run)) => info!(
+            "Task retention pruned {} completed/cancelled task(s) older than {}.",
+            run.deleted_count,
+            run.cutoff.to_rfc3339()
+        ),
+        Ok(None) => {}
+        Err(e) => warn!("Task retention pass failed: {e}"),
+    }
+}
+
 #[rocket::main]
 async fn main() -> Result<(), Box<rocket::Error>> {
     dotenv().ok();
@@ -128,6 +170,7 @@ async fn main() -> Result<(), Box<rocket::Error>> {
         Ok(n) => warn!("Reset {n} stuck Running task(s) to Pending."),
         Err(e) => error!("Failed to reset running tasks: {e}"),
     }
+    run_task_retention_if_due(&pool).await;
 
     let al_client = ALClient::new();
     let al_metadata = AniListMetadata::new();
@@ -182,6 +225,19 @@ async fn main() -> Result<(), Box<rocket::Error>> {
         shutdown_token.clone(),
     );
     info!("Background task worker started.");
+
+    let retention_pool = pool.clone();
+    let retention_token = shutdown_token.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(24 * 60 * 60));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tokio::select! {
+                _ = retention_token.cancelled() => break,
+                _ = interval.tick() => run_task_retention_if_due(&retention_pool).await,
+            }
+        }
+    });
 
     let rocket = rocket::build()
         .manage(pool)
