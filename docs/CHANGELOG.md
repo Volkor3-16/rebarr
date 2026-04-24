@@ -12,6 +12,7 @@ This a informal changelog so i can keep track of what im doing.
 - Cut down on Anilist API Queries by 99%!
     - We cache a LOT more
     - We group 60 queries into 1!
+- We now change the title of the page more often.
 
 ## 2026-04-23
 

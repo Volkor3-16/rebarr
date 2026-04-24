@@ -191,7 +191,11 @@ function buildAniListSection() {
     return `<div class="anilist-results"><p class="text-muted">Searching AniList…</p></div>`;
   }
   if (anilistResults.length === 0) {
-    return `<div class="anilist-results"><p class="text-muted">No results on AniList either.</p></div>`;
+    return `<div class="anilist-results no-results-shrug">
+      <p style="font-size:2em;margin:0">¯\\_(ツ)_/¯</p>
+      <p class="text-muted">Not found on AniList either — you may be rate-limited, or this series isn't indexed.</p>
+      <button class="btn btn-sm btn-primary" onclick="showHomeManualAdd()">Add manually</button>
+    </div>`;
   }
 
   const gridClass = homeView === 'large' ? 'card-grid card-grid--large'
@@ -404,6 +408,117 @@ window.showAddMangaModal = async function(anilistId, pathSafeTitle) {
     if (card) { card.style.pointerEvents = ''; card.style.opacity = ''; }
     alert(`Failed to add: ${err.message}`);
   }
+};
+
+window.showHomeManualAdd = async function() {
+  document.getElementById('home-manual-dialog')?.remove();
+
+  const dialog = document.createElement('dialog');
+  dialog.id = 'home-manual-dialog';
+  dialog.className = 'modal';
+
+  let libOptions = '<option value="">— select library —</option>';
+  try {
+    const libs = await libraries.list();
+    libOptions += libs.map(lib => `<option value="${lib.uuid}">${escape(lib.root_path)}</option>`).join('');
+  } catch (_) {
+    libOptions = '<option value="">Error loading libraries</option>';
+  }
+
+  const prefillTitle = currentSearchQuery;
+  const prefillPath = toPathSafe(prefillTitle);
+
+  dialog.innerHTML = `
+    <div class="modal-box" style="max-width:480px">
+      <h3 style="font-size:1.1em;font-weight:bold;margin-bottom:0.5em">Add Manually</h3>
+      <p class="text-muted" style="font-size:0.85em;margin-bottom:1em">For series not on AniList. Title, library, and folder are required.</p>
+      <form id="home-manual-form">
+        <label>Title *</label>
+        <input type="text" id="hm-title" value="${escape(prefillTitle)}" placeholder="English title" required>
+
+        <label>Status</label>
+        <select id="hm-status">
+          <option value="Unknown">Unknown</option>
+          <option value="Ongoing">Ongoing</option>
+          <option value="Completed">Completed</option>
+          <option value="Hiatus">Hiatus</option>
+          <option value="Cancelled">Cancelled</option>
+          <option value="NotYetReleased">Not Yet Released</option>
+        </select>
+
+        <label>Synopsis</label>
+        <textarea id="hm-synopsis" rows="3" placeholder="Optional description..."></textarea>
+
+        <label>Tags</label>
+        <input type="text" id="hm-tags" placeholder="Comma-separated: Action, Fantasy">
+
+        <label>Library *</label>
+        <select id="hm-lib" required>${libOptions}</select>
+
+        <label>Folder Name *</label>
+        <input type="text" id="hm-path" value="${escape(prefillPath)}" required>
+
+        <div id="hm-error"></div>
+        <div style="display:flex;gap:0.5em;margin-top:1em">
+          <button type="submit" class="btn btn-sm btn-primary">+ Add to Library</button>
+          <button type="button" class="btn btn-sm btn-ghost" onclick="closeHomeManualAdd()">Cancel</button>
+        </div>
+      </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+  `;
+
+  document.body.appendChild(dialog);
+  dialog.showModal();
+
+  const titleEl = dialog.querySelector('#hm-title');
+  const pathEl = dialog.querySelector('#hm-path');
+  titleEl.addEventListener('input', (e) => {
+    if (!pathEl.dataset.edited) pathEl.value = toPathSafe(e.target.value);
+  });
+  pathEl.addEventListener('input', () => { pathEl.dataset.edited = '1'; });
+
+  dialog.addEventListener('close', () => dialog.remove());
+
+  dialog.querySelector('#home-manual-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const titleVal = titleEl.value.trim();
+    const lib = dialog.querySelector('#hm-lib').value;
+    const path = pathEl.value.trim();
+    const errorEl = dialog.querySelector('#hm-error');
+
+    if (!titleVal) { errorEl.innerHTML = '<p class="error">Title is required.</p>'; return; }
+    if (!lib) { errorEl.innerHTML = '<p class="error">Please select a library.</p>'; return; }
+    if (!path) { errorEl.innerHTML = '<p class="error">Folder name is required.</p>'; return; }
+
+    const tagsRaw = dialog.querySelector('#hm-tags').value.trim();
+    const body = {
+      library_id: lib,
+      relative_path: path,
+      title: titleVal,
+      synopsis: dialog.querySelector('#hm-synopsis').value.trim() || null,
+      publishing_status: dialog.querySelector('#hm-status').value,
+      tags: tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : [],
+      other_titles: null,
+      start_year: null,
+      end_year: null,
+      cover_url: null,
+    };
+
+    errorEl.innerHTML = '<p class="text-muted">Adding...</p>';
+    try {
+      const m = await mangaApi.createManual(body);
+      dialog.remove();
+      navigate(`/series/${m.id}`);
+    } catch (err) {
+      errorEl.innerHTML = `<p class="error">Error: ${escape(err.message)}</p>`;
+    }
+  });
+};
+
+window.closeHomeManualAdd = function() {
+  const dialog = document.getElementById('home-manual-dialog');
+  if (dialog) { dialog.close(); }
 };
 
 window.viewHome = viewHome;
