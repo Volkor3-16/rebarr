@@ -1,5 +1,8 @@
+use std::collections::HashMap;
+
 use anilist_moe::{
     AniListClient, AniListError,
+    endpoints::media::FetchMediaOptions,
     enums::media::{MediaFormat, MediaRelation, MediaStatus, MediaType},
     objects::media::{Media, MediaCoverImage, MediaTitle},
 };
@@ -325,44 +328,6 @@ impl AniListMetadata {
         Err(last_err.unwrap_or(AniListError::RateLimitSimple))
     }
 
-    /// Fetch manga plus extracted suggestion bundle from the same AniList payload.
-    pub async fn grab_manga_with_suggestions(
-        &self,
-        id: i32,
-    ) -> Result<(Manga, AniListSuggestionBundle), AniListError> {
-        let mut last_err = None;
-        for attempt in 0..MAX_RETRIES {
-            self.limiter.wait_for_permit().await;
-
-            match self.client.manga().get_anime_by_id(id).await {
-                Ok(media) => {
-                    debug!(
-                        "[anilist] Found manga '{:?}' with ID {} (with suggestions)",
-                        media.title.as_ref().and_then(|t| t.english.as_ref()),
-                        id
-                    );
-                    let suggestions = suggestion_bundle_from_media(&media);
-                    return Ok((media.into(), suggestions));
-                }
-                Err(e) => {
-                    if self.is_rate_limit_error(&e) && attempt + 1 < MAX_RETRIES {
-                        self.limiter.handle_rate_limited(attempt);
-                        warn!(
-                            "[anilist] Rate limited fetching ID {} with suggestions, attempt {}/{}",
-                            id,
-                            attempt + 1,
-                            MAX_RETRIES
-                        );
-                        last_err = Some(e);
-                        continue;
-                    }
-                    return Err(e);
-                }
-            }
-        }
-        Err(last_err.unwrap_or(AniListError::RateLimitSimple))
-    }
-
     /// Fetch popular manga with rate limiting.
     pub async fn popular_manga(&self) -> Result<Vec<Manga>, AniListError> {
         let mut last_err = None;
@@ -399,29 +364,131 @@ impl AniListMetadata {
         Err(last_err.unwrap_or(AniListError::RateLimitSimple))
     }
 
-    /// Fetch relation and recommendation candidates for a manga.
-    pub async fn fetch_suggestions(
+    /// Batch-fetch recommendations and relations for multiple manga in as few requests as possible.
+    ///
+    /// Chunks `ids` into groups of 50 (AniList perPage max), one rate-limit permit per chunk.
+    /// Returns all `Media` items with relations and recommendations populated.
+    pub async fn batch_fetch_with_suggestions(
         &self,
-        id: i32,
-    ) -> Result<AniListSuggestionBundle, AniListError> {
-        let media = self.grab_raw_media(id).await?;
-        Ok(suggestion_bundle_from_media(&media))
+        ids: &[i32],
+    ) -> Result<Vec<Media>, AniListError> {
+        let mut all_media = Vec::new();
+        for chunk in ids.chunks(50) {
+            let mut last_err = None;
+            for attempt in 0..MAX_RETRIES {
+                self.limiter.wait_for_permit().await;
+                match self
+                    .client
+                    .manga()
+                    .fetch(&FetchMediaOptions {
+                        id_in: Some(chunk.to_vec()),
+                        include_relations: Some(true),
+                        include_recommendations: Some(true),
+                        include_tags: Some(true),
+                        per_page: Some(50),
+                        ..Default::default()
+                    })
+                    .await
+                {
+                    Ok(page) => {
+                        debug!(
+                            "[anilist] Batch fetched {} media with suggestions",
+                            page.data.len()
+                        );
+                        all_media.extend(page.data);
+                        last_err = None;
+                        break;
+                    }
+                    Err(e) => {
+                        if self.is_rate_limit_error(&e) && attempt + 1 < MAX_RETRIES {
+                            self.limiter.handle_rate_limited(attempt);
+                            warn!(
+                                "[anilist] Rate limited on batch suggestions fetch, attempt {}/{}",
+                                attempt + 1,
+                                MAX_RETRIES
+                            );
+                            last_err = Some(e);
+                            continue;
+                        }
+                        return Err(e);
+                    }
+                }
+            }
+            if let Some(e) = last_err {
+                return Err(e);
+            }
+        }
+        Ok(all_media)
     }
 
-    pub async fn fetch_suggestion_details(
+    /// Batch-fetch enrichment details (synopsis, rating, popularity, favourites) for multiple
+    /// candidate IDs in as few requests as possible.
+    ///
+    /// Chunks `ids` into groups of 50, one rate-limit permit per chunk.
+    /// Returns a map from anilist_id → `SuggestionMediaDetails`.
+    pub async fn batch_fetch_media_details(
         &self,
-        id: i32,
-    ) -> Result<SuggestionMediaDetails, AniListError> {
-        let media = self.grab_raw_media(id).await?;
-        Ok(SuggestionMediaDetails {
-            synopsis: media
-                .description
-                .as_deref()
-                .map(crate::manga::core::strip_html),
-            community_rating: media.average_score,
-            popularity: media.popularity,
-            favourites: media.favourites,
-        })
+        ids: &[i32],
+    ) -> Result<HashMap<u32, SuggestionMediaDetails>, AniListError> {
+        let mut result = HashMap::new();
+        for chunk in ids.chunks(50) {
+            let mut last_err = None;
+            for attempt in 0..MAX_RETRIES {
+                self.limiter.wait_for_permit().await;
+                match self
+                    .client
+                    .manga()
+                    .fetch(&FetchMediaOptions {
+                        id_in: Some(chunk.to_vec()),
+                        per_page: Some(50),
+                        ..Default::default()
+                    })
+                    .await
+                {
+                    Ok(page) => {
+                        debug!(
+                            "[anilist] Batch fetched details for {} media",
+                            page.data.len()
+                        );
+                        for media in page.data {
+                            if let Some(id) = media.id {
+                                result.insert(
+                                    id as u32,
+                                    SuggestionMediaDetails {
+                                        synopsis: media
+                                            .description
+                                            .as_deref()
+                                            .map(crate::manga::core::strip_html),
+                                        community_rating: media.average_score,
+                                        popularity: media.popularity,
+                                        favourites: media.favourites,
+                                    },
+                                );
+                            }
+                        }
+                        last_err = None;
+                        break;
+                    }
+                    Err(e) => {
+                        if self.is_rate_limit_error(&e) && attempt + 1 < MAX_RETRIES {
+                            self.limiter.handle_rate_limited(attempt);
+                            warn!(
+                                "[anilist] Rate limited on batch detail fetch, attempt {}/{}",
+                                attempt + 1,
+                                MAX_RETRIES
+                            );
+                            last_err = Some(e);
+                            continue;
+                        }
+                        return Err(e);
+                    }
+                }
+            }
+            if let Some(e) = last_err {
+                return Err(e);
+            }
+        }
+        Ok(result)
     }
 
     /// Update the rate limiter from HTTP response headers.

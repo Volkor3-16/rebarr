@@ -359,6 +359,56 @@ pub async fn get_for_library(
     })
 }
 
+/// Enrichment details cached from the last suggestions refresh, keyed by anilist_id.
+pub struct CachedSuggestionDetails {
+    pub synopsis: Option<String>,
+    pub community_rating: Option<i32>,
+    pub popularity: Option<i32>,
+    pub favourites: Option<i32>,
+}
+
+/// Return enrichment details for all previously-fetched suggestion candidates in a library.
+///
+/// Includes hidden candidates so the cache covers everything persisted, not just what is
+/// currently displayed. The caller uses this to avoid re-fetching data that hasn't changed.
+pub async fn get_enrichment_cache(
+    pool: &SqlitePool,
+    library_id: Uuid,
+) -> Result<HashMap<u32, CachedSuggestionDetails>, sqlx::Error> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        target_anilist_id: i64,
+        synopsis: Option<String>,
+        community_rating: Option<i32>,
+        popularity: Option<i32>,
+        favourites: Option<i32>,
+    }
+
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT target_anilist_id, synopsis, community_rating, popularity, favourites
+         FROM LibrarySuggestionCandidate
+         WHERE library_id = ?",
+    )
+    .bind(library_id.to_string())
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            (
+                r.target_anilist_id as u32,
+                CachedSuggestionDetails {
+                    synopsis: r.synopsis,
+                    community_rating: r.community_rating,
+                    popularity: r.popularity,
+                    favourites: r.favourites,
+                },
+            )
+        })
+        .collect())
+}
+
 pub async fn set_hidden(
     pool: &SqlitePool,
     library_id: Uuid,

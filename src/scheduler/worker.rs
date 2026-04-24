@@ -18,10 +18,7 @@ use crate::db::{
     provider_failure as db_provider_failure, settings as db_settings, task as db_task,
 };
 use crate::http::metadata::AniListMetadata;
-use crate::library::{
-    scanner::scan_existing_chapters,
-    suggestions::{refresh_library_suggestions, refresh_library_suggestions_with_seed},
-};
+use crate::library::{scanner::scan_existing_chapters, suggestions::refresh_library_suggestions};
 use crate::manga::core::{DownloadStatus, Manga, PublishingStatus, merge_synonyms};
 use crate::manga::merge;
 use crate::manga::{comicinfo, covers, files};
@@ -592,8 +589,8 @@ async fn dispatch(
                     };
 
                     let al = AniListMetadata::new();
-                    let (mut fresh, suggestions) = al
-                        .grab_manga_with_suggestions(anilist_id as i32)
+                    let mut fresh = al
+                        .grab_manga(anilist_id as i32)
                         .await
                         .map_err(|e| format!("AniList fetch failed: {e}"))?;
 
@@ -645,20 +642,6 @@ async fn dispatch(
                         .await
                         .map_err(|e| e.to_string())?;
                     rewrite_downloaded_comicinfo(pool, &fresh, &library.root_path).await?;
-
-                    if let Err(e) = refresh_library_suggestions_with_seed(
-                        pool,
-                        &al,
-                        fresh.library_id,
-                        Some((fresh.id, suggestions)),
-                    )
-                    .await
-                    {
-                        warn!(
-                            "[worker] Failed to persist suggestions during metadata refresh for '{}': {e}",
-                            fresh.metadata.title
-                        );
-                    }
 
                     info!(
                         "[worker] Refreshed AniList metadata for '{}'.",

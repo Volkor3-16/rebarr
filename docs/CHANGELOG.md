@@ -2,6 +2,17 @@
 
 This a informal changelog so i can keep track of what im doing.
 
+## 2026-04-24
+
+- Fixed adding series to library from search
+- Re-added manual series entry
+    - You can also directly enter a AniList URL (or anilist id)
+- Change priority on initial provider scan
+- Start work on provider / series / chapter tagging
+- Cut down on Anilist API Queries by 99%!
+    - We cache a LOT more
+    - We group 60 queries into 1!
+
 ## 2026-04-23
 
 - Don't poll the server when the tab is in the background
