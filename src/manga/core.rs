@@ -681,6 +681,9 @@ pub struct Chapter {
     pub scraped_at: Option<DateTime<Utc>>,
     /// Size of the CBZ file on disk in bytes, populated after download or disk scan.
     pub file_size_bytes: Option<i64>,
+    /// User-applied tags (e.g. "hidden", "low_quality"). Empty by default.
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 impl Chapter {

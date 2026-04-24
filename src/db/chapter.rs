@@ -1,6 +1,7 @@
 use chrono::{DateTime, TimeZone, Utc};
 use ordered_float::OrderedFloat;
 use sqlx::SqlitePool;
+use std::collections::HashMap;
 use tracing::debug;
 use uuid::Uuid;
 
@@ -275,6 +276,7 @@ fn chapter_from_row(row: ChapterRow) -> Result<Chapter, sqlx::Error> {
         downloaded_at: ts_to_dt(row.downloaded_at),
         scraped_at: ts_to_dt(row.scraped_at),
         file_size_bytes: row.file_size_bytes,
+        tags: vec![],
     })
 }
 
@@ -400,6 +402,7 @@ pub async fn upsert_from_scrape(
 }
 
 /// Get all Chapters rows for a manga, ordered by chapter_base ASC, chapter_variant ASC.
+/// Tags are hydrated in a single extra query.
 pub async fn get_all_for_manga(
     pool: &SqlitePool,
     manga_id: Uuid,
@@ -416,7 +419,64 @@ pub async fn get_all_for_manga(
     .fetch_all(pool)
     .await?;
 
-    rows.into_iter().map(chapter_from_row).collect()
+    let mut chapters: Vec<Chapter> = rows.into_iter().map(chapter_from_row).collect::<Result<_, _>>()?;
+
+    let tag_map = get_tags_for_manga(pool, manga_id).await?;
+    for ch in &mut chapters {
+        if let Some(tags) = tag_map.get(&ch.id) {
+            ch.tags = tags.clone();
+        }
+    }
+
+    Ok(chapters)
+}
+
+/// Fetch all chapter tags for a manga in one query, keyed by chapter UUID.
+pub async fn get_tags_for_manga(
+    pool: &SqlitePool,
+    manga_id: Uuid,
+) -> Result<HashMap<Uuid, Vec<String>>, sqlx::Error> {
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT ct.chapter_id, ct.tag
+         FROM ChapterTags ct
+         JOIN Chapters c ON c.uuid = ct.chapter_id
+         WHERE c.manga_id = ?",
+    )
+    .bind(manga_id.to_string())
+    .fetch_all(pool)
+    .await?;
+
+    let mut map: HashMap<Uuid, Vec<String>> = HashMap::new();
+    for (chapter_id_str, tag) in rows {
+        if let Ok(id) = Uuid::parse_str(&chapter_id_str) {
+            map.entry(id).or_default().push(tag);
+        }
+    }
+    Ok(map)
+}
+
+/// Add a tag to a chapter. No-ops if the tag already exists.
+pub async fn add_tag(pool: &SqlitePool, chapter_id: Uuid, tag: &str) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT OR IGNORE INTO ChapterTags (chapter_id, tag) VALUES (?, ?)",
+    )
+    .bind(chapter_id.to_string())
+    .bind(tag)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Remove a tag from a chapter. No-ops if the tag does not exist.
+pub async fn remove_tag(pool: &SqlitePool, chapter_id: Uuid, tag: &str) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "DELETE FROM ChapterTags WHERE chapter_id = ? AND tag = ?",
+    )
+    .bind(chapter_id.to_string())
+    .bind(tag)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 /// Get all Chapters rows for a specific chapter number (all providers).

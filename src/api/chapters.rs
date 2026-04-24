@@ -50,11 +50,18 @@ pub struct ChapterListItem {
     pub matched_rules: Vec<(String, i32)>,
     /// Size of the CBZ file on disk in bytes (None if not yet downloaded or not measured).
     pub file_size_bytes: Option<i64>,
+    /// User-applied tags (e.g. "hidden", "low_quality").
+    pub tags: Vec<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
 pub struct SetCanonicalRequest {
     pub chapter_id: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct AddTagRequest {
+    pub tag: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -241,6 +248,7 @@ async fn build_chapter_list(pool: &SqlitePool, manga_id: Uuid) -> ApiResult<Vec<
                 score,
                 matched_rules,
                 file_size_bytes: ch.file_size_bytes,
+                tags: ch.tags,
             }
         })
         .collect();
@@ -391,6 +399,60 @@ pub async fn delete_chapter_entry_api(
 }
 
 // ---------------------------------------------------------------------------
+// POST /api/manga/<id>/chapters/<base>/<variant>/tags
+// DELETE /api/manga/<id>/chapters/<base>/<variant>/tags/<tag>
+// ---------------------------------------------------------------------------
+
+/// Add a tag to a chapter (e.g. "hidden", "low_quality").
+#[openapi(tag = "Chapters")]
+#[post(
+    "/api/manga/<id>/chapters/<base>/<variant>/tags",
+    data = "<body>"
+)]
+pub async fn add_chapter_tag_api(
+    pool: &State<SqlitePool>,
+    id: &str,
+    base: i32,
+    variant: i32,
+    body: Json<AddTagRequest>,
+) -> Result<Status, (Status, Json<ApiError>)> {
+    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    let chapter = db::chapter::get_canonical_by_number(pool.inner(), manga_id, base, variant)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("chapter not found"))?;
+
+    db::chapter::add_tag(pool.inner(), chapter.id, &body.tag)
+        .await
+        .map_err(internal)?;
+
+    Ok(Status::NoContent)
+}
+
+/// Remove a tag from a chapter.
+#[openapi(tag = "Chapters")]
+#[delete("/api/manga/<id>/chapters/<base>/<variant>/tags/<tag>")]
+pub async fn remove_chapter_tag_api(
+    pool: &State<SqlitePool>,
+    id: &str,
+    base: i32,
+    variant: i32,
+    tag: &str,
+) -> Result<Status, (Status, Json<ApiError>)> {
+    let manga_id = Uuid::parse_str(id).map_err(|_| bad_request("invalid UUID"))?;
+    let chapter = db::chapter::get_canonical_by_number(pool.inner(), manga_id, base, variant)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("chapter not found"))?;
+
+    db::chapter::remove_tag(pool.inner(), chapter.id, tag)
+        .await
+        .map_err(internal)?;
+
+    Ok(Status::NoContent)
+}
+
+// ---------------------------------------------------------------------------
 // Routes aggregation
 // ---------------------------------------------------------------------------
 
@@ -406,6 +468,8 @@ pub fn routes() -> Vec<rocket::Route> {
         optimise_chapter_api,
         set_canonical_api,
         clear_canonical_override_api,
+        add_chapter_tag_api,
+        remove_chapter_tag_api,
     ]
 }
 

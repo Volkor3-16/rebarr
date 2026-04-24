@@ -2126,6 +2126,31 @@ nav.header-collapsed a {
 }
 /* Missing = no background override */
 
+/* Hidden chapters are dimmed */
+.ch-row.ch-row-hidden {
+  opacity: 0.45;
+}
+.ch-row.ch-row-hidden:hover {
+  opacity: 0.75;
+}
+
+/* Chapter tag pills */
+.ch-tag {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-left: 5px;
+  vertical-align: middle;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+}
+.ch-tag-hidden {
+  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
+}
+
 /* Hover still overrides the tint for clarity */
 .ch-row.ch-row-downloaded:hover,
 .ch-row.ch-row-failed:hover,

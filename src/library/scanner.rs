@@ -171,6 +171,7 @@ pub async fn scan_existing_chapters(
                 downloaded_at: ci_downloaded_at,
                 scraped_at,
                 file_size_bytes: file_size,
+                tags: vec![],
             };
 
             db_chapter::insert(pool, &chapter)
@@ -241,6 +242,7 @@ pub async fn scan_existing_chapters(
                         downloaded_at,
                         scraped_at: None,
                         file_size_bytes: file_size,
+                        tags: vec![],
                     };
                     db_chapter::insert(pool, &chapter)
                         .await

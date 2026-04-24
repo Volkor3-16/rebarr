@@ -11,7 +11,7 @@ let allChapterGroupsCache = [];
 let visibleChapterGroupsCache = [];
 let providersCache = []; // Cache provider names for filtering
 let currentSort = { field: 'chapter', direction: 'desc' };
-let currentFilter = { search: '', status: '', provider: '', extrasOnly: false };
+let currentFilter = { search: '', status: '', provider: '', extrasOnly: false, showHidden: false };
 let lastCheckedIdx = -1;
 let intersectionObserver = null;
 let hoveredChapterRow = null;
@@ -483,9 +483,15 @@ function rowMatchesProvider(row, provider) {
 
 function applySlotFilters(slots, filter = currentFilter) {
   const search = filter.search.trim().toLowerCase();
+  const showHidden = filter.showHidden ?? false;
 
   return slots
     .filter(slot => !filter.extrasOnly || slot.is_extra)
+    .filter(slot => {
+      const canonical = slot.rows.find(r => r.is_canonical) || slot.rows[0];
+      const isHidden = canonical?.tags?.includes('hidden');
+      return showHidden || !isHidden;
+    })
     .map(slot => {
       const visibleRows = slot.rows.filter(row =>
         rowMatchesSearch(row, search) && rowMatchesProvider(row, filter.provider)
@@ -641,7 +647,7 @@ function getUniqueProviders() {
 }
 
 function hasActiveChapterFilters() {
-  return !!(currentFilter.search || currentFilter.status || currentFilter.provider || currentFilter.extrasOnly);
+  return !!(currentFilter.search || currentFilter.status || currentFilter.provider || currentFilter.extrasOnly || currentFilter.showHidden);
 }
 
 function renderChapterOverview() {
@@ -790,15 +796,18 @@ function chapterRow(mangaId, ch, {
     const deleteBtn = (ch.is_canonical && status !== 'Missing')
       ? `<button class="danger" onclick="doDeleteChapter('${mangaId}', ${base}, ${variant})" title="Delete the downloaded CBZ from disk, but keep this chapter entry in the database. The chapter will be marked Missing.">Delete</button>`
       : '';
-    const deleteEntryBtn = ch.is_canonical
-      ? `<button class="danger" onclick="doDeleteChapterEntry('${mangaId}', ${base}, ${variant})" title="Delete this chapter entry from the database entirely. Use this when you want to remove the record, not just the downloaded file.">Delete Chapter Entry</button>`
+    const isHidden = ch.tags?.includes('hidden');
+    const hideBtn = ch.is_canonical
+      ? isHidden
+        ? `<button onclick="doUnhideChapter('${mangaId}', ${base}, ${variant})" title="Remove the hidden tag from this chapter.">Unhide</button>`
+        : `<button onclick="doHideChapter('${mangaId}', ${base}, ${variant})" title="Permanently hide this chapter. It won't show unless 'Show Hidden' is enabled.">Hide</button>`
       : '';
 
     actionMenuHtml = `<div class="action-menu">
       <button class="action-menu-btn" type="button" aria-haspopup="menu" aria-expanded="false"
         onclick="toggleActionMenu('${menuId}')"><iconify-icon icon="mdi:dots-vertical" width="18" height="18"></iconify-icon></button>
       <div class="action-menu-dropdown" id="${menuId}">
-        ${dlBtn}${resetBtn}${extraBtn}${clearOverrideBtn}${deleteBtn}${deleteEntryBtn}
+        ${dlBtn}${resetBtn}${extraBtn}${clearOverrideBtn}${deleteBtn}${hideBtn}
       </div>
     </div>`;
   }
@@ -807,14 +816,19 @@ function chapterRow(mangaId, ch, {
     ? `<button class="btn-sm" onclick='doSetCanonical("${mangaId}", ${base}, ${variant}, "${ch.id}")'>Use</button>`
     : '';
 
+  const tagPills = (ch.tags?.length > 0)
+    ? ch.tags.map(t => `<span class="ch-tag ch-tag-${t}">${escape(t)}</span>`).join('')
+    : '';
+
+  const isHiddenRow = ch.tags?.includes('hidden');
   const rowClass = isSubrow
     ? 'ch-variant ch-row'
-    : `ch-main ch-row ch-row-${status.toLowerCase()}`;
+    : `ch-main ch-row ch-row-${status.toLowerCase()}${isHiddenRow ? ' ch-row-hidden' : ''}`;
   const rowId = `${slotDomId(groupKey)}-${isSubrow ? ch.id : 'main'}`;
 
   return `<tr class="${rowClass}" id="${rowId}">
     <td>${checkboxHtml}</td>
-    <td>${chapterLabel}</td>
+    <td>${chapterLabel}${tagPills}</td>
     <td>${scanlatorHtml}</td>
     <td>${scoreHtml}</td>
     <td>${sourceHtml}</td>
@@ -964,6 +978,7 @@ function rebuildChapterDerivedState() {
     status: '',
     provider: '',
     extrasOnly: false,
+    showHidden: true,
   }));
   visibleChapterGroupsCache = buildChapterGroups(applySlotFilters(chapterSlotsCache));
 
@@ -1022,6 +1037,7 @@ function renderChapterFilters() {
       <span class="filter-chip ${currentFilter.status === 'Queued' ? 'active' : ''}" onclick="filterByStatus('Queued')">Queued</span>
       <span class="filter-chip ${currentFilter.status === 'Failed' ? 'active' : ''}" onclick="filterByStatus('Failed')">Failed</span>
       <span class="filter-chip ${currentFilter.extrasOnly ? 'active' : ''}" onclick="toggleExtrasFilter()">Extras</span>
+      <span class="filter-chip ${currentFilter.showHidden ? 'active' : ''}" onclick="toggleShowHidden()">Show Hidden</span>
     </div>
     ${buildProviderChipsHtml(uniqueProviders)}
     <button class="btn btn-sm btn-ghost" onclick="selectAllMissing()" title="Check all visible missing/failed chapters">
@@ -1171,7 +1187,12 @@ window.toggleExtrasFilter = function() {
 };
 
 window.clearChapterFilters = function() {
-  currentFilter = { search: '', status: '', provider: '', extrasOnly: false };
+  currentFilter = { search: '', status: '', provider: '', extrasOnly: false, showHidden: false };
+  renderChapterSection();
+};
+
+window.toggleShowHidden = function() {
+  currentFilter.showHidden = !currentFilter.showHidden;
   renderChapterSection();
 };
 
@@ -1446,14 +1467,23 @@ window.doDeleteChapter = async function(mangaId, base, variant) {
   }
 };
 
-window.doDeleteChapterEntry = async function(mangaId, base, variant) {
-  if (!confirm('Delete this chapter entry from the database? This removes the chapter record itself.')) return;
+window.doHideChapter = async function(mangaId, base, variant) {
   try {
-    await mangaApi.deleteChapterEntry(mangaId, base, variant);
+    await mangaApi.addChapterTag(mangaId, base, variant, 'hidden');
     loadChapters(mangaId);
-    showToast('Chapter entry deleted');
+    showToast('Chapter hidden');
   } catch(e) {
-    showToast('Delete error: ' + e.message, 'error');
+    showToast('Error: ' + e.message, 'error');
+  }
+};
+
+window.doUnhideChapter = async function(mangaId, base, variant) {
+  try {
+    await mangaApi.removeChapterTag(mangaId, base, variant, 'hidden');
+    loadChapters(mangaId);
+    showToast('Chapter unhidden');
+  } catch(e) {
+    showToast('Error: ' + e.message, 'error');
   }
 };
 

@@ -75,6 +75,8 @@ pub fn openapi_routes() -> Vec<rocket::Route> {
             chapters::optimise_chapter_api,
             chapters::set_canonical_api,
             chapters::clear_canonical_override_api,
+            chapters::add_chapter_tag_api,
+            chapters::remove_chapter_tag_api,
             // Import
             import::scan_api,
             import::execute_api,

@@ -757,6 +757,7 @@ fn build_chapter(imp: &ConfirmedImport, manga_id: Uuid) -> Result<Chapter, Strin
         downloaded_at,
         scraped_at,
         file_size_bytes: None,
+        tags: vec![],
     })
 }
 
