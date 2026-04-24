@@ -184,29 +184,27 @@ function buildLocalCards(mangas, multiLib) {
   }).join('')}</div>`;
 }
 
-function buildAniListSection() {
-  if (!currentSearchQuery || currentSearchQuery.length < 2) return '';
-  if (anilistResults === null) {
-    return `<div class="anilist-results anilist-prompt">
-      <button class="btn btn-sm btn-ghost anilist-search-btn" onclick="triggerAnilistSearch()">
-        <iconify-icon icon="simple-icons:anilist" width="14" height="14"></iconify-icon>
-        Search AniList for "${escape(currentSearchQuery)}"
-      </button>
-      <button class="btn btn-sm btn-ghost anilist-search-btn" data-title="${escape(currentSearchQuery)}" onclick="showManualAddModal(this.dataset.title)">
-        <iconify-icon icon="mdi:plus" width="14" height="14"></iconify-icon>
-        Add "${escape(currentSearchQuery)}" manually
-      </button>
-    </div>`;
-  }
+function buildSearchButtons() {
+  if (!currentSearchQuery) return '';
+  return `<div class="anilist-prompt">
+    <button class="btn btn-sm btn-ghost anilist-search-btn" onclick="triggerAnilistSearch()">
+      <iconify-icon icon="simple-icons:anilist" width="14" height="14"></iconify-icon>
+      Search AniList for "${escape(currentSearchQuery)}"
+    </button>
+    <button class="btn btn-sm btn-ghost anilist-search-btn" data-title="${escape(currentSearchQuery)}" onclick="showManualAddModal(this.dataset.title)">
+      <iconify-icon icon="mdi:plus" width="14" height="14"></iconify-icon>
+      Add "${escape(currentSearchQuery)}" manually
+    </button>
+  </div>`;
+}
+
+function buildAniListResults() {
+  if (anilistResults === null) return '';
   if (anilistResults === 'loading') {
     return `<div class="anilist-results"><p class="text-muted">Searching AniList…</p></div>`;
   }
   if (anilistResults.length === 0) {
-    return `<div class="anilist-results no-results-shrug">
-      <p style="font-size:2em;margin:0">¯\\_(ツ)_/¯</p>
-      <p class="text-muted">Not found on AniList either — you may be rate-limited, or this series isn't indexed.</p>
-      <button class="btn btn-sm btn-primary" onclick="showHomeManualAdd()">Add manually</button>
-    </div>`;
+    return `<div class="anilist-results"><p class="text-muted">No results found on AniList.</p></div>`;
   }
 
   const gridClass = homeView === 'large' ? 'card-grid card-grid--large'
@@ -281,13 +279,14 @@ function rerenderContent() {
   const toolbar = buildToolbar();
   const cards = buildLocalCards(mangas, multiLib);
 
-  const aniSection = currentSearchQuery.length >= 2 ? buildAniListSection() : '';
+  const searchButtons = buildSearchButtons();
+  const aniResults = buildAniListResults();
 
   let body;
   if (cards === null) {
-    body = `<p class="text-muted no-results-msg">No series match your search.</p>${aniSection}`;
+    body = `<p class="text-muted no-results-msg">No series match your search.</p>${searchButtons}${aniResults}`;
   } else {
-    body = cards + aniSection;
+    body = cards + searchButtons + aniResults;
   }
 
   render(`<div class="home">${toolbar}${body}</div>`);
