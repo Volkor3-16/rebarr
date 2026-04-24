@@ -517,7 +517,7 @@ pub async fn scan_manga_api(
         crate::db::task::TaskType::BuildFullChapterList,
         Some(manga_id),
         None,
-        5,
+        1,
     )
     .await
     .map_err(internal)?;

@@ -453,7 +453,7 @@ async fn dispatch(
                     TaskType::SyncProviderChapters,
                     Some(manga.id),
                     None,
-                    5,
+                    1,
                     Some(queue.clone()),
                     Some(payload),
                 )
