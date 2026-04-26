@@ -1947,7 +1947,10 @@ function renderSynonyms(synonyms) {
       title = isManual ? 'Manual synonym - always used for search' : 'AniList synonym - click to hide from search';
     }
     
-    const badgeClass = isHidden ? 'badge badge-neutral opacity-50 line-through synonym-pill' : 'badge badge-neutral synonym-pill';
+    const sourceClass = isManual ? 'synonym-pill--manual' : 'synonym-pill--anilist';
+    const badgeClass = isHidden
+      ? `badge opacity-50 line-through synonym-pill ${sourceClass}`
+      : `badge synonym-pill ${sourceClass}`;
 
     return `<span class="${badgeClass}" title="${title}" data-title="${escape(syn.title)}" data-manual="${isManual}" data-hidden="${isHidden}">${escape(syn.title)}</span>`;
   }).join(' ');

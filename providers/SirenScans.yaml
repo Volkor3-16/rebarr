@@ -1,0 +1,142 @@
+name: SirenScans
+base_url: https://sirenscans.com
+version: "1"
+default_score: 20 # Direct scanlator source, but includes paywalled content and may be unstable.
+tags:
+  - scanlator_site
+  - cloudflare
+rate_limit:
+  requests_per_minute: 15
+concurrency:
+  workers: 1
+
+search:
+  steps:
+    - open: "{base_url}/series/?q={query}"
+    - foreach:
+        selector: "#searched_series_page > button"
+        extract:
+          title:
+            selector: ""
+            content: attr
+            attr_name: title
+          url:
+            selector: "a[href]"
+            content: attr
+            attr_name: href
+          cover:
+            selector: "*[style*=background-image]"
+            content: attr
+            attr_name: style
+            regex: "url\\(['\\\"]?([^'\\\")]+)"
+
+chapters:
+  steps:
+    - open: "{manga_url}"
+    - extract_js:
+        var: chapter_rows
+        script: |
+          (() => {
+            const rows = Array.from(document.querySelectorAll('#chapters > a'));
+            const out = [];
+            const now = Date.now();
+
+            function parseDate(text) {
+              const raw = (text || '').trim();
+              if (!raw) return '';
+
+              if (/ago/i.test(raw)) {
+                const lower = raw.toLowerCase();
+                const amount = parseInt(lower.replace(/^one\b/, '1').replace(/^a\b/, '1'), 10) || 1;
+                let ts = now;
+                if (lower.includes('second')) ts -= amount * 1000;
+                else if (lower.includes('minute')) ts -= amount * 60 * 1000;
+                else if (lower.includes('hour')) ts -= amount * 60 * 60 * 1000;
+                else if (lower.includes('day')) ts -= amount * 24 * 60 * 60 * 1000;
+                else if (lower.includes('week')) ts -= amount * 7 * 24 * 60 * 60 * 1000;
+                else if (lower.includes('month')) ts -= amount * 30 * 24 * 60 * 60 * 1000;
+                else if (lower.includes('year')) ts -= amount * 365 * 24 * 60 * 60 * 1000;
+                return Math.floor(ts / 1000).toString();
+              }
+
+              const parsed = new Date(raw);
+              if (!Number.isNaN(parsed.getTime())) {
+                return Math.floor(parsed.getTime() / 1000).toString();
+              }
+
+              return '';
+            }
+
+            for (const row of rows) {
+              const text = row.textContent || '';
+              const isUpcoming = /upcoming/i.test(text);
+              const isLocked = row.querySelector('img[alt*="Coin"], img[src*="Coin.svg"]');
+              if (isUpcoming || isLocked) continue;
+
+              const href = row.getAttribute('href');
+              if (!href) continue;
+
+              const name = row.querySelector('.text-sm')?.textContent?.trim() || '';
+              const dateText = row.querySelector('.text-xs')?.textContent?.trim() || '';
+              out.push({
+                number_raw: name,
+                url: href,
+                date: parseDate(dateText)
+              });
+            }
+
+            return JSON.stringify(out);
+          })()
+    - from_json:
+        var: chapter_rows
+        extract:
+          number_raw: number_raw
+          url: url
+          date: date
+        prefix:
+          url: "{base_url}"
+        date_format:
+          date: "%s"
+
+pages:
+  steps:
+    - open: "{chapter_url}"
+    - extract_js:
+        var: page_urls
+        script: |
+          (() => {
+            const scripts = Array.from(document.querySelectorAll('script'))
+              .map(s => s.textContent || s.innerHTML || '');
+            const cdnHostRegex = /realUrl\s*=\s*`[^`]+\/\/([^/]+)/;
+            const cdnCleanRegex = /\$\{[^}]*\}/g;
+            const oldImgCdnRegex = /^(https?:)?\/\/cdn\d*\.keyoapp\.com/i;
+
+            let cdnUrl = null;
+            for (const script of scripts) {
+              const match = script.match(cdnHostRegex);
+              if (!match) continue;
+              const host = (match[1] || '').replace(cdnCleanRegex, '');
+              if (host) {
+                cdnUrl = `https://${host}/uploads`;
+                break;
+              }
+            }
+
+            const images = Array.from(document.querySelectorAll('#pages > img'));
+            const uidUrls = images
+              .map(img => img.getAttribute('uid'))
+              .filter(uid => uid && uid.trim().length > 0)
+              .map(uid => ({ url: `${cdnUrl}/${uid}`, referrer: location.href }));
+
+            if (cdnUrl && uidUrls.length > 0) {
+              return JSON.stringify(uidUrls);
+            }
+
+            const fallback = images
+              .map(img => img.getAttribute('data-lazy-src') || img.getAttribute('data-src') || img.getAttribute('src') || '')
+              .filter(src => oldImgCdnRegex.test(src))
+              .map(src => ({ url: new URL(src, location.href).toString(), referrer: location.href }));
+
+            return JSON.stringify(fallback);
+          })()
+    - return: "{page_urls}"

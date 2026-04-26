@@ -1,6 +1,6 @@
 // Home view - shows all manga across all libraries
 
-import { libraries, search as searchApi, manga as mangaApi } from '../api.js';
+import { libraries, search as searchApi, manga as mangaApi, tasks as tasksApi } from '../api.js';
 import { render, navigate } from '../router.js';
 import { escape, skeleton, toPathSafe, relTime } from '../utils.js';
 
@@ -48,6 +48,7 @@ let homeSort = loadSort();
 let homeView = loadView();
 let cachedLibs = [];
 let cachedMangaLists = [];
+let cachedMangaTasks = new Map(); // manga_id → [{task_type, status, chapter}]
 let currentSearchQuery = '';
 let anilistDebounceTimer = null;
 // null = not queried, 'loading' = in-flight, [] = no results, [...] = results
@@ -124,6 +125,52 @@ function buildToolbar() {
   </div>`;
 }
 
+const TASK_LABELS = {
+  DownloadChapter:      'Download',
+  BuildFullChapterList: 'Build chapter list',
+  SyncProviderChapters: 'Sync chapters',
+  RefreshMetadata:      'Refresh metadata',
+  ScanDisk:             'Scan disk',
+  OptimiseChapter:      'Optimise',
+  Backup:               'Backup',
+  RefreshSuggestions:   'Refresh suggestions',
+};
+
+function dlQueueIcon(mangaId) {
+  const taskList = cachedMangaTasks.get(mangaId);
+  if (!taskList || taskList.length === 0) return '';
+
+  const isRunning = taskList.some(t => t.status === 'Running');
+  const total = taskList.length;
+
+  const lines = [`${total} task${total > 1 ? 's' : ''} in queue`];
+  for (const t of taskList.slice(0, 5)) {
+    let label = TASK_LABELS[t.task_type] ?? t.task_type;
+    if (t.task_type === 'DownloadChapter' && t.chapter) label += ` ch. ${t.chapter}`;
+    lines.push(`• ${label} — ${t.status === 'Running' ? 'running' : 'pending'}`);
+  }
+  if (total > 5) lines.push(`  + ${total - 5} more`);
+
+  const tooltip = escape(lines.join('\n'));
+  const icon = isRunning ? 'mdi:download-circle' : 'mdi:download-circle-outline';
+  const cls = isRunning ? 'dl-icon dl-icon--running' : 'dl-icon dl-icon--pending';
+  return `<span class="${cls}" title="${tooltip}"><iconify-icon icon="${icon}" width="13" height="13"></iconify-icon></span>`;
+}
+
+function chapterChip(dl, total, extrasStr) {
+  const hasTotal = total !== '?';
+  const isComplete = hasTotal && total > 0 && dl >= total;
+  const isPartial = dl > 0 && !isComplete;
+
+  let cls;
+  if (isComplete) cls = 'chip--complete';
+  else if (isPartial) cls = 'chip--partial';
+  else if (hasTotal && total > 0) cls = 'chip--empty';
+  else cls = 'chip--unknown';
+
+  return `<div class="chapter-chip ${cls}">${dl} / ${total}${extrasStr}</div>`;
+}
+
 function buildLocalCards(mangas, multiLib) {
   const filtered = filterManga(mangas, currentSearchQuery);
   if (filtered.length === 0) return null;
@@ -146,7 +193,7 @@ function buildLocalCards(mangas, multiLib) {
         <td><a href="/series/${m.id}" data-path="/series/${m.id}">${thumb}</a></td>
         <td><a href="/series/${m.id}" data-path="/series/${m.id}" class="manga-table-title">${escape(title)}</a>${libBadge}</td>
         <td class="text-muted">${escape(status)}</td>
-        <td>${dl} / ${total}</td>
+        <td><div class="chip-row">${dlQueueIcon(m.id)}${chapterChip(dl, total, '')}</div></td>
         <td>${relTime(m.created_at)}</td>
       </tr>`;
     }).join('');
@@ -177,7 +224,7 @@ function buildLocalCards(mangas, multiLib) {
       ${thumb}
       <div class="info">
         <div class="title">${escape(title)}</div>
-        ${homeView !== 'small' ? `<div class="meta">${dl} / ${total}${extrasStr} ch.</div>` : ''}
+        ${homeView !== 'small' ? `<div class="chip-row">${dlQueueIcon(m.id)}${chapterChip(dl, total, extrasStr)}</div>` : ''}
         ${libBadge}
       </div>
     </a>`;
@@ -316,9 +363,26 @@ export async function viewHome() {
       return;
     }
 
-    const mangaLists = await Promise.all(libs.map(lib => libraries.manga(lib.uuid)));
+    const [mangaLists, groupedTasks] = await Promise.all([
+      Promise.all(libs.map(lib => libraries.manga(lib.uuid))),
+      tasksApi.listGrouped().catch(() => []),
+    ]);
     cachedLibs = libs;
     cachedMangaLists = mangaLists;
+
+    cachedMangaTasks = new Map();
+    for (const queue of groupedTasks) {
+      for (const task of queue.tasks) {
+        if (task.manga_id) {
+          if (!cachedMangaTasks.has(task.manga_id)) cachedMangaTasks.set(task.manga_id, []);
+          cachedMangaTasks.get(task.manga_id).push({
+            task_type: task.task_type,
+            status: task.status,
+            chapter: task.chapter_number_raw ?? null,
+          });
+        }
+      }
+    }
 
     const totalManga = mangaLists.flat().length;
     document.title = `REBARR - ${totalManga} series`;

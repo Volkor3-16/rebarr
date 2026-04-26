@@ -518,6 +518,61 @@ img.cover-lg {
   margin-top: 0.25rem;
 }
 
+.chapter-chip {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  margin-top: 0.3rem;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.chapter-chip.chip--complete {
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+  color: var(--success);
+}
+
+.chapter-chip.chip--partial {
+  background: color-mix(in srgb, var(--warning) 18%, transparent);
+  color: var(--warning);
+}
+
+.chapter-chip.chip--empty {
+  background: color-mix(in srgb, var(--error) 18%, transparent);
+  color: var(--error);
+}
+
+.chapter-chip.chip--unknown {
+  background: color-mix(in srgb, var(--error) 28%, transparent);
+  color: color-mix(in srgb, var(--error) 75%, black);
+}
+
+.chip-row {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.dl-icon {
+  flex-shrink: 0;
+}
+
+.dl-icon--running {
+  color: var(--accent);
+  animation: dl-pulse 1.4s ease-in-out infinite;
+}
+
+.dl-icon--pending {
+  color: var(--text-muted);
+}
+
+@keyframes dl-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
 /* Chapter overview strip (GitHub-style status squares) */
 .ch-overview {
   display: flex;
@@ -1979,6 +2034,18 @@ td .status-icon {
 
 .synonym-pill:hover {
   opacity: 0.7;
+}
+
+.synonym-pill--anilist {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.synonym-pill--manual {
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  color: var(--success);
+  border: 1px solid color-mix(in srgb, var(--success) 30%, transparent);
 }
 
 .monitored-toggle {

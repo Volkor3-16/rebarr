@@ -2,6 +2,14 @@
 
 This a informal changelog so i can keep track of what im doing.
 
+## 2026-04-26
+
+- UI improvements
+    - Chapter counts on the main homepage is more clear, colour coded.
+    - Synonyms / alt names show different colours for metadata sourced and manual entry
+- Added SirenScans provider
+- Added RitharScans provider
+
 ## 2026-04-24
 
 - Fixed adding series to library from search

@@ -28,6 +28,9 @@ If you're here because you're hoping for your favourite site to be added, make a
 | ReadComicOnline| ?                       | N/A         | Good site for Western Comics |
 | MangaPlus      | https://mangaplus.shueisha.co.jp | N/A | Official? |
 | UTOON          | ?                       | N/A         | They do a LOT of scans |
+| RawSakura      | https://rawsakura.org   | N/A         | It has raws, maybe in the future we can auto-MTL it. I have series i wanna read that are nearing 10 years old. |
+| SirenScans     | https://sirenscans.com  | **WORKING** | Shitty Paid ones, but direct scans. |
+| RitharScans    | https://ritharscans.com | **WORKING** | Shitty paid one too, but its the only available for some |
 
 requests_per_minute - How many requests you can make to this provider (for any action)
 
