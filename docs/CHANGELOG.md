@@ -9,6 +9,7 @@ This a informal changelog so i can keep track of what im doing.
 - Show number of unique suggested series on the suggestion page.
 - Rewite of CLI. `rebarrd` now launches the server, `rebarr` is the main CLI interface
 - Fixed AllManga
+- Added a better algo for clicking the cloudflare box. (not just randomly clicking lmao)
 
 ## 2026-04-26
 

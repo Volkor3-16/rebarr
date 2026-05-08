@@ -1974,9 +1974,9 @@ pub async fn try_cf_checkbox_click(page: &eoka::Page) -> bool {
     }
 
     // Build the target list: dynamic coord (if found) + hardcoded fallbacks.
-    // Layout on 1366×768: widget is horizontally centred (~300px wide),
-    // left edge ≈ 533px, checkbox icon ≈ 25px from left edge → target x ≈ 558.
-    // Widget appears roughly vertically centred, typically 300–430px from top.
+    // Calibrated from real data (1334×639 viewport, screen_origin=(0,0),
+    // Chrome UI=85px): Xorg checkbox centre (259,416) → CSS (259,331).
+    // The widget is left-aligned on this CF page, not centred.
     let mut targets: Vec<(f64, f64)> = Vec::new();
     if let Some(c) = dynamic {
         targets.push(c);
@@ -1984,11 +1984,11 @@ pub async fn try_cf_checkbox_click(page: &eoka::Page) -> bool {
         targets.push((c.0 + 3.0, c.1 - 4.0));
     }
     targets.extend_from_slice(&[
-        (548.0, 334.0),
-        (563.0, 350.0),
-        (553.0, 384.0),
-        (568.0, 310.0),
-        (543.0, 415.0),
+        (259.0, 331.0),
+        (262.0, 328.0),
+        (256.0, 335.0),
+        (264.0, 325.0),
+        (253.0, 338.0),
     ]);
 
     for (i, &(x, y)) in targets.iter().enumerate() {
@@ -2047,27 +2047,56 @@ pub async fn try_cf_checkbox_click(page: &eoka::Page) -> bool {
 /// Try to locate the Turnstile iframe in the page and return the viewport
 /// coordinates of the checkbox icon inside it (left edge + ~28px, vertically
 /// centred). Returns `None` if no iframe is found or it has zero size.
+/// Logs window.screenX/Y + outerHeight so we can map Xorg → CSS coordinates.
 async fn find_cf_checkbox_coords(page: &eoka::Page) -> Option<(f64, f64)> {
     let js = r#"(() => {
+        const win = {
+            inner_w: window.innerWidth,
+            inner_h: window.innerHeight,
+            outer_w: window.outerWidth,
+            outer_h: window.outerHeight,
+            screen_x: window.screenX,
+            screen_y: window.screenY,
+        };
         const iframe =
             document.querySelector('iframe[src*="challenges.cloudflare.com"]') ||
             document.querySelector('iframe[title*="Widget"]') ||
             document.querySelector('iframe[title*="Cloudflare"]') ||
             document.querySelector('iframe[src*="turnstile"]');
-        if (!iframe) return null;
+        if (!iframe) return JSON.stringify({ found: false, win });
         const r = iframe.getBoundingClientRect();
-        if (r.width < 1 || r.height < 1) return null;
-        return JSON.stringify({ x: r.left + 28, y: r.top + r.height * 0.5 });
+        return JSON.stringify({ found: true, win, rect: {left:r.left,top:r.top,w:r.width,h:r.height} });
     })()"#;
     let s = page.evaluate::<Option<String>>(js).await.ok()??;
     let v: serde_json::Value = serde_json::from_str(&s).ok()?;
-    let x = v["x"].as_f64()?;
-    let y = v["y"].as_f64()?;
-    if x > 0.0 && y > 0.0 {
-        Some((x, y))
-    } else {
-        None
+
+    let win = &v["win"];
+    // Log the window geometry so we can compute Xorg→CSS mapping.
+    // css_x = xorg_x - screenX
+    // css_y = xorg_y - screenY - (outerHeight - innerHeight)
+    info!(
+        "[cf:layout] inner={}x{} outer={}x{} screen_origin=({},{})",
+        win["inner_w"], win["inner_h"],
+        win["outer_w"], win["outer_h"],
+        win["screen_x"], win["screen_y"],
+    );
+
+    if v["found"].as_bool() != Some(true) {
+        return None;
     }
+    let rect = &v["rect"];
+    let left = rect["left"].as_f64()?;
+    let top = rect["top"].as_f64()?;
+    let h = rect["h"].as_f64()?;
+    let w = rect["w"].as_f64()?;
+    info!("[cf:layout] Turnstile iframe rect left={left:.0} top={top:.0} w={w:.0} h={h:.0}");
+    if w < 1.0 || h < 1.0 {
+        return None;
+    }
+    // Checkbox icon is ~28px from the iframe's left edge, vertically centred.
+    let x = left + 28.0;
+    let y = top + h * 0.5;
+    Some((x, y))
 }
 
 /// Inject a bright orange circle at `(x, y)` in viewport coordinates so the
