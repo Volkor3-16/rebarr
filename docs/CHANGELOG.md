@@ -8,6 +8,7 @@ This a informal changelog so i can keep track of what im doing.
 - Just open the series page when trying to add a series that's already in the library.
 - Show number of unique suggested series on the suggestion page.
 - Rewite of CLI. `rebarrd` now launches the server, `rebarr` is the main CLI interface
+- Fixed AllManga
 
 ## 2026-04-26
 

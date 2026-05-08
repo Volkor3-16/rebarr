@@ -1,6 +1,6 @@
 name: AllManga
 base_url: https://allmanga.to
-version: "1"
+version: "2"
 default_score: 5 # Large library, average quality
 tags:
   - aggregator
@@ -123,7 +123,6 @@ chapters:
           language: language
           date: date
 
-# We have to hardcode some stuff here, this could break. its very bad.
 pages:
   steps:
     - open: "{chapter_url}"
@@ -131,62 +130,79 @@ pages:
         var: manga_id
         script: "window.location.pathname.split('/')[2] || ''"
     - extract_js:
-        # path[3] = "chapter-0-sub" → strip "chapter-" prefix and "-sub" suffix
+        # path[3] = "chapter-0-sub" → strip "chapter-" prefix and language suffix
         var: chapter_num
-        script: "window.location.pathname.split('/')[3]?.replace(/^chapter-/, '').replace(/-sub$/, '') || ''"
+        script: "window.location.pathname.split('/')[3]?.replace(/^chapter-/, '').replace(/-[a-z]+$/, '') || ''"
+    - script: |
+        (function() {
+          var variables = JSON.stringify({
+            mangaId: '{manga_id}',
+            translationType: 'sub',
+            chapterString: '{chapter_num}',
+            limit: 10,
+            offset: 0
+          });
+          var extensions = JSON.stringify({
+            persistedQuery: {
+              version: 1,
+              sha256Hash: 'a062f1b131dae3d17c1950fad14640d066b988ac10347ed49cfbe70f5e7f661b'
+            }
+          });
+          var url = 'https://api.allanime.day/api?variables=' + encodeURIComponent(variables) + '&extensions=' + encodeURIComponent(extensions);
+          window.__rebarr_pages_raw = null;
+          fetch(url, {
+            headers: {
+              'Accept': '*/*',
+              'Origin': 'https://allmanga.to',
+              'Referer': 'https://allmanga.to/'
+            }
+          }).then(function(r) { return r.text(); })
+            .then(function(t) { window.__rebarr_pages_raw = t; })
+            .catch(function(e) { window.__rebarr_pages_raw = JSON.stringify({fetchError: e.message || String(e)}); });
+        })()
+    - sleep: 3000
     - extract_js:
         var: pages_result
         script: |
           (async () => {
-            const variables = JSON.stringify({
-              mangaId: '{manga_id}',
-              translationType: 'sub',
-              chapterString: '{chapter_num}',
-              limit: 10,
-              offset: 0
-            });
-            const extensions = JSON.stringify({
-              persistedQuery: {
-                version: 1,
-                sha256Hash: 'a062f1b131dae3d17c1950fad14640d066b988ac10347ed49cfbe70f5e7f661b'
-              }
-            });
-            const url = 'https://api.allanime.day/api?variables=' + encodeURIComponent(variables) + '&extensions=' + encodeURIComponent(extensions);
-            const resp = await fetch(url, {
-              headers: {
-                'Accept': '*/*',
-                'Origin': 'https://allmanga.to',
-                'Referer': 'https://allmanga.to/'
-              }
-            });
-            const rawData = await resp.json();
+            try {
+              var raw = window.__rebarr_pages_raw;
+              if (!raw) return 'ERR:no_data_after_sleep';
+              var rawData = JSON.parse(raw);
+              if (rawData.fetchError) return 'ERR:fetch:' + rawData.fetchError;
+              if (!rawData.data) return 'ERR:no_data_field:' + raw.slice(0, 300);
 
-            // Decrypt AES-GCM if the response is encrypted (tobeparsed field)
-            let pageListData;
-            if (rawData.data && rawData.data.tobeparsed) {
-              const AES_KEY = "Xot36i3lK3:v1";
-              const encoder = new TextEncoder();
-              const keyBytes = await crypto.subtle.digest("SHA-256", encoder.encode(AES_KEY));
-              const cryptoKey = await crypto.subtle.importKey(
-                "raw", keyBytes, { name: "AES-GCM" }, false, ["decrypt"]
-              );
-              const raw = atob(rawData.data.tobeparsed);
-              const bytes = new Uint8Array(raw.length);
-              for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-              const iv = bytes.slice(1, 13);
-              const ciphertext = bytes.slice(13);
-              const decrypted = await crypto.subtle.decrypt(
-                { name: "AES-GCM", iv, tagLength: 128 }, cryptoKey, ciphertext
-              );
-              pageListData = JSON.parse(new TextDecoder().decode(decrypted));
-            } else {
-              pageListData = rawData.data;
+              var pageListData;
+              if (rawData.data.tobeparsed) {
+                var AES_KEY = 'Xot36i3lK3:v1';
+                var keyBytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(AES_KEY));
+                var cryptoKey = await crypto.subtle.importKey('raw', keyBytes, {name: 'AES-GCM'}, false, ['decrypt']);
+                // Handle both standard and URL-safe base64
+                var b64 = rawData.data.tobeparsed.replace(/-/g, '+').replace(/_/g, '/');
+                var binaryStr = atob(b64);
+                var bytes = new Uint8Array(binaryStr.length);
+                for (var i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+                var decrypted = await crypto.subtle.decrypt(
+                  {name: 'AES-GCM', iv: bytes.slice(1, 13), tagLength: 128}, cryptoKey, bytes.slice(13)
+                );
+                pageListData = JSON.parse(new TextDecoder().decode(decrypted));
+              } else {
+                pageListData = rawData.data;
+              }
+
+              var edges = pageListData && pageListData.chapterPages && pageListData.chapterPages.edges;
+              var edge = edges && edges[0];
+              if (!edge) return 'ERR:no_edge:keys=' + Object.keys(pageListData || {}).join(',') + ':raw=' + raw.slice(0, 200);
+              var serverUrl = (edge.pictureUrlHead || '').replace('aln.youtube-anime.com', 'ytimgf.youtube-anime.com');
+              var baseUrl = serverUrl.match(/^https?:\/\//)
+                ? serverUrl.replace(/\/?$/, '/')
+                : 'https://' + serverUrl.replace(/\/?$/, '/');
+              var urls = (edge.pictureUrls || []).map(function(p) {
+                return {url: baseUrl + p.url, referrer: 'https://youtu-chan.com/'};
+              });
+              return JSON.stringify(urls);
+            } catch(e) {
+              return 'ERR:exception:' + (e.message || String(e));
             }
-
-            const edge = pageListData?.chapterPages?.edges?.[0];
-            if (!edge) return '[]';
-            const baseUrl = (edge.pictureUrlHead || '').replace('aln.youtube-anime.com', 'ytimgf.youtube-anime.com');
-            const urls = (edge.pictureUrls || []).map(p => ({ url: baseUrl + p.url, referrer: 'https://youtu-chan.com/' }));
-            return JSON.stringify(urls);
           })()
     - return: "{pages_result}"

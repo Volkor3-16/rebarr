@@ -8,7 +8,6 @@ When we hit full Minimum Viable Release, i'll start doing proper version numbers
 
 - [ ]  Chapter 8.1 — The Residence (1) is incorrectly marked as an extra (My Co-worker Is an Eldritch X!)
     - Same with Chapter 14.5 — Oscar Orcus (Arifureta)
-- [ ] Cloudflare bypass not working anymore :( - https://www.mangakakalot.gg/manga/i-became-the-strongest-with-the-failure-frame/chapter-29-6
 - [ ] When doing a full provider scan, overrides are ignored, they should still be overridden, at the moment it just unsets it and falls back to scoring.
 - [ ] We can't delete downloaded chapters from providers that have been disabled. the action menu doesn't have any entries.
 - [ ] Mangadex: Error: scraper error: Parse error: from_json: variable 'chapters_processed' not found

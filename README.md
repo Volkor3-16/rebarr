@@ -36,18 +36,21 @@ cargo run --bin rebarr -- provider list
 # Download one chapter after reviewing provider alternatives
 cargo run --bin rebarr -- dl "Berserk" 1
 
+# Download one chapter with a specific provider
+cargo run --bin rebarr -- dl "Berserk" 1 -p AllManga
+
 # Download a chapter range
 cargo run --bin rebarr -- dl "Berserk" 1:10
 
 # Test with full provider request/response trace
-cargo run --bin rebarr -- -vv test WeebCentral
+cargo run --bin rebarr -- -vv test AllManga
 
 # Run provider fixture tests (regression testing)
 cargo run --bin rebarr -- test all
-cargo run --bin rebarr -- test WeebCentral
+cargo run --bin rebarr -- test AllManga
 
 # Create or replace a provider fixture interactively
-cargo run --bin rebarr -- test WeebCentral "Berserk"
+cargo run --bin rebarr -- test AllManga "Berserk"
 ```
 
 Chromium is visible by default for provider debugging. Pass `-n` / `--headless` to hide it.

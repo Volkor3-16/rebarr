@@ -55,6 +55,9 @@ enum Cmd {
         /// Skip the confirmation prompt.
         #[arg(short = 'y', long)]
         yes: bool,
+        /// Restrict search to a single provider by name (e.g. MangaDex).
+        #[arg(short = 'p', long)]
+        provider: Option<String>,
     },
 
     /// Run provider fixture tests or create a fixture interactively.
@@ -240,7 +243,8 @@ async fn main() {
             chapter,
             out,
             yes,
-        } => cmd_dl(&registry, &ctx, &name, &chapter, &out, yes).await,
+            provider,
+        } => cmd_dl(&registry, &ctx, &name, &chapter, &out, yes, provider.as_deref()).await,
         Cmd::Test {
             provider,
             search_term,
@@ -307,14 +311,22 @@ async fn cmd_dl(
     chapter_arg: &str,
     out: &str,
     assume_yes: bool,
+    provider_filter: Option<&str>,
 ) {
     let requested = parse_chapter_arg(chapter_arg).unwrap_or_else(|e| {
         error!("{e}");
         std::process::exit(1);
     });
 
+    if let Some(name) = provider_filter {
+        if !registry.all().iter().any(|p| p.name().eq_ignore_ascii_case(name)) {
+            error!("Unknown provider {name:?}. Run `rebarr provider list` to see available providers.");
+            std::process::exit(1);
+        }
+    }
+
     let progress = CliProgress::new("download", requested.len() as u64);
-    let checks = collect_provider_checks(registry, ctx, query, &requested, &progress).await;
+    let checks = collect_provider_checks(registry, ctx, query, &requested, &progress, provider_filter).await;
     progress.clear();
     if checks.is_empty() {
         error!("No provider found usable chapters for {query:?}.");
@@ -382,14 +394,19 @@ async fn collect_provider_checks(
     query: &str,
     requested: &[f32],
     progress: &CliProgress,
+    provider_filter: Option<&str>,
 ) -> Vec<ProviderCheck> {
-    let providers = registry.all();
+    let all = registry.all();
+    let providers: Vec<_> = match provider_filter {
+        Some(name) => all.iter().filter(|p| p.name().eq_ignore_ascii_case(name)).cloned().collect(),
+        None => all.to_vec(),
+    };
     progress.set_length(providers.len() as u64);
     progress.set_task("Providers", format!("searching for {query:?}"));
 
     let query_lower = query.to_lowercase();
     let mut checks = Vec::new();
-    for provider_ref in providers {
+    for provider_ref in &providers {
         let provider = Arc::clone(provider_ref);
         progress.set_task(provider.name(), "search");
 
