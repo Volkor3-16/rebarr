@@ -14,6 +14,11 @@ When we hit full Minimum Viable Release, i'll start doing proper version numbers
 - [ ] Mangadex: Error: scraper error: Parse error: from_json: variable 'chapters_processed' not found
 - [ ] WeebCentral: titles are bad sometimes "82-eng-li" & "Ch.011 " & "Vol.7 Chapter 35 "
 - [ ] Mangakakalot: We don't get a title from them? is it broke?
+- [ ] FAIL AllManga: ok search: 100% match: ok chapters: 426 >= 416: ok first chapter: Ch.0: fail pages: 0 < 66
+- [ ] FAIL Comix: search: Parse error: from_json: failed to parse JSON from 'search_response': invalid type: map, expected a sequence at line 1 column 0; source={\n    "status": "error",\n    "message": "The page you are looking for could not be found.",\n    "code": 404\n}
+- [ ] FAIL LHTranslation: search: Browser error: Transport error: CDP command 'Page.navigate' timed out after 30s (id=6)
+- [ ] FAIL MangaDex: ok search: 100% match: ok chapters: 100 >= 90: fail first chapter: expected Ch.0.01: ok pages: 92 >= 89
+- [ ] FAIL MangaKakalot: search: Parse error: from_json: failed to parse JSON from 'search_results': expected value at line 1 column 1; source=Fanpage\nDiscord\nLogin\nRegister\nHOME\nLATEST MANGA\nHOT MANGA\nNEW MANGA\nCOMPLETED MANGA\nREQUEST MANGA\nPOPULAR MANGA\nPerfection is Everything\nChapter 40\nI Returned ...
 
 ## Minimum Viable Release (0.1.x)
 

@@ -291,6 +291,14 @@ pub struct ProviderRegistry {
     providers: Vec<Arc<dyn Provider>>,
     /// Raw ProviderDefs from YAML
     defs: Vec<ProviderDef>,
+    /// Provider YAML files that were discovered but failed validation.
+    invalid_configs: Vec<InvalidProviderConfig>,
+}
+
+#[derive(Debug, Clone)]
+pub struct InvalidProviderConfig {
+    pub path: PathBuf,
+    pub error: String,
 }
 
 impl ProviderRegistry {
@@ -303,6 +311,7 @@ impl ProviderRegistry {
 
         let mut providers: Vec<Arc<dyn Provider>> = Vec::new();
         let mut defs: Vec<ProviderDef> = Vec::new();
+        let mut invalid_configs: Vec<InvalidProviderConfig> = Vec::new();
 
         if !dir.exists() {
             info!(
@@ -310,7 +319,11 @@ impl ProviderRegistry {
                  Create the directory and add YAML files to enable scraping.",
                 dir.display()
             );
-            return Ok(Self { providers, defs });
+            return Ok(Self {
+                providers,
+                defs,
+                invalid_configs,
+            });
         }
 
         let mut read_dir = tokio::fs::read_dir(&dir).await?;
@@ -333,12 +346,20 @@ impl ProviderRegistry {
                         path.display(),
                         e
                     );
+                    invalid_configs.push(InvalidProviderConfig {
+                        path,
+                        error: e.to_string(),
+                    });
                 }
             }
         }
 
         info!("Loaded {} provider(s) total.", providers.len());
-        Ok(Self { providers, defs })
+        Ok(Self {
+            providers,
+            defs,
+            invalid_configs,
+        })
     }
 
     /// All loaded providers in load order.
@@ -360,6 +381,7 @@ impl ProviderRegistry {
         Self {
             providers,
             defs: Vec::new(),
+            invalid_configs: Vec::new(),
         }
     }
 
@@ -367,5 +389,9 @@ impl ProviderRegistry {
     /// Used to populate default quality rules.
     pub fn all_defs(&self) -> &[ProviderDef] {
         &self.defs
+    }
+
+    pub fn invalid_configs(&self) -> &[InvalidProviderConfig] {
+        &self.invalid_configs
     }
 }

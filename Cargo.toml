@@ -34,6 +34,7 @@ image = { version = "0.25.10", features = ["webp"] }
 base64 = "0.22.1"
 blake3 = "1.5.1"
 clap = { version = "4", features = ["derive"] }
+indicatif = "0.17"
 governor = "0.10"
 nonzero_ext = "0.3"
 dashmap = "6"
