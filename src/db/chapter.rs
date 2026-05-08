@@ -744,9 +744,7 @@ pub async fn update_canonical(
     let globally_disabled = provider_settings::get_globally_disabled(pool).await?;
     let series_overrides = provider_settings::get_all_series_overrides(pool, manga_id).await?;
     let all: Vec<Chapter> = all_raw
-        .iter()
-        .cloned()
-        .filter(|ch| {
+        .iter().filter(|&ch| {
             let name = match &ch.provider_name {
                 Some(n) => n,
                 None => return true, // keep chapters without provider (e.g. disk-scanned)
@@ -756,7 +754,7 @@ pub async fn update_canonical(
                 .get(name)
                 .copied()
                 .unwrap_or_else(|| !globally_disabled.contains(name))
-        })
+        }).cloned()
         .collect();
 
     // Filter to preferred language so non-matching chapters can't win canonical selection

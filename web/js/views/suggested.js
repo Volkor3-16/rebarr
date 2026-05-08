@@ -97,7 +97,10 @@ function suggestionCard(item) {
             data-anilist-id="${item.anilist_id}"
             data-title="${escape(item.title)}"
           >Add to Library</button>
-          <a class="btn btn-sm btn-outline" href="https://anilist.co/manga/${item.anilist_id}" target="_blank">Open AniList</a>
+          <a class="anilist-link" href="https://anilist.co/manga/${item.anilist_id}" target="_blank" rel="noopener">
+            <iconify-icon icon="simple-icons:anilist" width="16" height="16"></iconify-icon>
+            <span>AniList</span>
+          </a>
           <button class="btn btn-sm btn-ghost suggested-hide-btn" data-anilist-id="${item.anilist_id}">Hide</button>
         </div>
       </div>
@@ -151,7 +154,7 @@ function renderSuggestedPage(libOptions, refreshedAt) {
     btn.addEventListener('click', () => {
       const anilistId = Number(btn.dataset.anilistId);
       const title = btn.dataset.title || 'manga';
-      window.addSuggestedToLibrary?.(anilistId, title);
+      window.addSuggestedToLibrary?.(btn, anilistId, title);
     });
   });
 
@@ -218,18 +221,37 @@ window.hideSuggestion = async function hideSuggestion(anilistId) {
   }
 };
 
-window.addSuggestedToLibrary = async function addSuggestedToLibrary(anilistId, title) {
+window.addSuggestedToLibrary = async function addSuggestedToLibrary(btn, anilistId, title) {
   if (!currentLibraryId) return;
+  const originalHtml = btn?.innerHTML;
   try {
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = 'Adding...';
+    }
     const manga = await mangaApi.create({
       anilist_id: anilistId,
       library_id: currentLibraryId,
       relative_path: toPathSafe(title),
     });
     showToast('Added to library', 'success');
-    await loadSuggestions();
-    navigate(`/series/${manga.id}`);
+    if (btn) {
+      const openLink = document.createElement('a');
+      openLink.className = 'btn btn-sm btn-outline';
+      openLink.href = `/series/${manga.id}`;
+      openLink.target = '_blank';
+      openLink.rel = 'noopener';
+      openLink.innerHTML = `
+        <iconify-icon icon="mdi:open-in-new" width="16" height="16"></iconify-icon>
+        Open Series in new tab
+      `;
+      btn.replaceWith(openLink);
+    }
   } catch (e) {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = originalHtml || 'Add to Library';
+    }
     showToast(`Add failed: ${e.message}`, 'error');
   }
 };

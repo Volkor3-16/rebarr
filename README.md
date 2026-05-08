@@ -37,6 +37,9 @@ I'll remove this when I've got the first public release out, this is just a quic
 - [ ] Cloudflare bypass not working anymore :( - https://www.mangakakalot.gg/manga/i-became-the-strongest-with-the-failure-frame/chapter-29-6
 - [ ] Have a way to enable/disable chapter upgrades? tags?
     - Why do split chapters act fucky? let me override them one variant at a time.
+- [ ] When doing a full provider scan, overrides are ignored, they should still be overridden, at the moment it just unsets it and falls back to scoring.
+- [ ] When a download fails on one split chapter, but not the other, we should make a new bundle with the two downloads.
+    - This should also happen with 'Local'-type chapters.
 
 ### Frontend
 

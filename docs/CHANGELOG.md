@@ -2,6 +2,11 @@
 
 This a informal changelog so i can keep track of what im doing.
 
+## 2026-05-08
+
+- Suggestion and new searched series is now a 'two click' button, one to add to library, one to open the series in a new page.
+- Just open the series page when trying to add a series that's already in the library.
+
 ## 2026-04-26
 
 - UI improvements

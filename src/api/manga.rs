@@ -183,15 +183,7 @@ pub async fn add_manga(
             .await
             .map_err(internal)?
     {
-        return Err((
-            Status::Conflict,
-            Json(ApiError {
-                error: format!(
-                    "This manga ({}) already exists in this library with ID: {}",
-                    existing.metadata.title, existing.id
-                ),
-            }),
-        ));
+        return Ok(Json(existing));
     }
 
     manga.id = manga
@@ -957,7 +949,7 @@ pub async fn sync_provider_api(
         .map_err(internal)?
         .ok_or_else(|| not_found("manga not found"))?;
 
-    let queue = format!("provider:{}", name);
+    let queue = format!("provider:{name}");
     let payload = serde_json::json!({ "provider": name }).to_string();
     db::task::enqueue_with_payload(
         pool.inner(),

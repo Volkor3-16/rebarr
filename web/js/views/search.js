@@ -45,6 +45,22 @@ export async function viewSearch() {
   });
 }
 
+function renderCreatedState(container, manga) {
+  const seriesUrl = `/series/${manga.id}`;
+  container.innerHTML = `
+    <div class="alert alert-success">
+      <span>Added to library.</span>
+    </div>
+    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem">
+      <a class="btn btn-sm btn-outline" href="${seriesUrl}" target="_blank" rel="noopener">
+        <iconify-icon icon="mdi:open-in-new" width="16" height="16"></iconify-icon>
+        Open Series in new tab
+      </a>
+      <button type="button" class="btn btn-sm btn-ghost" onclick="window.location.href='/search'">Done</button>
+    </div>
+  `;
+}
+
 async function loadManualForm() {
   const pane = document.getElementById('manual-pane');
   let libOptions = '<option value="">— select library —</option>';
@@ -229,7 +245,7 @@ window.showAddManga = async function(anilistId, pathSafeTitle) {
         <label>Folder name:</label>
         <input type="text" id="am-path" value="${escape(pathSafeTitle)}">
         
-        <button type="submit" class="btn btn-primary">Add to Library</button>
+        <button type="submit" class="btn btn-primary" id="add-manga-submit">Add to Library</button>
         <a href="/search" data-path="/search" class="btn btn-ghost">Cancel</a>
       </form>
       <div id="am-status"></div>
@@ -240,6 +256,7 @@ window.showAddManga = async function(anilistId, pathSafeTitle) {
       const libId = document.getElementById('am-lib').value;
       const path = document.getElementById('am-path').value.trim();
       const status = document.getElementById('am-status');
+      const submitBtn = document.getElementById('add-manga-submit');
       
       if (!path) {
         status.innerHTML = '<p class="error">Folder name required.</p>';
@@ -247,10 +264,16 @@ window.showAddManga = async function(anilistId, pathSafeTitle) {
       }
       
       status.innerHTML = '<p>Adding... (downloading cover, fetching metadata)</p>';
+      if (submitBtn) {
+        submitBtn.disabled = true;
+      }
       try {
         const manga = await mangaApi.create({ anilist_id: anilistId, library_id: libId, relative_path: path });
-        navigate(`/series/${manga.id}`);
+        renderCreatedState(document.getElementById('add-manga-form'), manga);
       } catch(err) {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+        }
         status.innerHTML = `<p class="error">Error: ${escape(err.message)}</p>`;
       }
     });

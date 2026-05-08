@@ -609,8 +609,38 @@ window.showAddMangaModal = async function(anilistId, pathSafeTitle) {
       return;
     }
     const lib = libs[0];
+    document.getElementById('home-add-dialog')?.remove();
+    const dialog = document.createElement('dialog');
+    dialog.id = 'home-add-dialog';
+    dialog.className = 'modal';
+    dialog.innerHTML = `
+      <div class="modal-box" style="max-width:480px">
+        <h3 style="font-size:1.1em;font-weight:bold;margin-bottom:0.5em">Add Manga</h3>
+        <p class="text-muted" style="font-size:0.85em;margin-bottom:1em">This will add the series to your first library.</p>
+        <div class="text-muted">Adding...</div>
+      </div>
+      <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    `;
+    document.body.appendChild(dialog);
+    dialog.showModal();
     const m = await mangaApi.create({ anilist_id: anilistId, library_id: lib.uuid, relative_path: pathSafeTitle });
-    navigate(`/series/${m.id}`);
+    if (dialog) {
+      dialog.innerHTML = `
+        <div class="modal-box" style="max-width:480px">
+          <h3 style="font-size:1.1em;font-weight:bold;margin-bottom:0.5em">Added to library</h3>
+          <p class="text-muted" style="font-size:0.85em;margin-bottom:1em">You can open the series now, or close this dialog and keep browsing.</p>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+            <a href="/series/${m.id}" target="_blank" rel="noopener" class="btn btn-sm btn-outline">
+              <iconify-icon icon="mdi:open-in-new" width="16" height="16"></iconify-icon>
+              Open Series in new tab
+            </a>
+            <button type="button" class="btn btn-sm btn-ghost" onclick="document.getElementById('home-add-dialog')?.close()">Close</button>
+          </div>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+      `;
+    }
+    if (card) { card.style.pointerEvents = ''; card.style.opacity = ''; }
   } catch (err) {
     if (card) { card.style.pointerEvents = ''; card.style.opacity = ''; }
     alert(`Failed to add: ${err.message}`);
