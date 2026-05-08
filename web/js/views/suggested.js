@@ -59,6 +59,10 @@ function chipTooltip(item, kind) {
     .join('\n');
 }
 
+function uniqueSuggestionCount() {
+  return new Set(currentSuggestions.map(item => item.anilist_id).filter(id => id != null)).size;
+}
+
 function suggestionCard(item) {
   const cover = item.cover_url
     ? `<img class="cover-lg" src="${escape(item.cover_url)}" alt="${escape(item.title)}">`
@@ -109,6 +113,7 @@ function suggestionCard(item) {
 }
 
 function renderSuggestedPage(libOptions, refreshedAt) {
+  const suggestionCount = uniqueSuggestionCount();
   const cards = currentSuggestions.length > 0
     ? currentSuggestions.map(suggestionCard).join('')
     : `<section class="settings-card" style="max-width:760px">
@@ -123,6 +128,7 @@ function renderSuggestedPage(libOptions, refreshedAt) {
       <div class="settings-card-header">
         <iconify-icon icon="mdi:lightbulb-on-outline" width="20" height="20"></iconify-icon>
         <h3>Suggested Manga</h3>
+        <span class="badge badge-primary" title="Unique suggestions">${escape(suggestionCount)} unique</span>
       </div>
       <p class="settings-card-desc">
         Cached AniList recommendations and related works for the selected library.
