@@ -1,0 +1,166 @@
+# Roadmap
+
+This is the vague priority order, split by the goal for each major milestone.
+
+When we hit full Minimum Viable Release, i'll start doing proper version numbers and migrate this out to GitLab Issues and milestones; everything changes too fast to do that now.
+
+## Regressions
+
+- [ ]  Chapter 8.1 — The Residence (1) is incorrectly marked as an extra (My Co-worker Is an Eldritch X!)
+    - Same with Chapter 14.5 — Oscar Orcus (Arifureta)
+- [ ] Cloudflare bypass not working anymore :( - https://www.mangakakalot.gg/manga/i-became-the-strongest-with-the-failure-frame/chapter-29-6
+- [ ] When doing a full provider scan, overrides are ignored, they should still be overridden, at the moment it just unsets it and falls back to scoring.
+- [ ] We can't delete downloaded chapters from providers that have been disabled. the action menu doesn't have any entries.
+- [ ] Mangadex: Error: scraper error: Parse error: from_json: variable 'chapters_processed' not found
+- [ ] WeebCentral: titles are bad sometimes "82-eng-li" & "Ch.011 " & "Vol.7 Chapter 35 "
+- [ ] Mangakakalot: We don't get a title from them? is it broke?
+
+## Minimum Viable Release (0.1.x)
+
+- [x] Core library workflow
+  - [x] Add series to a library
+  - [x] Fetch metadata from AniList
+  - [x] Search providers and build chapter lists
+  - [x] Score and pick the best chapter variants
+  - [x] Download chapters into CBZ files
+  - [x] Scan existing files back into the database
+- [x] API and tooling
+  - [x] Expose a REST API and a vanilla JS frontend
+  - [x] Provide a CLI for provider debugging and regression testing
+- [x] Provider and scan basics
+  - [x] Build-full-chapter-list scanning
+  - [x] Provider overrides during scans
+  - [x] Disabled-provider handling in scans
+  - [x] Provider-specific parsing fixes and title normalization improvements
+  - [x] Cloudflare / anti-bot handling improvements
+  - [x] Better provider search visibility
+  - [x] Provider version and resync behavior
+  - [ ] Error: scraper error: Browser error: task 115865 panicked with message "end byte index 62 is not a char boundary; it is inside '術' (bytes 60..63) of `転生したら第七王子だったので、気ままに魔術を極めます`"
+- [x] Chapter handling
+  - [x] Split chapter bundling support
+    - [ ] Handle failed downloads for split chapters
+      - [ ] Fallback
+        - If one chapter fails in a split bundle, we should pick a whole new split bundle.
+        - This means the chapters **NEVER** come from two different providers. One FULL chapter per provider.
+      - [ ] Local
+        - We should build a local bundle for chapters, and handle them as highest priority.
+      - [ ] Override should work fine. Manually overriding individual chapters should always work, the fallback / local should work automatically, but clicking override/use should build a new bundle on the override.
+  - [x] Chapter upgrade controls
+    - Toggle on/off upgrading. Can always be overridden.
+  - [x] Duplicate chapter detection and duplicate CBZ prevention
+  - [x] Extra/chapter classification for edge cases like `8.1` and `14.5`
+  - [x] Chapter overrides persisting through rescans
+  - [x] Local/manual chapter support in the main workflow
+  - [ ] Build Full Chapter should:
+    - Note just error out when a provider is disabled
+    - Take priority over anything, even manual downloads
+  - [ ] We shouldn't include translators (from anilist) on official releases.
+  - [ ] Use a combined metadata thing for titles, save titles from 'all/best' providers, just not save it in the rebarr json entry inside the comicinfo.xml
+  - [ ] rebarr chapter tags - marking low quality, mtl, whatever else
+    - Automatic rules for specific groups, titles whatever?
+- [x] Frontend basics
+  - [x] Task logging, progress, and status visibility in the frontend
+  - [x] Live-updating provider scan table concept in the frontend
+  - [x] Setup wizard feedback and progress improvements
+      - [ ] Improve the setup wizard with clearer progress and feedback
+  - [x] Direct browser/file view for each series
+  - [x] Suggestion counts and queue state visibility
+  - [x] Downloaded chapter actions when providers are disabled
+  - [x] Show number of unique suggestions
+  - Initial Provider Search Rewrite:
+    - Show the loading thing, but instead of a log, show a live-updating provider table.
+    - This table should replace the existing one, or just be 'part' of it?
+  - does the worker page show rate limited/disabled providers?
+    - Does rate limiting / disabling actually work after enough failures?
+- [ ] Queue and scheduling
+  - [x] Improve task priority so build-full-chapter-list work pre-empts lower priority jobs
+  - [ ] Rework queue fetching so workers do not starve each other
+    - We grab 200 latest tasks, instead we should grab `n` latest from each provider.
+  - [x] Queue/task flexibility improvements
+  - [ ] Let users reorder and manage queue tasks more flexibly
+- [ ] Reliability and cleanup
+  - [ ] Fix provider-specific parsing bugs that still surface on some sites
+  - [ ] Reduce noisy provider search failures and make provider result inspection clearer
+  - [ ] Improve duplicate detection for downloaded chapters and CBZ files
+  - [ ] Add better support for provider-specific tags, quality, and metadata source preferences
+  - [ ] Make provider scans easier to read by showing a live-updating table instead of only logs
+  - [ ] Add a direct browser/file view for each series
+    - Lets us see filesize of the whole series (including random ass files), delete them/import them?
+
+## Full Release (1.x.x)
+- [x] Library workflow
+  - [x] Bulk actions on downloaded chapters
+  - [x] Orphaned file cleanup and duplicate cleanup tools
+  - [x] Import flows for existing manga libraries
+  - [x] Manual series creation and matching improvements
+- [x] Metadata and matching
+  - [x] Combined metadata model across sources
+  - [x] Richer metadata rules for titles, groups, translator fields, and chapter tags
+  - [x] Better automatic matching and fallback modes for hard-to-source series
+  - [x] Better handling for official releases versus scanlation metadata
+- [x] Provider ecosystem
+  - [ ] Provider repository and update separation from the core app
+    - Don't include providers in the system by default (stock rebarr should only work for local management)
+    - During setup wizard, ask the user to paste in a repo (or multiple)
+    - Automatic updates and all that nice stuff
+    - Add more providers
+  - [x] Provider testing and regression checks
+    - [ ] Automatic scheduled provider testing on CI/CD
+      - Uses test_fixtures, builds a nice static site with latest providers, and their status.
+  - [x] More provider sources without requiring core code changes
+- [ ] Reading and consumption
+  - [ ] Built-in chapter browser / reader view
+  - [ ] Chapter page classification for import and cleanup workflows
+    - FrontCover, InnerCover, Roundup, Story, Advertisment, Editorial, Letters, Preview, BackCover, Other, Deleted?
+  - [ ] Automatic scan scheduling for external readers like Komga
+  - [ ] Browsing and download UX improvements for mobile-oriented reading setups
+  - [ ] Scrobbling to mal/anilist??? (Mihon does this, but surely if we're implementing a reader we should do it here too.)
+- [ ] Metadata expansion + Western Comics Support
+  - [ ] MyAnimeList support
+    - `mal_api` crate worked in my tests
+  - [ ] MangaUpdates support
+    - No crate, worst case a openapi generated library.
+  - [ ] Comic Vine support for western comics
+    - Needs user provided API Key, I don't think this has a crate.
+  - [ ] User-managed metadata source selection and prioritization
+  - [ ] Automatic imports from tags, interest stacks, and pasted URLs
+- [ ] Queue and frontend polish
+  - [ ] Make manual series creation and matching smoother
+  - [ ] Expose orphaned file cleanup and duplicate cleanup as first-class tools
+  - [ ] Improve chapter page classification for import and cleanup workflows
+  - [ ] Add automatic scan scheduling for external readers like Komga
+  - [ ] Improve browsing and download UX on mobile-oriented reading setups
+- [ ] Better Frontend
+  - [ ] Suwayomi GraphQL Emulation?
+    - Would allow us to use the Suwayomi Extension on Mihon
+    - Also would allow a replacement frontend, that uses the suwayomi api.
+    - We'd have to have just one(two?) extension, that is rebarr (and rebarr search)
+        - Rebarr: shows your list
+            - Downloading or opening will kick you out / load forever / error out and queue up a download with absolute highest priority, and finally load when done.
+        - Rebarr (search): searches anilist -> adding to (suwayomi) frontend queues up a rebarr library add and full provider search.
+    - This shit should hopefully let it work nicely in suwayomi (and even suwayomi android extension??)
+    - https://deepwiki.com/Suwayomi/Suwayomi-Server/2.4-graphql-api
+  - [ ] Add user accounts and read-state scrobbling if a multi-user mode is ever added
+
+## Extended Features (1.x.x)
+
+- [ ] Storage and delivery experiments
+  - [ ] S3-style storage backend support
+  - [ ] IPFS or other decentralized provider/storage experiments
+  - [ ] Torrent and Usenet support
+    - Most of these releases use Volumes ripped from the publisher, so we'd need to map them somehow.
+  - [ ] Volume-to-chapter mapping for release formats that do not use chapter CBZs
+    - bruh https://github.com/TheIceCreamTroll/VolumeToChapterConverter they have the chapter number in the filenames in the cbz. lmfao
+      - For anything that doesn't have this formatting, we force the user to match it and have it submitted to some online api thing or something so other people can use it too? we could always add this in later.
+- [ ] Import from Tachiyomi / Mihon Backups (add series, import downloaded?)
+- [ ] Automation and analysis
+  - [ ] Lossless comic conversion and import transformations
+    - [ ] Losslessly convert pages to webp. (compress_comics crate seems nice, but could diy it)
+  - [ ] Detect low quality images (jpeg compression, bad resolution)
+  - [ ] Detect watermarked pages (I have NO idea how this could work)
+    - Remove them?
+  - [ ] Detect, tag, and (optionally) remove scanlator advert pages (or stupid meme shit).
+  - [ ] Metrics and grafana dashboard stuff.
+  - [ ] Automatic imports from tags, MAL interest stacks, and pasted URLs (browser extension to add a 'add to library' for supported links)
+- [ ] External Provider support
+  - Extract the useful data from keiyoushi and/or haruneko?
