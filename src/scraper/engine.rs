@@ -1960,25 +1960,41 @@ pub fn is_cf_challenge(html: &str) -> bool {
 /// Attempt to click the Cloudflare Turnstile checkbox.
 ///
 /// The widget renders inside a closed shadow root so CSS selectors can't reach
-/// it. We click at the screen coordinates where the checkbox visually appears,
-/// using a human-like mouse sequence (move → press → release with varied delays)
-/// so CF's behavioural scoring doesn't flag the interaction as synthetic.
+/// it. We first try to locate the Turnstile iframe via JS to get exact coordinates,
+/// then fall back to hardcoded candidates spread across the typical render area.
+/// A visible click marker is injected on each attempt so the VNC session shows
+/// exactly where we're clicking.
 pub async fn try_cf_checkbox_click(page: &eoka::Page) -> bool {
+    let session = page.session();
+
+    // Try to locate the Turnstile iframe dynamically first.
+    let dynamic = find_cf_checkbox_coords(page).await;
+    if let Some((x, y)) = dynamic {
+        debug!("[cf:click] dynamic iframe hit → ({x:.0},{y:.0})");
+    }
+
+    // Build the target list: dynamic coord (if found) + hardcoded fallbacks.
     // Layout on 1366×768: widget is horizontally centred (~300px wide),
     // left edge ≈ 533px, checkbox icon ≈ 25px from left edge → target x ≈ 558.
     // Widget appears roughly vertically centred, typically 300–430px from top.
-    // Candidates spread across that area; varied delays between each attempt.
-    let session = page.session();
-
-    let targets: &[(f64, f64)] = &[
+    let mut targets: Vec<(f64, f64)> = Vec::new();
+    if let Some(c) = dynamic {
+        targets.push(c);
+        // One small jitter around the dynamic coord as a second attempt.
+        targets.push((c.0 + 3.0, c.1 - 4.0));
+    }
+    targets.extend_from_slice(&[
         (548.0, 334.0),
         (563.0, 350.0),
         (553.0, 384.0),
         (568.0, 310.0),
         (543.0, 415.0),
-    ];
+    ]);
 
     for (i, &(x, y)) in targets.iter().enumerate() {
+        // Show a visible orange dot at the click target (harmless no-op if page has no body).
+        cf_show_click_marker(page, x, y).await;
+
         // Approach from a slightly offset start so the move path looks natural.
         let ax = x - 14.0 - (i as f64 * 2.5);
         let ay = y + 9.0 - (i as f64 * 1.5);
@@ -2026,6 +2042,63 @@ pub async fn try_cf_checkbox_click(page: &eoka::Page) -> bool {
     }
 
     false
+}
+
+/// Try to locate the Turnstile iframe in the page and return the viewport
+/// coordinates of the checkbox icon inside it (left edge + ~28px, vertically
+/// centred). Returns `None` if no iframe is found or it has zero size.
+async fn find_cf_checkbox_coords(page: &eoka::Page) -> Option<(f64, f64)> {
+    let js = r#"(() => {
+        const iframe =
+            document.querySelector('iframe[src*="challenges.cloudflare.com"]') ||
+            document.querySelector('iframe[title*="Widget"]') ||
+            document.querySelector('iframe[title*="Cloudflare"]') ||
+            document.querySelector('iframe[src*="turnstile"]');
+        if (!iframe) return null;
+        const r = iframe.getBoundingClientRect();
+        if (r.width < 1 || r.height < 1) return null;
+        return JSON.stringify({ x: r.left + 28, y: r.top + r.height * 0.5 });
+    })()"#;
+    let s = page.evaluate::<Option<String>>(js).await.ok()??;
+    let v: serde_json::Value = serde_json::from_str(&s).ok()?;
+    let x = v["x"].as_f64()?;
+    let y = v["y"].as_f64()?;
+    if x > 0.0 && y > 0.0 {
+        Some((x, y))
+    } else {
+        None
+    }
+}
+
+/// Inject a bright orange circle at `(x, y)` in viewport coordinates so the
+/// VNC/Chromium window shows exactly where each CF click attempt lands.
+/// The marker fades out after ~600 ms and removes itself from the DOM.
+async fn cf_show_click_marker(page: &eoka::Page, x: f64, y: f64) {
+    let js = format!(
+        r#"(() => {{
+            const d = document.createElement('div');
+            d.style.cssText = [
+                'position:fixed',
+                'left:{x}px',
+                'top:{y}px',
+                'width:22px',
+                'height:22px',
+                'margin:-11px 0 0 -11px',
+                'border-radius:50%',
+                'background:rgba(255,80,0,0.88)',
+                'border:2px solid #fff',
+                'box-shadow:0 0 10px 5px rgba(255,120,0,0.55)',
+                'z-index:2147483647',
+                'pointer-events:none',
+                'transition:opacity 0.5s ease',
+            ].join(';');
+            document.body && document.body.appendChild(d);
+            setTimeout(() => {{ d.style.opacity = '0'; setTimeout(() => d.remove(), 500); }}, 200);
+        }})();"#,
+        x = x,
+        y = y
+    );
+    let _ = page.execute(&js).await;
 }
 
 // ---------------------------------------------------------------------------
