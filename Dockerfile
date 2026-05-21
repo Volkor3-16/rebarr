@@ -12,7 +12,7 @@ COPY web ./web
 COPY Rocket.toml ./Rocket.toml
 
 ARG GIT_COMMIT
-RUN GIT_COMMIT=${GIT_COMMIT} cargo build --release --bin rebarrd
+RUN GIT_COMMIT=${GIT_COMMIT} cargo build --release --bin rebarrd --bin rebarr
 
 # --- Runtime Stage ---
 FROM debian:bookworm-slim
@@ -39,6 +39,7 @@ WORKDIR /app
 
 # Copy binary built in the Debian builder image (glibc-compatible at runtime)
 COPY --from=builder /build/target/release/rebarrd ./rebarrd
+COPY --from=builder /build/target/release/rebarr ./rebarr
 
 # Copy web assets
 COPY web/ ./web/
