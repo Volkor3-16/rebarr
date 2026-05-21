@@ -30,6 +30,8 @@ RUN apt-get update \
       supervisor \
       wget \
       ca-certificates \
+      git \
+      python3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root user
@@ -62,6 +64,9 @@ RUN chmod +x /usr/local/bin/healthcheck.sh
 
 # Data dir
 RUN mkdir -p /data && chown -R rebarr:rebarr /data
+
+# Pre-create X11 socket dir so Xvfb can run as non-root
+RUN mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
 
 USER rebarr
 
