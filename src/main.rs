@@ -69,6 +69,9 @@ enum Cmd {
         /// Fixture directory.
         #[arg(long, default_value = "./test_fixtures")]
         fixtures: String,
+        /// Output results as JSON instead of human-readable text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// Provider management commands.
@@ -249,6 +252,7 @@ async fn main() {
             provider,
             search_term,
             fixtures,
+            json,
         } => {
             cmd_test(
                 &registry,
@@ -257,6 +261,7 @@ async fn main() {
                 search_term.as_deref(),
                 Path::new(&fixtures),
                 cli.verbose,
+                json,
             )
             .await
         }
@@ -627,6 +632,7 @@ async fn cmd_test(
     search_term: Option<&str>,
     fixtures_path: &Path,
     verbose: u8,
+    json: bool,
 ) {
     let provider_arg_all = provider_arg.eq_ignore_ascii_case("all");
     if search_term.is_some() && provider_arg_all {
@@ -643,7 +649,7 @@ async fn cmd_test(
         return;
     }
 
-    fixture_run(registry, ctx, provider_arg, fixtures_path, verbose).await;
+    fixture_run(registry, ctx, provider_arg, fixtures_path, verbose, json).await;
 }
 
 async fn fixture_create_interactive(
@@ -771,6 +777,7 @@ async fn fixture_run(
     provider_arg: &str,
     fixtures_path: &Path,
     verbose: u8,
+    json: bool,
 ) {
     let fixtures = load_fixtures(fixtures_path).await;
     if fixtures.is_empty() {
@@ -807,7 +814,11 @@ async fn fixture_run(
         progress.inc(1);
     }
     progress.clear();
-    print_fixture_summary(&reports);
+    if json {
+        print_fixture_summary_json(&reports);
+    } else {
+        print_fixture_summary(&reports);
+    }
     if reports
         .iter()
         .any(|report| matches!(report.outcome, FixtureOutcome::Fail))
@@ -1237,6 +1248,32 @@ impl ProgressLogWriter {
             eprintln!("{line}");
         }
     }
+}
+
+fn print_fixture_summary_json(reports: &[FixtureReport]) {
+    let now = chrono::Utc::now();
+    let results: Vec<serde_json::Value> = reports
+        .iter()
+        .map(|r| {
+            let outcome = match r.outcome {
+                FixtureOutcome::Pass => "pass",
+                FixtureOutcome::Fail => "fail",
+                FixtureOutcome::SeedOnly => "seed_only",
+            };
+            let reasons: Vec<&str> = r.reasons.iter().map(|s| s.trim()).collect();
+            serde_json::json!({
+                "provider": r.provider,
+                "outcome": outcome,
+                "reasons": reasons,
+            })
+        })
+        .collect();
+    let output = serde_json::json!({
+        "timestamp": now.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        "date": now.format("%Y-%m-%d").to_string(),
+        "results": results,
+    });
+    println!("{}", serde_json::to_string_pretty(&output).unwrap());
 }
 
 fn print_fixture_summary(reports: &[FixtureReport]) {
