@@ -48,6 +48,7 @@ COPY web/ ./web/
 
 # Copy default providers (seeded to /data on first run by entrypoint)
 COPY providers/ ./providers/
+COPY test_fixtures/ ./test_fixtures/
 
 # Copy Rocket config (and other runtime files)
 COPY Rocket.toml ./Rocket.toml
